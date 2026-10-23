@@ -1,6 +1,7 @@
 {
   "enabled": [
-    "xs2-novel-flywheel"
+    "xs2-novel-flywheel",
+    "bishu-novel"
   ],
   "strict_startup": false
 }

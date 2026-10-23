@@ -58,3 +58,13 @@ Thumbs.db
 
 # Local Plugin overrides
 config/extension-overrides/
+
+# Test/runtime temporary artifacts (Windows pytest + executor pools)
+determinflow-executor-*/
+pytest-of-wenbo/
+.pytest*.log
+_pytest*.log
+_fe_test.log
+_svc_out.log
+_svc_err.log
+

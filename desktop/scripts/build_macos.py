@@ -30,7 +30,9 @@ def build_macos(desktop: Path, *, flavor: str = "core") -> Path:
     bundle = desktop / "src-tauri" / "target" / "release" / "bundle"
     app = bundle / "macos" / "DeterminFlow.app"
     seal_app(app)
-    version = json.loads((desktop / "src-tauri" / "tauri.conf.json").read_text())["version"]
+    version = json.loads(
+        (desktop / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
+    )["version"]
     suffix = "-full" if flavor == "full" else ""
     dmg = bundle / "dmg" / f"DeterminFlow_{version}_aarch64{suffix}.dmg"
     dmg.parent.mkdir(parents=True, exist_ok=True)
