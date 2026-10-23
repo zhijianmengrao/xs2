@@ -157,7 +157,7 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
 │   ├── character_profiles.md    # 角色档案（generate-voice 输入，可不存在 → 409）
 │   ├── character_voice.md       # 角色声音定义（score-text/chapter 输入，CLI 写入）
 │   └── console-*.md             # 已确认的创作计划（只读，可不存在）
-├── learning/candidates.json     # 参考写法候选（analyze-voice 输入，可不存在）
+├── learning/candidates.json     # 预留：参考写法候选（当前实现未读取，analyze-voice 仅扫描 references/）
 ├── references/                  # 作者提供的参考资料（analyze-voice 输入）
 └── story/                       # 章节原稿（score-chapter 输入）
     └── 0001/chapter.md
