@@ -1,9 +1,10 @@
 # Humanware Helper CLI 接口契约（P0 前置物）
 
-> 版本：v2（2026-10-23；v2 依据实现回写：CLI 文件名为同名入口 humanware_helper.py、
+> 版本：v3（2026-10-23；v3 新增：超长内容 `-` stdin 约定、check-dialogue 业务错误码透传。
+> v2 依据实现回写：CLI 文件名为同名入口 humanware_helper.py、
 > 章节路径为 story/{n}/chapter.md、业务失败 exit 0）
 > 对应 `src/web/humanware_routes.py` 的调用约定。
-> 状态：**已实现并端到端验证**（插件 commit 91c4914，xs2 commit d2f1e2b）。
+> 状态：**已实现并端到端验证**（插件 commit 91c4914 → e4ba419 → 本轮，xs2 commit d2f1e2b → 本轮）。
 
 ## 1. 部署位置与发现方式
 
@@ -21,6 +22,15 @@ Script Library 预检要求）。发布新插件版本并完成 resources prepar
 
 CLI 用 `sys.executable`（后端 venv 解释器）执行，参数经 `subprocess.run([...], text=False, timeout=120)`
 以列表形式传递（无 shell 注入面）；stdout 为 UTF-8 JSON（单行或格式化均可）。
+
+**超长内容 stdin 约定（v3）**：`score-text` 的 `content` 与 `check-dialogue` 的 `dialogue`
+超过 **8,192 字符** 时，后端将该参数替换为 `-` 并把真实内容（UTF-8）经 **stdin** 传入；
+CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
+原因：Windows `CreateProcess` 命令行上限约 32,767 UTF-16 单元（超限报
+`WinError 206`，实测 33,000 字符触发）、POSIX 受 `ARG_MAX` 约束，
+而 HTTP 层 `score-content` 允许至 10M 字符。短内容仍走 argv（行为不变）。
+注意：内容恰为字面量 `"-"` 时会被 stdin 通道吞掉（stdin 空则按无内容评分），
+属可接受的边界语义。
 
 ## 2. 通用输出契约
 
@@ -45,7 +55,8 @@ CLI 用 `sys.executable`（后端 venv 解释器）执行，参数经 `subproces
 ```
 
 - `code` 取值范围：400（输入错误）、404（文件不存在）、409（工作区状态不满足）、500（内部失败）。
-- 后端将 `code` 直接作为 HTTP 状态码返回给前端（见 `_generate_voice_file` / `score_content` / `score_chapter`）。
+- 后端将 `code` 直接作为 HTTP 状态码返回给前端（见 `_generate_voice_file` / `score_content` /
+  `score_chapter` / `check_dialogue`——v3 起 check-dialogue 与其余端点一致透传，此前误为固定 500）。
 
 ### 2.3 硬性规则
 
@@ -80,7 +91,8 @@ CLI 用 `sys.executable`（后端 venv 解释器）执行，参数经 `subproces
 
 对一段文本按角色声音定义评分。
 
-- 输入：`character` 角色名（UTF-8），`content` 待评文本（最多 10M 字符，后端已限）。
+- 输入：`character` 角色名（UTF-8），`content` 待评文本（最多 10M 字符，后端已限；
+  超过 8,192 字符时后端以 `-` 占位、真实内容走 stdin——见 §1 v3 约定）。
 - 输出（成功）——**字段与前端 `HumanwareScoreCard` 一一对应**：
 ```json
 {
@@ -121,6 +133,9 @@ CLI 用 `sys.executable`（后端 venv 解释器）执行，参数经 `subproces
 ### 3.5 `check-dialogue <workspace_root> <character> <dialogue>`
 
 检查一段对话是否符合角色声音定义（返回是否符合与偏离点）。
+
+- 输入：`dialogue` 最多 200K 字符（HTTP 层限制）；超过 8,192 字符时后端以 `-` 占位、
+  真实内容走 stdin（v3，同 §1）。业务失败（未知角色/缺 voice 文件）透传 409（v3）。
 
 - 输出（成功）：
 ```json

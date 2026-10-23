@@ -179,6 +179,120 @@ class HumanwareCliAvailableTests(unittest.TestCase):
             self.assertEqual(response.json()["total_score"], 88)
 
 
+class HumanwareContractHardeningTests(unittest.TestCase):
+    """Round 15：业务错误码透传与超长内容（argv 限制）回归。"""
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.books_root = root / "books"
+        self.books_root.mkdir()
+        self.workspace = self.books_root / "alpha"
+        self.workspace.mkdir()
+        # 假 CLI：模拟真实 CLI 的关键行为——
+        # - check-dialogue 未知角色 → error JSON + code 409（exit 0）
+        # - score-text/check-dialogue 内容参数为 "-" 时从 stdin 读 UTF-8
+        # - 成功时回显 content_len 供断言 stdin 往返完整性
+        fake_cli = root / "humanware_cli.py"
+        fake_cli.write_text(
+            "import json, sys\n"
+            "cmd = sys.argv[1]\n"
+            "def read_arg(value):\n"
+            "    if value == '-':\n"
+            "        return sys.stdin.buffer.read().decode('utf-8')\n"
+            "    return value\n"
+            "if cmd == 'check-dialogue':\n"
+            "    character = sys.argv[3]\n"
+            "    if character == 'missing':\n"
+            "        print(json.dumps({'status': 'error', 'message': '角色未定义', 'code': 409}))\n"
+            "    else:\n"
+            "        dialogue = read_arg(sys.argv[4])\n"
+            "        print(json.dumps({'status': 'success', 'matches': True, 'character': character,\n"
+            "                           'violations': [], 'suggestion': '', 'dialogue_len': len(dialogue)}))\n"
+            "elif cmd == 'score-text':\n"
+            "    content = read_arg(sys.argv[4])\n"
+            "    print(json.dumps({'status': 'success', 'total_score': 88, 'grade': 'B', 'summary': 'ok',\n"
+            "                       'detailed_scores': {}, 'issues': [], 'recommendation': '',\n"
+            "                       'content_len': len(content)}))\n"
+            "else:\n"
+            "    print(json.dumps({'status': 'success', 'message': 'ok', 'character_count': 2}))\n",
+            encoding="utf-8",
+        )
+        self._orig_books_root = humanware_routes._WORKSPACE_BOOKS_ROOT
+        self._orig_cli = humanware_routes._get_humanware_cli_path
+        humanware_routes._WORKSPACE_BOOKS_ROOT = self.books_root
+        humanware_routes._get_humanware_cli_path = lambda: fake_cli
+
+    def tearDown(self):
+        humanware_routes._WORKSPACE_BOOKS_ROOT = self._orig_books_root
+        humanware_routes._get_humanware_cli_path = self._orig_cli
+        self._tmp.cleanup()
+
+    def test_check_dialogue_business_error_propagates_code(self):
+        # CLI 契约：未知角色 → error JSON code=409；路由应透传 409 而非 500
+        with TestClient(_app()) as client:
+            response = client.post(
+                "/api/humanware/check-dialogue",
+                json={"workspace_id": "alpha", "character": "missing", "dialogue": "你好。"},
+            )
+            self.assertEqual(response.status_code, 409, response.text)
+
+    def test_score_content_large_content_via_stdin(self):
+        # Windows CreateProcess 命令行上限约 32,767 UTF-16 单元；42,000 字符必须改走 stdin
+        content = "结论已经给出，方案可以执行。" * 3000  # 42,000 字符 > 上限
+        with TestClient(_app()) as client:
+            response = client.post(
+                "/api/humanware/score-content",
+                json={"workspace_id": "alpha", "character": "张三", "content": content},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["content_len"], len(content))
+
+    def test_check_dialogue_long_dialogue_via_stdin(self):
+        dialogue = "此事罢了，不必再提。" * 5000  # 50,000 字符 > 上限
+        with TestClient(_app()) as client:
+            response = client.post(
+                "/api/humanware/check-dialogue",
+                json={"workspace_id": "alpha", "character": "张三", "dialogue": dialogue},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["dialogue_len"], len(dialogue))
+
+    def test_score_content_small_content_still_argv(self):
+        # 短内容保持 argv 路径（不回归既有行为）
+        with TestClient(_app()) as client:
+            response = client.post(
+                "/api/humanware/score-content",
+                json={"workspace_id": "alpha", "character": "张三", "content": "你好。"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["content_len"], 3)
+
+    def test_voice_file_save_url_id_wins_over_body(self):
+        # URL 路径参数优先；body workspace_id 不一致时以 URL 为准（beta 不存在也不得 404）
+        with TestClient(_app()) as client:
+            response = client.put(
+                "/api/humanware/voice-file/alpha",
+                json={"workspace_id": "beta", "content": "## 主角\n"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertTrue((self.workspace / "meta" / "character_voice.md").is_file())
+
+    def test_cli_timeout_maps_to_500_error_payload(self):
+        import subprocess as sp
+
+        def _boom(*args, **kwargs):
+            raise sp.TimeoutExpired(cmd="humanware", timeout=120)
+
+        with patch.object(humanware_routes.subprocess, "run", side_effect=_boom), \
+                patch.object(humanware_routes, "_get_humanware_cli_path", return_value=Path("fake.py")):
+            result = humanware_routes._run_humanware_command_blocking("generate-voice", "ws")
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], 500)
+
+
 class OpenApiOperationIdUniquenessTests(unittest.TestCase):
     def test_no_duplicate_operation_ids_in_openapi(self):
         with TestClient(_app()) as client:
