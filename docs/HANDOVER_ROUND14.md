@@ -102,3 +102,22 @@ xs2 回归 63 passed → 提交（d2f1e2b / dbaae08）
 - **根因**：`disabled={generating || !status?.profiles_file_exists}` 短路了 `generateFromProfiles` 内已有的引导分支（`请先创建 character_profiles.md`），用户得不到原因与下一步。
 - **修复**：移除 `!status?.profiles_file_exists` 禁用条件（按钮始终可点）；无档案时点击提示先创建角色档案，状态卡片增加引导提示条 + 按钮 title 悬浮说明；组件测试同步为「可点 + 点击提示 + 不发起生成请求」；为默认 welcome 工作区写入示例角色档案（scripts/_hw_setup_welcome.py），首次体验即可生成。
 - **验证**：welcome generate 端到端 200（character_count=2）；组件测试 7/7；lint 0 errors；npm test 全过；build 成功。
+
+## 6C. 评分模型调参：情感真实度方向性修复（2026-10-23，插件 commit e4ba419）
+
+- **问题（R14-1）**：冷静角色平稳表达被过度扣分（emotion≈55）。根因：`emotion = 100 - |q-基线|*180 - |e-基线|*180` 用**绝对偏差**，语气向 0 收敛（比基线更平静）被当成"偏离"重罚；`flat_tone` 提示条件（q_diff>0.35 且 e_diff<0.05）语义矛盾且几乎不可达。
+- **修复**：
+  1. 新增 `_directional_penalty`：向上发散（比锚点更激昂/更爱问）重罚 220、向下收敛（更平静）轻罚 60——冷静/寡言角色天然贴近 0 不再受罚；
+  2. 短文本贝叶斯平滑（2 伪计数投向基线），抑制小样本比率的抖动（3 句短文本 e_ratio 由 0.67 平滑至 0.60，避免误罚）；
+  3. `flat_tone` 改为 `tone_spike`（语气**超过**基线才提示，且提示真实可达）。
+- **样例矩阵（scripts/_hw_score_matrix.py）**：
+
+| 场景 | 调参前 emotion | 调参后 emotion |
+|---|---|---|
+| 冷静·平稳对白 | ≈55 | **95**（total 96/A） |
+| 冷静·情绪爆发 | 0 | **0**（tone_spike，应重罚） |
+| 活泼·符合基线 | 23（短文本抖动误伤） | **76** |
+| 活泼·过于平淡 | — | **82**（向下轻罚） |
+
+- **测试**：插件 test_humanware_helper.py 新增 2 条防回归（冷静平稳 emotion≥85；爆发显著低于平稳 + tone_spike），15/15 通过。
+- **端到端**（插件 e4ba419 + 更新 + 重启）：welcome/林晚 score-content——平稳 96/A、爆发 65 且 emotion=0；输出契约与前端 HumanwareScoreCard 字段完全不变。
