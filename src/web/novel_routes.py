@@ -607,18 +607,33 @@ async def get_reference_candidates(request: Request, workflow_id: str, workspace
     return with_reference_choices(data)
 
 
-@router.api_route("/export/download", methods=["GET", "HEAD"])
-async def download_novel_manuscript(request: Request, workflow_id: str, workspace: str, filename: str = "小说成品.md"):
-    """Download the actual exported manuscript without browser-specific Blob URLs."""
-    manager = _get_manager(request)
-    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
-    target = safe_target(root, "export/manuscript.md")
-    if not target.is_file():
-        raise HTTPException(404, "本书尚未生成成品，请先完成导出步骤")
+def _manuscript_response(target: Path, filename: str) -> FileResponse:
+    """Build the manuscript download response (shared by GET and HEAD)."""
     download_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename)[:160].strip() or "小说成品.md"
     if not download_name.lower().endswith(".md"):
         download_name += ".md"
     return FileResponse(target, media_type="text/markdown; charset=utf-8", filename=download_name)
+
+
+def _manuscript_target(manager, workflow_id: str, workspace: str) -> Path:
+    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    target = safe_target(root, "export/manuscript.md")
+    if not target.is_file():
+        raise HTTPException(404, "本书尚未生成成品，请先完成导出步骤")
+    return target
+
+
+@router.get("/export/download")
+async def download_novel_manuscript(request: Request, workflow_id: str, workspace: str, filename: str = "小说成品.md"):
+    """Download the actual exported manuscript without browser-specific Blob URLs."""
+    return _manuscript_response(_manuscript_target(_get_manager(request), workflow_id, workspace), filename)
+
+
+@router.head("/export/download")
+async def head_novel_manuscript(request: Request, workflow_id: str, workspace: str, filename: str = "小说成品.md"):
+    """HEAD variant of the manuscript download (same target validation, no body)."""
+    _manuscript_target(_get_manager(request), workflow_id, workspace)
+    return None
 
 
 class LibraryPublish(BaseModel):
@@ -703,7 +718,7 @@ def _cleanup_library_references(mgr, deleted_ids: set[str]):
     """Clean up references to deleted libraries from all project workspaces."""
     try:
         # Find all book workspaces
-        books_root = Path("data/workspaces/books")
+        books_root = Path(__file__).resolve().parents[2] / "data" / "workspaces" / "books"
         if not books_root.exists():
             return
 

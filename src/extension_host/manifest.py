@@ -85,7 +85,10 @@ def _optional_int(
 
 def _validate_relative_path(value: str, *, field_name: str) -> str:
     path = Path(value)
-    if path.is_absolute() or ".." in path.parts:
+    # Windows treats a leading "/" or "\" as root-relative on the current drive,
+    # so Path.is_absolute() is False there even though the value is not a safe
+    # relative path. Reject both drive-absolute and root-relative forms explicitly.
+    if path.is_absolute() or value.lstrip().startswith(("/", "\\")) or ".." in path.parts:
         raise ValueError(f"{field_name} 必须是 Plugin 根目录内的相对路径")
     return path.as_posix()
 

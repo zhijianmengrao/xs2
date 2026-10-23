@@ -21,6 +21,8 @@ from .executor_process import ExecutorProcessTree
 from .executor_protocol import ExecutorIdentity
 from .executor_transport import (
     AUTH_TOKEN_ENV,
+    EXECUTOR_EPOCH_ENV,
+    EXECUTOR_ID_ENV,
     LOOPBACK_HOST,
     generate_auth_token,
     restrict_private_path,
@@ -80,6 +82,7 @@ class WorkflowExecutorSupervisor:
         self.event_handler = event_handler
         self._runtime_dir: Path | None = None
         self._process: asyncio.subprocess.Process | None = None
+        self._worker_pid: int | None = None
         self._process_tree: ExecutorProcessTree | None = None
         self._monitor_task: asyncio.Task | None = None
         self._closing = False
@@ -100,7 +103,19 @@ class WorkflowExecutorSupervisor:
 
     @property
     def pid(self) -> int | None:
-        return self._process.pid if self._process is not None else None
+        """PID of the process serving Executor RPC.
+
+        On Windows a venv ``python.exe`` is a stub launcher that re-execs the
+        real interpreter as a child, so ``Popen.pid`` cannot be reported as
+        the Executor pid: tooling and operators would target the launcher,
+        which dies while the real worker keeps running until its parent-watch
+        fires. The worker announces its own pid during startup handshake.
+        """
+        process = self._process
+        if process is None:
+            return None
+        with self._state_lock:
+            return self._worker_pid or process.pid
 
     @property
     def status(self) -> str:
@@ -152,6 +167,21 @@ class WorkflowExecutorSupervisor:
         with self._state_lock:
             self._last_exit_code = exit_code
 
+    def _record_worker_pid(self, pong: object, process: asyncio.subprocess.Process) -> None:
+        """Adopt the pid the worker reported for itself.
+
+        Falls back to the spawned pid when the handshake payload is missing or
+        malformed, so a hostile or broken worker cannot replace the tracked pid
+        with an unrelated process.
+        """
+        reported = pong.get("pid") if isinstance(pong, dict) else None
+        if isinstance(reported, bool) or not isinstance(reported, int):
+            reported = None
+        elif reported <= 0 or reported == process.pid:
+            reported = None
+        with self._state_lock:
+            self._worker_pid = reported
+
     def _set_status(self, status: str, *, exit_code: int | None = None) -> None:
         with self._state_lock:
             if exit_code is not None:
@@ -177,6 +207,7 @@ class WorkflowExecutorSupervisor:
             raise RuntimeError("Workflow Executor already started")
         self._closing = False
         self._set_status(STATUS_STARTING)
+        self._worker_pid = None
         self._runtime_dir = Path(tempfile.mkdtemp(prefix="determinflow-executor-"))
         restrict_private_path(self._runtime_dir, 0o700)
         try:
@@ -194,6 +225,7 @@ class WorkflowExecutorSupervisor:
             await self._spawn()
         except Exception:
             self._process = None
+            self._worker_pid = None
             if self._event_receiver is not None:
                 await self._event_receiver.close()
                 self._event_receiver = None
@@ -223,6 +255,12 @@ class WorkflowExecutorSupervisor:
         environment = os.environ.copy()
         environment["DETERMINFLOW_RUNTIME_ROLE"] = "workflow-executor"
         environment[AUTH_TOKEN_ENV] = auth_token
+        # Scripts inherit these so a running script can prove which Executor
+        # generation owns it. Process ids cannot: on Windows a venv
+        # python.exe is a launcher that re-execs the real interpreter, so the
+        # pid a script sees as its parent is never the Executor pid.
+        environment[EXECUTOR_ID_ENV] = identity.executor_id
+        environment[EXECUTOR_EPOCH_ENV] = identity.epoch
         event_host = LOOPBACK_HOST
         event_port = 1
         if self._event_receiver is not None:
@@ -280,7 +318,8 @@ class WorkflowExecutorSupervisor:
                     f"Workflow Executor exited during startup: {process.returncode}"
                 )
             try:
-                await self.client.call("ping")
+                pong = await self.client.call("ping")
+                self._record_worker_pid(pong, process)
                 return
             except ExecutorUnavailable:
                 if asyncio.get_running_loop().time() >= deadline:
@@ -376,6 +415,7 @@ class WorkflowExecutorSupervisor:
             self._record_exit_code(process.returncode)
             self._reap_process_tree()
         self._process = None
+        self._worker_pid = None
         if self._monitor_task is not None:
             if self._monitor_task is not asyncio.current_task():
                 await asyncio.gather(self._monitor_task, return_exceptions=True)

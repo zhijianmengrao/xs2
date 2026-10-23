@@ -243,6 +243,11 @@ class ProcessManager:
         process = record.process
         if process is not None and process.returncode is None:
             self._signal_process(process, signal.SIGTERM)
+            if os.name != "posix":
+                # Windows has no graceful terminate tier: Popen.send_signal(
+                # SIGTERM) calls TerminateProcess, so the process is already
+                # hard-killed here and no later escalation happens.
+                record.was_killed = True
             try:
                 await asyncio.wait_for(
                     process.wait(),

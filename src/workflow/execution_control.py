@@ -127,18 +127,23 @@ class ExecutionControl:
         )
         temporary = Path(temporary_name)
         try:
-            os.fchmod(descriptor, 0o600)
+            # os.fchmod() does not exist on Windows; chmod on the path works
+            # everywhere (permission bits are a no-op on Windows but never raise).
+            os.chmod(temporary, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
                 json.dump(document, handle, ensure_ascii=False, indent=2)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, self.path)
-            directory_fd = os.open(parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            if os.name != "nt":
+                # Directory fsync is a POSIX-only durability optimisation; Windows
+                # cannot open a directory with os.open() (raises PermissionError).
+                directory_fd = os.open(parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
         finally:
             temporary.unlink(missing_ok=True)
         return self.read()

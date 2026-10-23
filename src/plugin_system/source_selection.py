@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -15,6 +16,19 @@ from urllib.request import url2pathname
 
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40,64}$")
 _SCP_SOURCE_RE = re.compile(r"^(?P<user>[^/@:\s]+)@(?P<host>[^/:\s]+):(?P<path>.+)$")
+
+
+def _is_native_windows_drive_path(raw: str) -> bool:
+    """Return True for a native Windows drive-letter path such as ``C:\\repo``.
+
+    ``urlsplit`` parses the drive letter as a one-character scheme (``f`` in
+    ``F:\\path``), so these must be recognised before generic scheme handling and
+    routed back to local-path handling. Single-letter schemes are never valid Git
+    transports, and gating on ``os.name == "nt"`` keeps POSIX behaviour unchanged.
+    """
+    if os.name != "nt":
+        return False
+    return bool(re.match(r"^[A-Za-z]:", raw))
 
 
 def canonicalize_plugin_source(source: str) -> tuple[str, str, str]:
@@ -31,6 +45,11 @@ def canonicalize_plugin_source(source: str) -> tuple[str, str, str]:
         canonical = local.as_uri()
         return canonical, "local", canonical
     if split.scheme:
+        if _is_native_windows_drive_path(raw):
+            # Native Windows path (drive letter parsed as a one-char scheme).
+            local = Path(raw).expanduser().resolve()
+            canonical = local.as_uri()
+            return canonical, "local", canonical
         scheme = split.scheme.lower()
         if scheme not in {"git", "http", "https", "ssh"}:
             raise ValueError("unsupported Git URL scheme")
