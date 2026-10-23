@@ -1,16 +1,6 @@
 import type { ReferenceChoice } from "../lib/api";
+import { referenceText, referenceTitle } from "./novel-reference";
 
-export function referenceText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  if (Array.isArray(value)) return value.map(referenceText).filter(Boolean).join("；");
-  if (value && typeof value === "object") return Object.values(value).map(referenceText).filter(Boolean).join("；");
-  return "";
-}
-export function referenceTitle(value: unknown): string {
-  const first = referenceText(value).replace(/^#+\s*/, "").split(/[。；;，,\n]/)[0];
-  return first.length > 38 ? first.slice(0, 38) + "…" : first || "分析条目";
-}
 const scopeNames: Record<string, string> = { short_full: "短篇全文", serial_opening: "长篇开局", serial_chapter: "长篇章节", serial_arc: "长篇卷级", general: "通用" };
 const layerNames: Record<string, string> = { language: "语言表达", structure: "叙事结构", narrative_lens: "叙事视角", dialogue: "对话", imagery: "意象", theme: "主题", character: "人物写法" };
 export function ReferenceEvidence({ value }: { value: unknown }) {

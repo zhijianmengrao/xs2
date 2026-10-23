@@ -1,15 +1,14 @@
-import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { SlidersHorizontal } from "lucide-react";
-import { defaultNovelPreferences, effectiveNovelMotion, normalizeNovelPreferences, NOVEL_UI_KEY, readNovelPreferences, type NovelPreferences } from "../lib/novel-workbench-preferences";
+import { effectiveNovelMotion, normalizeNovelPreferences, NOVEL_UI_KEY, readNovelPreferences, type NovelPreferences } from "../lib/novel-workbench-preferences";
+import { NovelPreferencesContext, useNovelPreferences } from "./novel-preferences-context";
 
-const Context = createContext({ preferences: defaultNovelPreferences, reduced: false, update: (patch: Partial<NovelPreferences>) => { void patch; } });
-export function useNovelPreferences() { return useContext(Context); }
 export function NovelWorkbenchProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState(() => readNovelPreferences(localStorage));
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   useEffect(() => { const query = window.matchMedia("(prefers-reduced-motion: reduce)"); const change = () => setReduced(query.matches); query.addEventListener("change", change); return () => query.removeEventListener("change", change); }, []);
   useEffect(() => { try { localStorage.setItem(NOVEL_UI_KEY, JSON.stringify(preferences)); } catch { /* Preferences still apply in this session. */ } }, [preferences]);
-  return <Context.Provider value={{ preferences, reduced, update: patch => setPreferences(current => normalizeNovelPreferences({ ...current, ...patch })) }}>{children}</Context.Provider>;
+  return <NovelPreferencesContext.Provider value={{ preferences, reduced, update: patch => setPreferences(current => normalizeNovelPreferences({ ...current, ...patch })) }}>{children}</NovelPreferencesContext.Provider>;
 }
 
 export function NovelWorkbenchSurface({ children }: { children: ReactNode }) {

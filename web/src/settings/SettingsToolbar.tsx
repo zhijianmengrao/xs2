@@ -3,7 +3,7 @@ import { Loader2, RotateCcw, Save, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useSettingsWorkspace } from "./SettingsWorkspace";
+import { useSettingsWorkspace } from "./settings-workspace-context";
 
 export function SettingsToolbar() {
   const {

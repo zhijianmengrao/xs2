@@ -4,7 +4,8 @@ import { cloneJson, valuesEqual } from "../field-model";
 import { isPluginAuthError, parseApiError } from "../parse-api-error";
 import { SettingsCategoryPanel } from "../SettingsCategoryPanel";
 import { SettingsFieldGroups } from "../SettingsFieldGroups";
-import { useRegisterSettingsStore, useSettingsWorkspace } from "../SettingsWorkspace";
+import { useRegisterSettingsStore } from "../use-register-settings-store";
+import { useSettingsWorkspace } from "../settings-workspace-context";
 import { readWorkspaceSettings, workspaceFieldGroups, type WorkspaceSettings, type WorkspaceSettingsResponse } from "../workspace-model";
 import type { SettingsSection } from "../types";
 

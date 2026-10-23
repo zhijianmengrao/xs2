@@ -13,9 +13,10 @@ import { resetPluginConfig, savePluginConfig } from "@/lib/plugin-api";
 import { cloneJson, valuesEqual } from "../field-model";
 import { isPluginAuthError, parseApiError } from "../parse-api-error";
 import { PluginSettingsFields } from "../PluginSettingsFields";
-import { useSettingsPlugins } from "../plugins-context";
+import { useSettingsPlugins } from "../plugins-context-value";
 import { SettingsCategoryPanel } from "../SettingsCategoryPanel";
-import { useRegisterSettingsStore, useSettingsWorkspace } from "../SettingsWorkspace";
+import { useRegisterSettingsStore } from "../use-register-settings-store";
+import { useSettingsWorkspace } from "../settings-workspace-context";
 import type { SettingsSection } from "../types";
 
 export function PluginCategory({ section }: { section: SettingsSection }) {

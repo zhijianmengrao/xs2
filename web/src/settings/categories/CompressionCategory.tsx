@@ -6,7 +6,7 @@ import { cloneJson, valuesEqual } from "../field-model";
 import { parseApiError } from "../parse-api-error";
 import { SettingsCategoryPanel } from "../SettingsCategoryPanel";
 import { SettingsFieldGroups } from "../SettingsFieldGroups";
-import { useRegisterSettingsStore } from "../SettingsWorkspace";
+import { useRegisterSettingsStore } from "../use-register-settings-store";
 import type { CompressionConfig, SettingsSection } from "../types";
 
 export function CompressionCategory({ section }: { section: SettingsSection }) {

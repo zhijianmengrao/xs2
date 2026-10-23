@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -11,16 +9,7 @@ import {
 import type { PluginListResponse, PluginRecord } from "../extensions/plugin-types";
 import { fetchPlugins } from "../lib/plugin-api";
 import { parseApiError } from "./parse-api-error";
-
-interface SettingsPluginsContextValue {
-  plugins: PluginRecord[];
-  loading: boolean;
-  error: string | null;
-  load: () => Promise<void>;
-  replacePlugin: (plugin: PluginRecord) => void;
-}
-
-const SettingsPluginsContext = createContext<SettingsPluginsContextValue | null>(null);
+import { SettingsPluginsContext, type SettingsPluginsContextValue } from "./plugins-context-value";
 
 export function SettingsPluginsProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<PluginListResponse>({
@@ -67,10 +56,4 @@ export function SettingsPluginsProvider({ children }: { children: ReactNode }) {
       {children}
     </SettingsPluginsContext.Provider>
   );
-}
-
-export function useSettingsPlugins(): SettingsPluginsContextValue {
-  const value = useContext(SettingsPluginsContext);
-  if (!value) throw new Error("useSettingsPlugins requires SettingsPluginsProvider");
-  return value;
 }

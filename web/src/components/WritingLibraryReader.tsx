@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Loader2, RefreshCw, Search } from "lucide-react";
 import { getWritingLibraryItem } from "../lib/api";
 import NovelReferenceContent from "./NovelReferenceContent";
-import NovelReferenceChoice, { referenceText, referenceTitle, ReferenceEvidence } from "./NovelReferenceChoice";
+import NovelReferenceChoice, { ReferenceEvidence } from "./NovelReferenceChoice";
+import { referenceText, referenceTitle } from "./novel-reference";
 import type { WritingLibraryUsage } from "../lib/api";
 
 type Detail = Awaited<ReturnType<typeof getWritingLibraryItem>>;

@@ -23,7 +23,7 @@ import {
 } from "../models-draft";
 import { parseApiError } from "../parse-api-error";
 import { SettingsCategoryPanel } from "../SettingsCategoryPanel";
-import { useRegisterSettingsStore } from "../SettingsWorkspace";
+import { useRegisterSettingsStore } from "../use-register-settings-store";
 import type { SettingsSection } from "../types";
 
 export function ModelsCategory({ section }: { section: SettingsSection }) {

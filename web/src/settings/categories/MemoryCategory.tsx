@@ -9,10 +9,11 @@ import {
   memoryActivationCopy,
 } from "../memory-model";
 import { isPluginAuthError, parseApiError } from "../parse-api-error";
-import { useSettingsPlugins } from "../plugins-context";
+import { useSettingsPlugins } from "../plugins-context-value";
 import { SettingsCategoryPanel } from "../SettingsCategoryPanel";
 import { SettingsFieldGroups } from "../SettingsFieldGroups";
-import { useRegisterSettingsStore, useSettingsWorkspace } from "../SettingsWorkspace";
+import { useRegisterSettingsStore } from "../use-register-settings-store";
+import { useSettingsWorkspace } from "../settings-workspace-context";
 import type { MemorySettings, MemorySettingsResponse, SettingsFieldGroup, SettingsSection } from "../types";
 
 export function MemoryCategory({ section }: { section: SettingsSection }) {

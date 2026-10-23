@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -14,23 +12,8 @@ import { notifySettingsUpdated } from "../lib/navigation-settings";
 import type { ConfigItemMeta } from "../types";
 import { editedKeysForGroup, reconcileEditedAfterSave, updateEditedValue } from "./field-model";
 import { parseApiError } from "./parse-api-error";
+import { CoreConfigContext, type CoreConfigContextValue } from "./core-config-context-value";
 import type { SettingsScalar } from "./types";
-
-interface CoreConfigContextValue {
-  config: Record<string, SettingsScalar>;
-  meta: ConfigItemMeta[];
-  edited: Record<string, SettingsScalar>;
-  loading: boolean;
-  error: string | null;
-  load: () => Promise<void>;
-  setValue: (key: string, value: SettingsScalar) => void;
-  displayValue: (key: string) => SettingsScalar;
-  groupDirty: (group: string) => boolean;
-  saveGroup: (group: string) => Promise<void>;
-  discardGroup: (group: string) => void;
-}
-
-const CoreConfigContext = createContext<CoreConfigContextValue | null>(null);
 
 export function CoreConfigProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<Record<string, SettingsScalar>>({});
@@ -133,10 +116,4 @@ export function CoreConfigProvider({ children }: { children: ReactNode }) {
       {children}
     </CoreConfigContext.Provider>
   );
-}
-
-export function useCoreConfig(): CoreConfigContextValue {
-  const value = useContext(CoreConfigContext);
-  if (!value) throw new Error("useCoreConfig requires CoreConfigProvider");
-  return value;
 }

@@ -3,7 +3,7 @@ import { Button } from "../../components/ui/button";
 import { fetchMemoryJobs, isMemoryJobActive, MEMORY_JOB_LABELS, retryMemoryJob } from "../memory-jobs";
 import type { MemoryJob, MemoryJobs } from "../memory-jobs";
 import { isPluginAuthError, parseApiError } from "../parse-api-error";
-import { useSettingsWorkspace } from "../SettingsWorkspace";
+import { useSettingsWorkspace } from "../settings-workspace-context";
 
 export function MemoryJobRows({ jobs, busy, enabled, onRetry }: {
   jobs: MemoryJob[]; busy: string | null; enabled: boolean; onRetry: (job: MemoryJob) => void;

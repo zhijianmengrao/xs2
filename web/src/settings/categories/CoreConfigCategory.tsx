@@ -1,8 +1,8 @@
 import { fieldSpecFromConfigMeta } from "../field-model";
-import { useCoreConfig } from "../core-config-context";
+import { useCoreConfig } from "../core-config-context-value";
 import { SettingsCategoryPanel } from "../SettingsCategoryPanel";
 import { SettingsFieldList, SettingsFieldRow } from "../SettingsFieldControl";
-import { useRegisterSettingsStore } from "../SettingsWorkspace";
+import { useRegisterSettingsStore } from "../use-register-settings-store";
 import type { SettingsSection } from "../types";
 
 export function CoreConfigCategory({ section }: { section: SettingsSection }) {

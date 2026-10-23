@@ -1,8 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -10,25 +7,11 @@ import {
 } from "react";
 
 import { dirtyStores, saveDirtyCategories, saveOutcomeCopy } from "./save-coordinator";
+import {
+  SettingsWorkspaceContext,
+  type SettingsWorkspaceValue,
+} from "./settings-workspace-context";
 import type { CategorySaveResult, SettingsCategoryStore } from "./types";
-
-interface SettingsWorkspaceValue {
-  stores: SettingsCategoryStore[];
-  upsert: (store: SettingsCategoryStore) => void;
-  remove: (id: string) => void;
-  adminToken: string;
-  setAdminToken: (value: string) => void;
-  revealAdminToken: boolean;
-  setRevealAdminToken: (value: boolean) => void;
-  dirty: boolean;
-  saving: boolean;
-  outcome: ReturnType<typeof saveOutcomeCopy>;
-  categoryErrors: Record<string, string>;
-  saveAll: () => Promise<CategorySaveResult[]>;
-  discardAll: () => void;
-}
-
-const SettingsWorkspaceContext = createContext<SettingsWorkspaceValue | null>(null);
 
 export function SettingsWorkspace({ children }: { children: ReactNode }) {
   const [storeMap, setStoreMap] = useState<Record<string, SettingsCategoryStore>>({});
@@ -110,31 +93,4 @@ export function SettingsWorkspace({ children }: { children: ReactNode }) {
       {children}
     </SettingsWorkspaceContext.Provider>
   );
-}
-
-export function useSettingsWorkspace(): SettingsWorkspaceValue {
-  const value = useContext(SettingsWorkspaceContext);
-  if (!value) throw new Error("useSettingsWorkspace requires SettingsWorkspace");
-  return value;
-}
-
-export function useRegisterSettingsStore(store: SettingsCategoryStore): void {
-  const { upsert, remove } = useSettingsWorkspace();
-  const saveRef = useRef(store.save);
-  const discardRef = useRef(store.discard);
-  saveRef.current = store.save;
-  discardRef.current = store.discard;
-
-  useEffect(() => {
-    upsert({
-      id: store.id,
-      title: store.title,
-      dirty: store.dirty,
-      requiresAdminToken: store.requiresAdminToken,
-      save: () => saveRef.current(),
-      discard: () => discardRef.current(),
-    });
-  }, [store.id, store.title, store.dirty, store.requiresAdminToken, upsert]);
-
-  useEffect(() => () => remove(store.id), [remove, store.id]);
 }

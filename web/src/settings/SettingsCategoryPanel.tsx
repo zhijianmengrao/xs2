@@ -6,7 +6,7 @@ import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SettingsSectionTargetContext } from "./section-target-context";
-import { useSettingsWorkspace } from "./SettingsWorkspace";
+import { useSettingsWorkspace } from "./settings-workspace-context";
 
 const CATEGORY_PRESENTATION: Record<string, { icon: LucideIcon; color: string }> = {
   appearance: { icon: Moon, color: "text-primary" },
