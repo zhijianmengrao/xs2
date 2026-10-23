@@ -95,3 +95,10 @@ Python urllib 端到端：generate 200 / score 200 / check 200 / 409 / 404
 清理临时工作区 hw-test-ws、hw-e2e
 xs2 回归 63 passed → 提交（d2f1e2b / dbaae08）
 ```
+
+## 6B. 缺陷修复：无角色档案时「从角色档案生成」无法点击（2026-10-23，commit 71acf5b）
+
+- **现象**：首次打开「角色声音」页（默认 welcome 工作区，无 character_profiles.md）时按钮灰色不可点，无任何引导。
+- **根因**：`disabled={generating || !status?.profiles_file_exists}` 短路了 `generateFromProfiles` 内已有的引导分支（`请先创建 character_profiles.md`），用户得不到原因与下一步。
+- **修复**：移除 `!status?.profiles_file_exists` 禁用条件（按钮始终可点）；无档案时点击提示先创建角色档案，状态卡片增加引导提示条 + 按钮 title 悬浮说明；组件测试同步为「可点 + 点击提示 + 不发起生成请求」；为默认 welcome 工作区写入示例角色档案（scripts/_hw_setup_welcome.py），首次体验即可生成。
+- **验证**：welcome generate 端到端 200（character_count=2）；组件测试 7/7；lint 0 errors；npm test 全过；build 成功。
