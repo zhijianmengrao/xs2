@@ -100,7 +100,7 @@ def _get_humanware_cli_path() -> Path:
         / "0"
         / "xs2-novel-flywheel-xs2"
         / "humanware_helper"
-        / "humanware_cli.py"
+        / "humanware_helper.py"
     )
     if not cli_path.exists():
         # 501：功能尚未就绪（插件未发布该脚本库），区别于 500 内部错误
