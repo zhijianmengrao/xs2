@@ -19,7 +19,7 @@ export default function NovelConfigurationSuggestions({ entry, receipt, pendingA
     {!(entry.suggestions || []).length && <p className="mt-2 text-xs text-muted-foreground">本次没有可填写的参数，现有设置保持原值。</p>}
     <div className="mt-3 space-y-3">{suggestions.map(item => <div key={item.key} className="rounded-lg border border-border bg-background/60 p-3">
       <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">{item.label}</p>
-        <span className={`text-xs ${receipt?.applied.includes(item.key) ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+        <span className={`text-xs ${receipt?.applied.includes(item.key) ? 'text-success' : 'text-muted-foreground'}`}>
           {receipt?.applied.includes(item.key) ? '已填写' : receipt?.preserved.includes(item.key) ? '已保留原设置' : '建议'}</span></div>
       <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-7">{configurationDisplay(item.key, item.value)}</p>
       {item.reason && <p className="mt-2 text-xs leading-6 text-muted-foreground">{item.reason}</p>}

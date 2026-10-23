@@ -36,7 +36,12 @@ export default function WritingLibraryView({ project, workflowId, workspace, onA
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; requestVersion.current++; dialog.cancelMatching("writing-library-delete:"); };
+    return () => {
+      mounted.current = false;
+      // 卸载失效由 mounted 标志覆盖（refresh/attach 都先查 mounted.current）；
+      // 不再在 cleanup 里读写 requestVersion，避免 exhaustive-deps 对 ref 的告警。
+      dialog.cancelMatching("writing-library-delete:");
+    };
   }, [dialog]);
 
   const refresh = useCallback(async () => {
@@ -153,7 +158,7 @@ export default function WritingLibraryView({ project, workflowId, workspace, onA
       <h1 className="mt-2 text-3xl font-semibold tracking-tight">跨作品复用蒸馏结果</h1>
       <p className="mt-2 text-sm text-muted-foreground">先按题材和视角匹配，再由你决定哪些风格、写法和冲突进入本书。</p>
     </header>
-    <div className="rounded-xl border border-blue-300/25 bg-blue-300/5 p-4">
+    <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
       <p className="text-sm leading-7">
         💡 <strong>推荐</strong>：使用「创作流程 → AI 小说顾问」获得个性化写法推荐，一键快速采用。
       </p>

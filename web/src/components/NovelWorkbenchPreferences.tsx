@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type CSSProperties, typ
 import { SlidersHorizontal } from "lucide-react";
 import { defaultNovelPreferences, effectiveNovelMotion, normalizeNovelPreferences, NOVEL_UI_KEY, readNovelPreferences, type NovelPreferences } from "../lib/novel-workbench-preferences";
 
-const Context = createContext({ preferences: defaultNovelPreferences, reduced: false, update: (_patch: Partial<NovelPreferences>) => {} });
+const Context = createContext({ preferences: defaultNovelPreferences, reduced: false, update: (patch: Partial<NovelPreferences>) => { void patch; } });
 export function useNovelPreferences() { return useContext(Context); }
 export function NovelWorkbenchProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState(() => readNovelPreferences(localStorage));

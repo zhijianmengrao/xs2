@@ -8,19 +8,8 @@
  * 4. 实时保存编辑内容
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw } from 'lucide-react';
-
-interface VoiceProfile {
-  character: string;
-  avg_sentence_length: number;
-  question_ratio: number;
-  exclamation_ratio: number;
-  pause_pattern: string;
-  tone_words: string[];
-  syntax_fingerprint: Record<string, number>;
-  sample_count: number;
-}
 
 interface HumanwareStatus {
   voice_file_exists: boolean;
@@ -31,10 +20,12 @@ interface HumanwareStatus {
 
 interface CharacterVoiceEditorProps {
   workspaceId: string;
-  onClose?: () => void;
 }
 
-export default function CharacterVoiceEditor({ workspaceId, onClose }: CharacterVoiceEditorProps) {
+export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEditorProps) {
+  // 后端 humanware 路由以 books 工作区纯 id 为路径参数；页面传入的可能是
+  // 完整相对路径（data/workspaces/books/<id>），这里归一化为最后一段。
+  const workspaceKey = workspaceId.split('/').filter(Boolean).pop() || workspaceId;
   const [content, setContent] = useState<string>('');
   const [status, setStatus] = useState<HumanwareStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,15 +33,14 @@ export default function CharacterVoiceEditor({ workspaceId, onClose }: Character
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  // 加载当前状态
-  useEffect(() => {
-    loadStatus();
-    loadContent();
-  }, [workspaceId]);
+  const showMessage = useCallback((type: 'success' | 'error' | 'info', text: string) => {
+    setMessage({ type, text });
+    setTimeout(() => setMessage(null), 3000);
+  }, []);
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
-      const response = await fetch(`/api/humanware/status/${workspaceId}`);
+      const response = await fetch(`/api/humanware/status/${workspaceKey}`);
       if (response.ok) {
         const data = await response.json();
         setStatus(data);
@@ -58,12 +48,12 @@ export default function CharacterVoiceEditor({ workspaceId, onClose }: Character
     } catch (error) {
       console.error('加载状态失败:', error);
     }
-  };
+  }, [workspaceKey]);
 
-  const loadContent = async () => {
+  const loadContent = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/humanware/voice-file/${workspaceId}`);
+      const response = await fetch(`/api/humanware/voice-file/${workspaceKey}`);
       if (response.ok) {
         const data = await response.json();
         if (data.status === 'success') {
@@ -78,18 +68,24 @@ export default function CharacterVoiceEditor({ workspaceId, onClose }: Character
     } finally {
       setLoading(false);
     }
-  };
+  }, [workspaceKey, showMessage]);
+
+  // 加载当前状态
+  useEffect(() => {
+    loadStatus();
+    loadContent();
+  }, [workspaceKey, loadStatus, loadContent]);
 
   const saveContent = async () => {
     setSaving(true);
     try {
-      // 直接保存到文件系统
-      const response = await fetch(`/api/novel/${workspaceId}/file`, {
-        method: 'POST',
+      // 保存到文件系统（humanware 自有端点，做工作区校验与写锁）
+      const response = await fetch(`/api/humanware/voice-file/${workspaceKey}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          path: 'meta/character_voice.md',
-          content: content
+          workspace_id: workspaceKey,
+          content
         })
       });
 
@@ -119,7 +115,7 @@ export default function CharacterVoiceEditor({ workspaceId, onClose }: Character
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          workspace_id: workspaceId,
+          workspace_id: workspaceKey,
           from_profiles: true
         })
       });
@@ -138,11 +134,6 @@ export default function CharacterVoiceEditor({ workspaceId, onClose }: Character
     } finally {
       setGenerating(false);
     }
-  };
-
-  const showMessage = (type: 'success' | 'error' | 'info', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 3000);
   };
 
   const cardClass = 'rounded-2xl border border-border bg-card shadow-sm';
@@ -164,9 +155,9 @@ export default function CharacterVoiceEditor({ workspaceId, onClose }: Character
       {/* 消息提示 */}
       {message && (
         <div className={`rounded-xl border p-4 ${
-          message.type === 'success' ? 'border-green-500/20 bg-green-500/10 text-green-600' :
-          message.type === 'error' ? 'border-red-500/20 bg-red-500/10 text-red-600' :
-          'border-blue-500/20 bg-blue-500/10 text-blue-600'
+          message.type === 'success' ? 'border-success/20 bg-success/10 text-success' :
+          message.type === 'error' ? 'border-destructive/20 bg-destructive/10 text-destructive' :
+          'border-primary/20 bg-primary/10 text-primary'
         }`}>
           <div className="flex items-center gap-2">
             {message.type === 'success' ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}

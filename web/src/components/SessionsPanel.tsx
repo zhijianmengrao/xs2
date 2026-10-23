@@ -255,7 +255,12 @@ export default function SessionsPanel({
     () => catalog.groups.filter(({ category }) => visibleCategories.has(category)),
     [catalog.groups, visibleCategories],
   );
-  const assistants = visibleCategories.has("assistant") ? catalog.assistants : [];
+  const assistants = useMemo(
+    () => visibleCategories.has("assistant")
+      ? catalog.assistants
+      : [],
+    [catalog.assistants, visibleCategories],
+  );
   const knownSessionIds = useMemo(
     () => sessions.map((session) => session.session_id),
     [sessions],

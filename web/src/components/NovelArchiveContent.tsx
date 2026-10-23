@@ -28,7 +28,7 @@ function ArchiveFields({ value, field = "", depth = 0, reference = false }: { va
       const embedded = typeof item === "string" ? parseArchiveJSON(item) : null;
       const nested = item !== null && typeof item === "object" || embedded?.parsed && typeof embedded.value === "object";
       return <div key={key} className={nested ? "min-w-0" : `grid min-w-0 gap-1 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-5 ${typeof item === "string" && item.length > 120 ? "sm:!grid-cols-1" : ""}`}>
-        <dt className={nested ? `mb-3 font-semibold ${depth === 0 ? "border-b border-border/60 pb-2 text-base text-sky-300" : "text-sm"}` : `pt-1 text-sm ${reference ? "font-medium text-violet-300" : "text-muted-foreground"}`}>{archiveLabel(key)}</dt>
+        <dt className={nested ? `mb-3 font-semibold ${depth === 0 ? "border-b border-border/60 pb-2 text-base text-primary" : "text-sm"}` : `pt-1 text-sm ${reference ? "font-medium text-accent" : "text-muted-foreground"}`}>{archiveLabel(key)}</dt>
         <dd className="min-w-0"><ArchiveFields value={item} field={key} depth={depth + 1} reference={reference} /></dd>
       </div>;
     })}</dl>;
@@ -40,7 +40,7 @@ export default function NovelArchiveContent({ content, structured = false, refer
   const readingRef = useRef<HTMLDivElement>(null);
   const parsed = parseArchiveJSON(content);
   if (parsed.parsed) return <ArchiveFields value={parsed.value} reference={reference} />;
-  if (structured) return <p role="alert" className="text-sm text-amber-400">这部分档案格式不完整，暂时无法展示。请检查对应步骤的生成结果。</p>;
+  if (structured) return <p role="alert" className="text-sm text-warning">这部分档案格式不完整，暂时无法展示。请检查对应步骤的生成结果。</p>;
   const markdown = readableArchiveMarkdown(content);
   const headings = markdown.split(/\r?\n/).filter(line => /^##\s/.test(line));
   const headingLevel = headings.length >= 2 ? "h2" : "h3";

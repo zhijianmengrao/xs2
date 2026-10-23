@@ -33,13 +33,13 @@ export function archiveLabel(key: string): string {
 export type ArchiveParseResult = { parsed: true; value: unknown } | { parsed: false };
 export function parseArchiveJSON(content: string): ArchiveParseResult {
   let text = content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, "$1").trim();
-  if (!/^[{[\"]/.test(text)) return { parsed: false };
+  if (!/^[{["]/.test(text)) return { parsed: false };
   try {
     let value: unknown = JSON.parse(text);
     // Some model outputs are JSON encoded inside a JSON string.
     for (let i = 0; i < 3 && typeof value === "string"; i++) {
       text = value.trim();
-      if (!/^[{[\"]/.test(text)) break;
+      if (!/^[{["]/.test(text)) break;
       try { value = JSON.parse(text); } catch { break; }
     }
     return { parsed: true, value };

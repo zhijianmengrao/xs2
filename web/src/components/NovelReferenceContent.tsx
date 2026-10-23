@@ -13,7 +13,7 @@ function ReferenceBody({ content }: { content: string }) {
     else blocks.push({ body: line });
   }
   return <div className="space-y-4">{blocks.filter(block => block.body.trim()).map((block, index) => block.label ? <div key={index} className={`grid gap-1.5 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-5 ${block.body.length > 120 ? "sm:!grid-cols-1" : ""}`}>
-    <p className="pt-1 text-sm font-medium text-violet-300">{archiveLabel(block.label)}</p>
+    <p className="pt-1 text-sm font-medium text-accent">{archiveLabel(block.label)}</p>
     <div className="min-w-0"><NovelArchiveContent content={archiveScalar(block.body, block.label)} /></div>
   </div> : <NovelArchiveContent key={index} content={block.body} />)}</div>;
 }
@@ -32,7 +32,7 @@ export default function NovelReferenceContent({ content }: { content: string }) 
     <ReferenceBody content={sections[0]} />
     {Array.from({ length: (sections.length - 1) / 3 }, (_, index) => {
       const depth = sections[index * 3 + 1];
-      return <section key={index} className={depth === "###" ? "border-t border-border/60 pt-6" : "rounded-xl bg-secondary/25 px-4 py-4 sm:px-5"}><h3 className={`mb-4 font-semibold ${depth === "###" ? "text-base text-foreground" : "text-sm text-sky-300"}`}>{sections[index * 3 + 2]}</h3><ReferenceBody content={sections[index * 3 + 3]} /></section>;
+      return <section key={index} className={depth === "###" ? "border-t border-border/60 pt-6" : "rounded-xl bg-secondary/25 px-4 py-4 sm:px-5"}><h3 className={`mb-4 font-semibold ${depth === "###" ? "text-base text-foreground" : "text-sm text-primary"}`}>{sections[index * 3 + 2]}</h3><ReferenceBody content={sections[index * 3 + 3]} /></section>;
     })}
   </div>;
 }

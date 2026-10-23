@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { Heart, TrendingUp, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { Heart, TrendingUp, AlertCircle, XCircle } from 'lucide-react';
 
 interface HumanwareScore {
   total_score: number;
@@ -37,25 +37,25 @@ interface HumanwareScoreCardProps {
 
 export default function HumanwareScoreCard({ score, className = '' }: HumanwareScoreCardProps) {
   const getScoreColor = (scoreValue: number) => {
-    if (scoreValue >= 90) return 'text-green-600';
-    if (scoreValue >= 80) return 'text-blue-600';
-    if (scoreValue >= 70) return 'text-yellow-600';
-    if (scoreValue >= 60) return 'text-orange-600';
-    return 'text-red-600';
+    if (scoreValue >= 90) return 'text-success';
+    if (scoreValue >= 80) return 'text-primary';
+    if (scoreValue >= 70) return 'text-warning';
+    if (scoreValue >= 60) return 'text-warning';
+    return 'text-destructive';
   };
 
   const getGradeColor = (grade: string) => {
-    if (grade.startsWith('A')) return 'bg-green-500/10 text-green-600 border-green-500/20';
-    if (grade.startsWith('B')) return 'bg-blue-500/10 text-blue-600 border-blue-500/20';
-    if (grade.startsWith('C')) return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20';
-    if (grade.startsWith('D')) return 'bg-orange-500/10 text-orange-600 border-orange-500/20';
-    return 'bg-red-500/10 text-red-600 border-red-500/20';
+    if (grade.startsWith('A')) return 'bg-success/10 text-success border-success/20';
+    if (grade.startsWith('B')) return 'bg-primary/10 text-primary border-primary/20';
+    if (grade.startsWith('C')) return 'bg-warning/10 text-warning border-warning/20';
+    if (grade.startsWith('D')) return 'bg-warning/10 text-warning border-warning/20';
+    return 'bg-destructive/10 text-destructive border-destructive/20';
   };
 
   const getSeverityIcon = (severity?: string) => {
-    if (severity === 'high') return <XCircle className="h-4 w-4 text-red-500" />;
-    if (severity === 'medium') return <AlertCircle className="h-4 w-4 text-yellow-500" />;
-    return <AlertCircle className="h-4 w-4 text-blue-500" />;
+    if (severity === 'high') return <XCircle className="h-4 w-4 text-destructive" />;
+    if (severity === 'medium') return <AlertCircle className="h-4 w-4 text-warning" />;
+    return <AlertCircle className="h-4 w-4 text-primary" />;
   };
 
   const cardClass = 'rounded-2xl border border-border bg-card shadow-sm';
@@ -65,7 +65,7 @@ export default function HumanwareScoreCard({ score, className = '' }: HumanwareS
       {/* 头部 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Heart className="h-5 w-5 text-rose-500" />
+          <Heart className="h-5 w-5 text-destructive" />
           <h3 className="text-lg font-semibold">人味评分</h3>
         </div>
         <div className={`rounded-full border px-3 py-1 text-sm font-semibold ${getGradeColor(score.grade)}`}>
@@ -93,11 +93,11 @@ export default function HumanwareScoreCard({ score, className = '' }: HumanwareS
               <div className="h-2 w-32 rounded-full bg-muted overflow-hidden">
                 <div
                   className={`h-full transition-all ${
-                    value >= 90 ? 'bg-green-500' :
-                    value >= 80 ? 'bg-blue-500' :
-                    value >= 70 ? 'bg-yellow-500' :
-                    value >= 60 ? 'bg-orange-500' :
-                    'bg-red-500'
+                    value >= 90 ? 'bg-success' :
+                    value >= 80 ? 'bg-primary' :
+                    value >= 70 ? 'bg-warning' :
+                    value >= 60 ? 'bg-warning' :
+                    'bg-destructive'
                   }`}
                   style={{ width: `${value}%` }}
                 />
@@ -137,12 +137,12 @@ export default function HumanwareScoreCard({ score, className = '' }: HumanwareS
 
       {/* 改进建议 */}
       {score.recommendation && (
-        <div className="mt-6 rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+        <div className="mt-6 rounded-lg border border-primary/20 bg-primary/5 p-4">
           <div className="flex items-start gap-2">
-            <TrendingUp className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+            <TrendingUp className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-semibold text-blue-600">改进建议</h4>
-              <p className="mt-1 text-sm text-blue-600/80">{score.recommendation}</p>
+              <h4 className="text-sm font-semibold text-primary">改进建议</h4>
+              <p className="mt-1 text-sm text-primary/80">{score.recommendation}</p>
             </div>
           </div>
         </div>
@@ -164,11 +164,11 @@ export default function HumanwareScoreCard({ score, className = '' }: HumanwareS
  */
 export function HumanwareScoreBadge({ score, onClick }: { score: number; onClick?: () => void }) {
   const getColor = () => {
-    if (score >= 90) return 'bg-green-500/10 text-green-600 border-green-500/20';
-    if (score >= 80) return 'bg-blue-500/10 text-blue-600 border-blue-500/20';
-    if (score >= 70) return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20';
-    if (score >= 60) return 'bg-orange-500/10 text-orange-600 border-orange-500/20';
-    return 'bg-red-500/10 text-red-600 border-red-500/20';
+    if (score >= 90) return 'bg-success/10 text-success border-success/20';
+    if (score >= 80) return 'bg-primary/10 text-primary border-primary/20';
+    if (score >= 70) return 'bg-warning/10 text-warning border-warning/20';
+    if (score >= 60) return 'bg-warning/10 text-warning border-warning/20';
+    return 'bg-destructive/10 text-destructive border-destructive/20';
   };
 
   return (

@@ -26,7 +26,7 @@ export default function NovelReaderReport({ report }: { report: RecordValue | nu
   const constraints = Array.isArray(report?.repair_constraints) ? report.repair_constraints.map(text).filter(Boolean) : [];
   const verdictLabel = ({ revise: "建议返修", reject: "需要重写", pass: "可以继续" } as Record<string, string>)[verdict] || "等待工作流报告";
   return <>
-    <div className="mt-5 flex items-end gap-3"><span className={`text-5xl font-semibold ${["revise", "reject"].includes(verdict) ? "text-amber-300" : "text-emerald-300"}`}>{score ?? "—"}</span><span className="mb-2 text-sm text-muted-foreground">{verdictLabel}</span></div>
+    <div className="mt-5 flex items-end gap-3"><span className={`text-5xl font-semibold ${["revise", "reject"].includes(verdict) ? "text-warning" : "text-success"}`}>{score ?? "—"}</span><span className="mb-2 text-sm text-muted-foreground">{verdictLabel}</span></div>
     {text(report?.summary) && <p className="mt-4 text-sm leading-6 text-muted-foreground">{text(report?.summary)}</p>}
     {issues.length > 0 && <div className="mt-5 space-y-3"><h3 className="text-sm font-medium">读者指出的问题 · {issues.length} 项</h3>{issues.map((issue, index) => {
       const detail = record(issue);

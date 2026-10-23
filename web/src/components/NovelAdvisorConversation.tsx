@@ -30,6 +30,7 @@ export default function NovelAdvisorConversation({
   onQuickAdopt?: (entry: NovelAssistantEntry) => Promise<{ success: boolean; message: string }>;
   onManualSelect?: () => void;
 }) {
+  void hasReference;
   const input = useRef<HTMLTextAreaElement>(null);
   const [notice, setNotice] = useState('');
   const [followup, setFollowup] = useState(false);
@@ -73,7 +74,7 @@ export default function NovelAdvisorConversation({
   };
 
   return <div className="mt-6 space-y-6">
-    <div className="flex items-center gap-2 text-xs text-emerald-400">
+    <div className="flex items-center gap-2 text-xs text-success">
       <Sparkles className="h-4 w-4" />
       默认大模型负责分析 · 一句想法就能开始
     </div>
@@ -148,16 +149,16 @@ export default function NovelAdvisorConversation({
 
     {running && <p role="status" aria-live="polite" className="rounded-xl border border-primary/25 bg-primary/5 p-4 text-sm leading-7">{running.message || 'AI 正在判断故事方向、看点与写法…'} 已等待 {Math.max(0, Math.floor((now - Date.parse(running.created_at)) / 1000))} 秒。可以切换页面，讨论结果会保留。</p>}
     {(feedback || notice) && <p role="status" className="rounded-lg border border-primary/25 p-3 text-sm leading-7">{notice || feedback}</p>}
-    {last?.status === 'failed' && <div role="alert" className="rounded-xl border border-amber-300/30 p-4 text-sm leading-7"><p>本次分析未完成：{last.message}</p><button disabled={disabled} onClick={() => onAsk(last.question)} className="mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-50">重新分析这个问题</button></div>}
+    {last?.status === 'failed' && <div role="alert" className="rounded-xl border border-warning/30 p-4 text-sm leading-7"><p>本次分析未完成：{last.message}</p><button disabled={disabled} onClick={() => onAsk(last.question)} className="mt-2 rounded-lg border border-border px-3 py-2 disabled:opacity-50">重新分析这个问题</button></div>}
     {latest && <section className="space-y-5" aria-label="小说顾问分析结果">
       <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">AI 对这本小说的判断</h3><button onClick={() => onRead(latest)} className="rounded-lg border border-border px-3 py-2 text-xs">展开阅读</button></div>
       <details className="text-xs leading-6 text-muted-foreground"><summary className="cursor-pointer">本次讨论：{latest.question.length > 100 ? latest.question.slice(0, 100) + '…' : latest.question}</summary><p className="mt-3 whitespace-pre-wrap">{latest.question}</p></details>
       <NovelArchiveContent content={advisorMarkdown(latest.reply || '')} />
       <div className="grid gap-4 lg:grid-cols-2">{([
         ['direction', '推荐的故事方向'], ['hook', '核心看点'], ['writing', '适合的写法'], ['risks', '需要注意的问题'],
-      ] as const).map(([key, title]) => <article key={key} className={`rounded-xl border p-5 ${key === 'risks' ? 'border-amber-300/25 bg-amber-300/5' : 'border-border bg-background/40'}`}><h4 className="mb-3 font-medium">{title}</h4><NovelArchiveContent content={advisorMarkdown(latest.advisor_sections?.[key] || '本次暂未提供，请继续讨论。')} /></article>)}</div>
+      ] as const).map(([key, title]) => <article key={key} className={`rounded-xl border p-5 ${key === 'risks' ? 'border-warning/25 bg-warning/5' : 'border-border bg-background/40'}`}><h4 className="mb-3 font-medium">{title}</h4><NovelArchiveContent content={advisorMarkdown(latest.advisor_sections?.[key] || '本次暂未提供，请继续讨论。')} /></article>)}</div>
       <details className="rounded-xl border border-border p-4"><summary className="cursor-pointer text-sm font-medium">{receipts?.[latest.id] ? '查看本次填写记录' : '查看建议参数（尚未采用）'}</summary><NovelConfigurationSuggestions entry={{ ...latest, purpose: 'configure' }} receipt={receipts?.[latest.id]} pendingApproval={!receipts?.[latest.id]} /></details>
-      {latest.advisor_sections?.mechanism_recommendations && <details className="rounded-xl border border-blue-300/25 bg-blue-300/5 p-4"><summary className="cursor-pointer text-sm font-medium">📝 推荐的写法机制</summary><div className="mt-4 space-y-4 text-xs"><div>{(latest.advisor_sections.mechanism_recommendations.adopted_from_library?.length ?? 0) > 0 && <div><p className="mb-2 font-medium text-blue-700">从参考作品采用：</p><ul className="space-y-1 ml-4">{latest.advisor_sections.mechanism_recommendations.adopted_from_library!.map((m, i) => <li key={i}>【{m.priority}】<strong>{m.mechanism}</strong> - {m.usage_in_story}（在{m.chapter_placement || '创作中'}使用）</li>)}</ul></div>}{(latest.advisor_sections.mechanism_recommendations.new_mechanisms?.length ?? 0) > 0 && <div className="mt-3"><p className="mb-2 font-medium text-blue-700">补充的新机制：</p><ul className="space-y-1 ml-4">{latest.advisor_sections.mechanism_recommendations.new_mechanisms!.map((m, i) => <li key={i}>【{m.priority}】<strong>{m.mechanism}</strong> - {m.reason}{m.synergy_with?.length > 0 && `（与${m.synergy_with.join('、')}协同）`}</li>)}</ul></div>}{(latest.advisor_sections.mechanism_recommendations.avoid_combinations?.length ?? 0) > 0 && <div className="mt-3"><p className="mb-2 font-medium text-amber-600">⚠️ 避免的组合：</p><ul className="space-y-1 ml-4">{latest.advisor_sections.mechanism_recommendations.avoid_combinations!.map((c, i) => <li key={i}><strong>{c.a}</strong> + <strong>{c.b}</strong>：{c.reason}</li>)}</ul></div>}</div></div></details>}
+      {latest.advisor_sections?.mechanism_recommendations && <details className="rounded-xl border border-primary/25 bg-primary/5 p-4"><summary className="cursor-pointer text-sm font-medium">📝 推荐的写法机制</summary><div className="mt-4 space-y-4 text-xs"><div>{(latest.advisor_sections.mechanism_recommendations.adopted_from_library?.length ?? 0) > 0 && <div><p className="mb-2 font-medium text-primary">从参考作品采用：</p><ul className="space-y-1 ml-4">{latest.advisor_sections.mechanism_recommendations.adopted_from_library!.map((m, i) => <li key={i}>【{m.priority}】<strong>{m.mechanism}</strong> - {m.usage_in_story}（在{m.chapter_placement || '创作中'}使用）</li>)}</ul></div>}{(latest.advisor_sections.mechanism_recommendations.new_mechanisms?.length ?? 0) > 0 && <div className="mt-3"><p className="mb-2 font-medium text-primary">补充的新机制：</p><ul className="space-y-1 ml-4">{latest.advisor_sections.mechanism_recommendations.new_mechanisms!.map((m, i) => <li key={i}>【{m.priority}】<strong>{m.mechanism}</strong> - {m.reason}{m.synergy_with?.length > 0 && `（与${m.synergy_with.join('、')}协同）`}</li>)}</ul></div>}{(latest.advisor_sections.mechanism_recommendations.avoid_combinations?.length ?? 0) > 0 && <div className="mt-3"><p className="mb-2 font-medium text-warning">⚠️ 避免的组合：</p><ul className="space-y-1 ml-4">{latest.advisor_sections.mechanism_recommendations.avoid_combinations!.map((c, i) => <li key={i}><strong>{c.a}</strong> + <strong>{c.b}</strong>：{c.reason}</li>)}</ul></div>}</div></div></details>}
 
       {showQuickAdoptDialog && hasMechanismRecommendations && onQuickAdopt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowQuickAdoptDialog(false)}>

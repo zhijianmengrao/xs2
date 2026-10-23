@@ -44,7 +44,7 @@ export default function NovelRepairPanel({workspace, chapter, project, ready, re
   const plans = entries.filter(item => item.purpose === 'reader_repair' && item.chapter === chapter);
   const latest = plans[plans.length - 1];
   const plan = [...plans].reverse().find(item => item.status === 'completed');
-  useEffect(() => {setDraft(plan?.applied_plan || plan?.reply || ''); setEditing(false);}, [plan?.id]);
+  useEffect(() => {setDraft(plan?.applied_plan || plan?.reply || ''); setEditing(false);}, [plan?.id, plan?.applied_plan, plan?.reply]);
   const busy = loading || submitting || !!running || applying;
   const ask = async () => {
     if (busy || guard.current || !ready) return;
@@ -79,8 +79,8 @@ export default function NovelRepairPanel({workspace, chapter, project, ready, re
     <button disabled={!ready || busy} onClick={() => void ask()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary disabled:opacity-50">{busy && !applying ? <Loader2 className="h-4 w-4 animate-spin"/> : <WandSparkles className="h-4 w-4"/>}{loading ? '正在恢复方案…' : submitting ? '正在提交…' : running ? 'AI 正在分析…' : plan ? '根据最新评估重新规划' : '让 AI 助手规划返修'}</button>
     {!ready && <p className="mt-2 text-xs text-muted-foreground">本章正文和读者报告就绪后才能规划返修。</p>}
     {running && <p role="status" className="mt-3 text-sm leading-6 text-muted-foreground">{running.message || '正在分析正文和读者问题…'} 方案完成前不会修改正文。切换页面后分析仍会保留。</p>}
-    {feedback && <p role="status" className="mt-3 text-sm leading-6 text-amber-300">{feedback}</p>}
-    {latest?.status === 'failed' && <p role="alert" className="mt-3 text-sm text-amber-300">本次规划失败：{latest.message}，可重新规划。</p>}
+    {feedback && <p role="status" className="mt-3 text-sm leading-6 text-warning">{feedback}</p>}
+    {latest?.status === 'failed' && <p role="alert" className="mt-3 text-sm text-warning">本次规划失败：{latest.message}，可重新规划。</p>}
     {plan && <div className="mt-5 border-t border-border pt-4">
       <h3 className="font-medium">第 {Number(chapter)} 章 · AI 返修方案</h3>
       <p className="mt-2 text-xs leading-6 text-muted-foreground">依据：本章正文 + 完整读者报告（问题、优先级、保留约束）。分析时间：{new Date(plan.created_at).toLocaleString('zh-CN')}。</p>
