@@ -657,6 +657,9 @@ def test_agent_node_rejects_mid_task_execution_identity_drift(
     definition = WorkflowDef(
         workflow_id=workflow_id,
         nodes=[node],
+        # create_task 拒绝未知参数键（commit 66432c7），model_override 引用的
+        # {{model_id}} 必须在模板中声明为变量后才能按参数传入。
+        variables=[WorkflowVariable(key="model_id")],
     )
     _write_workflow(workflows_dir, definition)
     manager = WorkflowManager(session_manager)

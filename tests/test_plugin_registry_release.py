@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -118,7 +119,10 @@ def test_registry_build_is_deterministic_and_client_verifiable(tmp_path: Path) -
     extracted = tmp_path / "extracted"
     extract_plugin_zip((first / package_relative).read_bytes(), extracted)
     assert plugin_content_sha256(extracted) == parsed.plugins[0].content_sha256
-    assert (extracted / "run.sh").stat().st_mode & 0o111
+    if os.name == "posix":
+        # NTFS carries no POSIX permission bits, so the executable bit of the
+        # archived run.sh cannot be observed on Windows.
+        assert (extracted / "run.sh").stat().st_mode & 0o111
 
 
 def test_registry_build_rejects_git_symlinks(tmp_path: Path) -> None:

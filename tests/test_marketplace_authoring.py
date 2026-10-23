@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -76,7 +77,10 @@ def test_publish_drafts_use_cas_and_keep_account_partitions(tmp_path: Path) -> N
     assert created["revision"] == 1
     assert created["fields"]["display_name"] == "共享技能"
     draft_path = next((alice.data_dir / "resource-marketplace" / "drafts").rglob("shared-skill.json"))
-    assert oct(draft_path.stat().st_mode & 0o777) == "0o600"
+    if os.name == "posix":
+        # NTFS has no POSIX permission bits, so Windows reports 0o666 for a
+        # writable file whatever chmod() was asked for.
+        assert oct(draft_path.stat().st_mode & 0o777) == "0o600"
 
     with pytest.raises(LocalSkillError) as conflict:
         asyncio.run(

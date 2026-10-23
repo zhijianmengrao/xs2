@@ -22,7 +22,6 @@ from src.workflow.executor_client import (
 from src.workflow.executor_process import (
     ExecutorProcessTree,
     force_kill_pid,
-    forced_exit_code,
     process_is_alive,
 )
 from src.workflow.executor_protocol import (
@@ -512,7 +511,10 @@ def test_real_executor_process_restarts_with_new_pid_and_epoch(
             old_process = supervisor._process
             old_identity = supervisor.identity
             assert old_process is not None
-            old_pid = old_process.pid
+            # Popen.pid is only the launcher on Windows; the contract is that
+            # supervisor.pid identifies the process answering Executor RPC.
+            old_pid = supervisor.pid
+            assert old_pid is not None
             force_kill_pid(old_pid)
 
             deadline = asyncio.get_running_loop().time() + 30.0
@@ -520,7 +522,7 @@ def test_real_executor_process_restarts_with_new_pid_and_epoch(
                 process = supervisor._process
                 if (
                     process is not None
-                    and process.pid != old_pid
+                    and supervisor.pid != old_pid
                     and supervisor.identity.epoch != old_identity.epoch
                 ):
                     try:
@@ -528,7 +530,8 @@ def test_real_executor_process_restarts_with_new_pid_and_epoch(
                     except ExecutorUnavailable:
                         await asyncio.sleep(0.05)
                         continue
-                    assert pong["pid"] == process.pid
+                    assert supervisor.pid is not None
+                    assert pong["pid"] == supervisor.pid
                     assert pong["executor_epoch"] == supervisor.identity.epoch
                     break
                 await asyncio.sleep(0.05)
@@ -537,8 +540,9 @@ def test_real_executor_process_restarts_with_new_pid_and_epoch(
         finally:
             await supervisor.stop()
 
-        assert old_process.returncode == forced_exit_code()
+        assert old_process.returncode is not None
         assert supervisor._process is None
+        assert supervisor.pid is None
 
     asyncio.run(scenario())
 
@@ -1219,6 +1223,8 @@ def test_real_executor_pool_starts_two_members_and_restarts_only_failed_member(
             }
             assert len(set(original_pids.values())) == 2
             victim = pool._supervisors["workflow-executor-0"]
+            # Popen.pid is only the launcher on Windows; the contract is that
+            # supervisor.pid identifies the process answering Executor RPC.
             assert victim.pid is not None
             force_kill_pid(victim.pid)
 

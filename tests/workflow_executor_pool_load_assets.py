@@ -118,6 +118,27 @@ print("<script_out>released</script_out>")
 def _process_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        # os.kill(pid, 0) on Windows maps to GenerateConsoleCtrlEvent(CTRL_C_EVENT),
+        # which would deliver Ctrl+C to our own process group instead of checking
+        # liveness. Probe the process handle instead.
+        import ctypes
+        import ctypes.wintypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.wintypes.DWORD(0)
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(
+                handle, ctypes.byref(code)
+            )
+            if not ok:
+                return False
+            STILL_ACTIVE = 259
+            return code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

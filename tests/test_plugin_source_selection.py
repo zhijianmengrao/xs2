@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from src.plugin_system import source_selection
@@ -153,3 +156,64 @@ def test_probe_historical_commit_remains_a_checkout_candidate(monkeypatch):
     result = source_selection._probe_git_source("https://example.invalid/plugins.git", "a" * 40,
         git_binary="git", timeout_seconds=1)
     assert result.commit == "a" * 40
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("C:\\repo", True),
+    ("F:/repo", True),
+    ("c:relative", True),
+    ("1:\\repo", False),
+    ("\\\\server\\share", False),
+    ("https://example.com/repo.git", False),
+    ("git@example.com:org/repo.git", False),
+    ("", False),
+])
+def test_is_native_windows_drive_path(monkeypatch, raw, expected):
+    monkeypatch.setattr(source_selection.os, "name", "nt")
+    assert source_selection._is_native_windows_drive_path(raw) is expected
+
+
+def test_is_native_windows_drive_path_disabled_on_posix(monkeypatch):
+    monkeypatch.setattr(source_selection.os, "name", "posix")
+    assert source_selection._is_native_windows_drive_path("C:\\repo") is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive-letter semantics")
+def test_canonicalize_native_windows_drive_path_as_local():
+    raw = "F:\\DeterminFlow x2\\DeterminFlow-Plugins"
+    canonical, kind, clone_source = source_selection.canonicalize_plugin_source(raw)
+    expected = Path(raw).resolve().as_uri()
+    assert kind == "local"
+    assert canonical == expected
+    assert clone_source == expected
+
+
+def test_canonicalize_drive_letter_path_rejected_on_posix(monkeypatch):
+    monkeypatch.setattr(source_selection.os, "name", "posix")
+    with pytest.raises(ValueError, match="unsupported Git URL scheme"):
+        source_selection.canonicalize_plugin_source("C:\\repo")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive-letter semantics")
+def test_canonicalize_file_url_resolves_to_local():
+    canonical, kind, clone_source = source_selection.canonicalize_plugin_source(
+        "file:///F:/DeterminFlow%20x2/DeterminFlow-Plugins"
+    )
+    expected = Path("F:\\DeterminFlow x2\\DeterminFlow-Plugins").resolve().as_uri()
+    assert kind == "local"
+    assert canonical == expected
+    assert clone_source == expected
+
+
+def test_canonicalize_file_url_rejects_authority():
+    with pytest.raises(ValueError, match="must not contain authority"):
+        source_selection.canonicalize_plugin_source("file://remote-host/tmp/repository")
+
+
+def test_canonicalize_https_url_normalizes_host_and_strips_trailing_slash():
+    canonical, kind, clone_source = source_selection.canonicalize_plugin_source(
+        "https://GitHub.Example.COM/org/repo.git/"
+    )
+    assert kind == "git"
+    assert canonical == "https://github.example.com/org/repo.git"
+    assert clone_source == canonical

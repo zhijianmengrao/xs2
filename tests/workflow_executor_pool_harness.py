@@ -49,6 +49,8 @@ while time.process_time() - cpu_started_at < 0.15:
 (root / os.environ["TASK_ID"]).write_text(json.dumps({
     "pid": os.getpid(),
     "ppid": os.getppid(),
+    "executor_id": os.environ.get("DETERMINFLOW_EXECUTOR_ID"),
+    "executor_epoch": os.environ.get("DETERMINFLOW_EXECUTOR_EPOCH"),
     "started_at": started_at,
     "completed_at": time.time(),
     "value": value,

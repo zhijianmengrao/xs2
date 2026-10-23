@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,36 @@ id = "demo"
 static_dir = "/tmp/ui"
 """,
             "page.static_dir 必须是",
+        ),
+        (
+            """
+[extension]
+id = "demo"
+[page]
+static_dir = "\\\\ui"
+""",
+            "page.static_dir 必须是",
+        ),
+        (
+            """
+[extension]
+id = "demo"
+[settings]
+schema = " /etc/passwd"
+""",
+            "settings.schema 必须是",
+        ),
+        pytest.param(
+            """
+[extension]
+id = "demo"
+[page]
+static_dir = "C:\\\\ui"
+""",
+            "page.static_dir 必须是",
+            marks=pytest.mark.skipif(
+                os.name != "nt", reason="Windows drive-absolute path"
+            ),
         ),
         (
             """

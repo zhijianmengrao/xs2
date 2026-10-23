@@ -278,9 +278,12 @@ def test_extension_driven_process_exit_is_normal_shutdown(tmp_path: Path):
     _RUNTIME_EVENTS.clear()
     repo = _create_plugin_repo(tmp_path)
     manifest = repo / "extension.toml"
+    # The stop-file path is handed over through the process environment, not
+    # pasted into Python source: ${DATA_DIR} expands to a native Windows path
+    # whose backslashes would otherwise be parsed as Python escape sequences.
     process_code = (
-        "import pathlib,time;"
-        "p=pathlib.Path('${DATA_DIR}/stop');"
+        "import os,pathlib,time;"
+        "p=pathlib.Path(os.environ['STOP_FILE']);"
         "exec('while not p.exists():\\\\n time.sleep(0.01)')"
     )
     manifest.write_text(
@@ -289,7 +292,12 @@ def test_extension_driven_process_exit_is_normal_shutdown(tmp_path: Path):
             f"{__name__}:_create_config_aware_extension",
             f"{__name__}:_create_process_stopping_extension",
         )
-        .replace("import time; time.sleep(30)", process_code),
+        .replace("import time; time.sleep(30)", process_code)
+        .replace(
+            'working_directory = "."',
+            'working_directory = "."\n'
+            'environment = { STOP_FILE = "${DATA_DIR}/stop" }',
+        ),
         encoding="utf-8",
     )
     _git(repo, "add", ".")

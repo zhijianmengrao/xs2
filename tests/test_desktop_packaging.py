@@ -313,11 +313,20 @@ def test_stage_defaults_uses_sanitized_overrides(
     output = tmp_path / "defaults"
     defaults_module.stage_defaults(tmp_path, output)
 
-    assert json.loads((output / "extensions.json").read_text())["enabled"] == []
-    assert json.loads((output / "mcp_servers.json").read_text()) == {
+    # Staged defaults are written as UTF-8. Reading them with the platform
+    # default encoding would decode Chinese names with the system locale
+    # (cp936 on zh-CN Windows) and turn them into mojibake.
+    assert json.loads(
+        (output / "extensions.json").read_text(encoding="utf-8")
+    )["enabled"] == []
+    assert json.loads(
+        (output / "mcp_servers.json").read_text(encoding="utf-8")
+    ) == {
         "mcpServers": {}
     }
-    plugin_source = json.loads((output / "plugin-sources.json").read_text())
+    plugin_source = json.loads(
+        (output / "plugin-sources.json").read_text(encoding="utf-8")
+    )
     assert plugin_source["official_sources"][0]["name"] == "DeterminFlow 官方插件"
     assert plugin_source["official_sources"][0]["url"].startswith("https://github.com/")
     assert plugin_source["official_sources"][0]["mirrors"] == [
@@ -336,9 +345,9 @@ def test_stage_defaults_uses_sanitized_overrides(
             "ref": "main",
         }
     ]
-    assert (output / "models_config.json").read_text() == (
+    assert (output / "models_config.json").read_text(encoding="utf-8") == (
         output / "models_config.example.json"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     verify_defaults(output)
 
 

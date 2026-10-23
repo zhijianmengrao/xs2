@@ -103,6 +103,53 @@ def test_supervisor_snapshot_starts_stopped_and_is_read_only():
         snapshot.status = STATUS_READY
 
 
+def test_supervisor_pid_reports_the_handshake_pid_not_the_launcher_pid():
+    """A launcher pid must never be reported as the Executor pid.
+
+    On Windows a venv ``python.exe`` is a stub that re-execs the real
+    interpreter as a child, so ``Popen.pid`` dies while the real worker keeps
+    running. The worker's own reported pid is authoritative.
+    """
+    supervisor = WorkflowExecutorSupervisor()
+    launcher = _ControllableProcess(pid=1000)
+
+    supervisor._process = launcher
+    assert supervisor.pid == 1000
+
+    supervisor._record_worker_pid({"pid": 2000}, launcher)
+    assert supervisor.pid == 2000
+
+    supervisor._process = None
+    supervisor._worker_pid = None
+    assert supervisor.pid is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        {"pid": None},
+        {"pid": "2000"},
+        {"pid": 2000.0},
+        {"pid": True},
+        {"pid": -5},
+        {"pid": 0},
+        # Reporting the launcher pid adds no information: fall back to it.
+        {"pid": 1000},
+    ],
+)
+def test_supervisor_ignores_unusable_handshake_pid(payload):
+    supervisor = WorkflowExecutorSupervisor()
+    launcher = _ControllableProcess(pid=1000)
+    supervisor._process = launcher
+
+    supervisor._record_worker_pid(payload, launcher)
+
+    assert supervisor._worker_pid is None
+    assert supervisor.pid == 1000
+
+
 def test_supervisor_ready_state_rejects_an_already_exited_process():
     supervisor = WorkflowExecutorSupervisor()
     process = _ControllableProcess(pid=99999123)

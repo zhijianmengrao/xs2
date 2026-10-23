@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import src.workflow.manager as workflow_manager_module
@@ -68,7 +69,10 @@ def test_control_writes_atomically_and_activity_is_fail_closed(tmp_path: Path) -
 
     assert drained["mode"] == "draining"
     assert drained["retry_after_seconds"] == 45
-    assert control.path.stat().st_mode & 0o777 == 0o600
+    # POSIX permission bits (0o600) are only meaningful where os.chmod enforces
+    # them; Windows reports 0o666 regardless, so skip the check there.
+    if os.name != "nt":
+        assert control.path.stat().st_mode & 0o777 == 0o600
     assert activity["active_task_count"] == 1
     assert activity["active_status_counts"]["running"] == 1
     assert activity["unreadable_task_files"] == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import stat
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -261,7 +262,10 @@ def test_account_session_is_private_and_survives_restart(tmp_path: Path) -> None
     installation_id = service.installation_id
     asyncio.run(service.login())
 
-    assert stat.S_IMODE(service.state_path.stat().st_mode) == 0o600
+    if os.name == "posix":
+        # NTFS has no POSIX permission bits, so Windows reports 0o666 for a
+        # writable file whatever chmod() was asked for.
+        assert stat.S_IMODE(service.state_path.stat().st_mode) == 0o600
     reloaded = _service(tmp_path)
     assert reloaded.installation_id == installation_id
     assert reloaded.access_token() == "access"

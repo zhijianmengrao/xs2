@@ -40,7 +40,10 @@ def _signed_in(tmp_path: Path, **kwargs):
 def _write_skill(tmp_path: Path, skill_id: str, text: str) -> None:
     skill_dir = tmp_path / "skills" / "local" / skill_id
     skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(text, encoding="utf-8")
+    # newline="\n" keeps the on-disk bytes identical on Windows, where the
+    # default translation would store CRLF and change the content hash the
+    # marketplace computes over the raw file.
+    (skill_dir / "SKILL.md").write_text(text, encoding="utf-8", newline="\n")
 
 
 def test_prepare_upload_rewrites_identity_and_leaves_source_file(tmp_path: Path) -> None:

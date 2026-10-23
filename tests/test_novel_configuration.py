@@ -26,7 +26,13 @@ class ConfigurationTests(unittest.IsolatedAsyncioTestCase):
                 entry=jobs.start(Path(directory),'budget',{'question':'复杂世界设定','purpose':'advisor'})
                 await jobs.tasks[entry['id']]
             self.assertEqual(budgets,[600])
-            self.assertEqual(factory.call_args.kwargs['timeout'],180)
+            # The transport budget is intentionally the same value as the
+            # completion budget: a long streamed answer (e.g. a full-chapter
+            # reader_repair) must not be cut off by a shorter per-attempt
+            # timeout. See test_novel_repair
+            # ::test_full_chapter_repair_can_complete_after_short_analysis_deadline,
+            # which pins that requirement.
+            self.assertEqual(factory.call_args.kwargs['timeout'],600)
             self.assertTrue(factory.call_args.kwargs['streaming'])
 
     async def test_streamed_final_answer_preserves_json_whitespace_and_excludes_reasoning(self):

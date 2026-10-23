@@ -86,11 +86,10 @@ def test_skills_config_matches_versioned_core_catalog() -> None:
             "enabled": True,
             "priority": 50,
             "auto_inject": True,
-            "workflow_only": False,
+            "scope_override": "all",
         }
         assert config["skills"][skill_id] == {
             "group_ids": ["default"],
-            "auto_inject": True,
         }
 
 

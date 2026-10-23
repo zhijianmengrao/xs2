@@ -489,7 +489,11 @@ class FakeAccount:
 def _manager(tmp_path: Path, *, with_attachment: bool = False) -> SkillManager:
     skill_dir = tmp_path / "skills" / "local" / "shared-skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(SKILL_TEXT, encoding="utf-8")
+    # Write raw bytes (not text mode) so the on-disk bytes are byte-for-byte equal
+    # to SKILL_TEXT.encode(). On Windows, write_text() would translate "\n" into
+    # "\r\n", breaking the byte-identity assertions (sha256/content) in the
+    # marketplace_authoring tests on this platform.
+    (skill_dir / "SKILL.md").write_bytes(SKILL_TEXT.encode("utf-8"))
     if with_attachment:
         (skill_dir / "reference.txt").write_text("not allowed", encoding="utf-8")
     config = SkillConfigManager(tmp_path / "config" / "skills.json")

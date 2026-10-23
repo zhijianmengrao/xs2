@@ -48,7 +48,7 @@ from pathlib import Path
 
 path = Path(os.environ["DETERMINFLOW_MARKER_DIR"]) / (os.environ["TASK_ID"] + "-attempts")
 with path.open("a", encoding="utf-8") as handle:
-    handle.write(str(os.getppid()) + "\\n")
+    handle.write(os.environ.get("DETERMINFLOW_EXECUTOR_ID", "") + "\\n")
 sys.exit(7)
 """
 
@@ -58,7 +58,7 @@ from pathlib import Path
 
 path = Path(os.environ["DETERMINFLOW_MARKER_DIR"]) / (os.environ["TASK_ID"] + "-reject")
 with path.open("a", encoding="utf-8") as handle:
-    handle.write(str(os.getppid()) + "\\n")
+    handle.write(os.environ.get("DETERMINFLOW_EXECUTOR_ID", "") + "\\n")
 print("<script_out>candidate</script_out>")
 """
 
@@ -74,6 +74,14 @@ def _identities(pool):
 def _read_pid_lines(path: Path) -> list[int]:
     return [
         int(line) for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _read_executor_ids(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
@@ -197,7 +205,11 @@ def test_real_default_pool_distributes_twenty_tasks_and_keeps_sticky_binding(
                 marker_data = json.loads(
                     marker.read_text(encoding="utf-8")
                 )
-                assert marker_data["ppid"] == member_pids[task.executor_id]
+                # The script records the owning Executor's identity; its
+                # parent pid is not comparable because a venv python.exe on
+                # Windows is a launcher that re-execs the real interpreter.
+                assert marker_data["executor_id"] == task.executor_id
+                assert marker_data["executor_epoch"] == identity.epoch
                 assert marker_data["completed_at"] >= marker_data["started_at"]
 
             first_bindings = [
@@ -293,11 +305,15 @@ def test_real_pool_routes_retry_and_skip_to_original_executor(
             final = manager._load_task(workflow_id, task_id)
             assert (final.executor_id, final.executor_epoch) == binding
             assert final.node_states["fail"].status == "skipped"
-            attempt_pids = _read_pid_lines(
+            attempt_pids = _read_executor_ids(
                 runtime.marker_dir / f"{task_id}-attempts",
             )
             assert len(attempt_pids) == 2
-            assert set(attempt_pids) == {member_pids[binding[0]]}
+            # The script records the owning Executor's identity. Process ids
+            # cannot be compared here: on Windows a venv python.exe is a
+            # launcher that re-execs the real interpreter, so a script's
+            # parent pid is never the Executor's pid.
+            assert set(attempt_pids) == {binding[0]}
             assert pool.member_pids == member_pids
         finally:
             leftover = await stop_pool_and_collect_leftovers(
@@ -343,11 +359,13 @@ def test_real_pool_reject_upstream_retries_inside_original_executor(
             assert producer.attempt_count == 2
             assert producer.reject_upstream_count == 2
             assert producer.automatic_retry_count == 1
-            producer_pids = _read_pid_lines(
+            producer_pids = _read_executor_ids(
                 runtime.marker_dir / f"{task_id}-reject",
             )
             assert len(producer_pids) == 2
-            assert set(producer_pids) == {member_pids[binding[0]]}
+            # See the retry/skip scenario: the script records the identity of
+            # the Executor that owns the Task.
+            assert set(producer_pids) == {binding[0]}
             assert pool.member_pids == member_pids
         finally:
             leftover = await stop_pool_and_collect_leftovers(
