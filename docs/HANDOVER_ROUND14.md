@@ -58,12 +58,30 @@
 |---|---|---|
 | R14-1 | 评分模型为启发式基线，对冷静角色"情感真实度"偏严 | 若需要可迭代调参或引入模型增强（接口不变） |
 | R14-2 | `analyze-voice` 未走独立 API 冒烟（与 generate 同链路，CLI 已验证） | 按需补一条 from_references 端到端 |
-| R14-3 | docs/HANDOVER_ROUND10.md.bak-20261022 仍未删 | 与正式 R10 比对后确认删除 |
+| R14-3 | ~~docs/HANDOVER_ROUND10.md.bak-20261022~~ | **已核实不存在**（磁盘无 *.bak*，git 状态干净） |
 | R14-4 | 前端 7 处 react-refresh 结构告警（R13 保留项） | context/hook 拆分专项（可选） |
 | R14-5 | 36 条环境限制 skipped | 管理员/WSL/macOS 复跑 |
 | R14-6 | conftest 文本匹配跳过机制（R11-2） | 收敛为统一装饰器 |
 
 **插件仓库后续**：`fea68e5`/`91c4914` 尚未推送远端（本地 main 领先）；如需共享，`git push origin main`。
+
+## 6A. 前端「角色声音」链路联调验收（追加，2026-10-23）
+
+| 项 | 结果 |
+|---|---|
+| API 全链路模拟（scripts/_hw_frontend_sim.py，13 步幂等） | **13/13 PASS × 2 次**（projects→workflows→files→status→voice-file→generate→status→read→PUT save→verify→score-content→score-chapter→check-dialogue） |
+| 静态资源 | index HTML + JS/CSS entry + NovelWorkbenchPage 懒加载 chunk 全部 200 |
+| CharacterVoiceEditor 组件测试（7 条，happy-dom+mock fetch） | **7/7 PASS**（归一化/生成门控/PUT 保存/失败提示/内容加载），纳入 npm test:desktop |
+| 前端全套 | npm test 全过（含新用例）、lint 0 errors、build 成功 |
+| demo 工作区 | `data/workspaces/books/demo-voice`（含 profiles/story/.novel-project.json），可用于浏览器人工验收后删除 |
+
+浏览器人工验收步骤：
+1. 打开 `http://localhost:8021/?tab=novel-workbench`，左侧「角色声音」进入页面；
+2. 应显示「状态: 未创建」+「角色数量 0」，profiles 存在时「从角色档案生成」可点击；
+3. 点击生成 → 提示成功、状态变「已创建」、角色数量 2、编辑器载入两个角色锚点；
+4. 编辑任意内容 → 点「保存」→ 提示「保存成功」；
+5. 保存后可刷新页面，内容仍在（PUT/GET 已验证）。
+
 
 ## 6. 命令记录（本轮）
 
