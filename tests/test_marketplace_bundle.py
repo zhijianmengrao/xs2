@@ -84,6 +84,7 @@ def test_limits_and_bad_base64():
             pack(files)
 
 
+@pytest.mark.requires_symlink
 def test_local_links_are_rejected(tmp_path):
     (tmp_path / "SKILL.md").write_bytes(ROOT)
     (tmp_path / "link.md").symlink_to(tmp_path / "SKILL.md")

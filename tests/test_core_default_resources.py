@@ -190,6 +190,7 @@ def test_provision_core_skills_removes_runtime_python_cache(tmp_path: Path) -> N
     assert not cache.exists()
 
 
+@pytest.mark.requires_symlink
 def test_provisioned_workflow_validator_runs_from_data_layout(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     isolated_repo = tmp_path / "repo"

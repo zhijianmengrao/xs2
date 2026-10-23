@@ -344,6 +344,7 @@ def test_process_cwd_cannot_escape_plugin_directory(
         )
 
 
+@pytest.mark.requires_symlink
 def test_process_cwd_symlink_cannot_escape_plugin_directory(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugin"
     plugin_dir.mkdir()

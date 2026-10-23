@@ -40,46 +40,25 @@ def _can_create_symlink() -> bool:
 _CAN_CREATE_SYMLINK = _can_create_symlink()
 
 
-def _symlink_dependent_test_names(source: str) -> set[str]:
-    """Return test function names whose body references symlink creation."""
-    result: set[str] = set()
-    # Match top-level async/test functions; bodies run to the next top-level def/class.
-    for match in re.finditer(
-        r"^(?:async\s+)?def\s+(test_[A-Za-z0-9_]*)\b.*?^(?=(?:async\s+)?def\s+|\Z)",
-        source,
-        re.MULTILINE | re.DOTALL,
-    ):
-        name, body = match.group(1), match.group(0)
-        if "symlink" in body.lower():
-            result.add(name)
-    return result
-
-
 def pytest_collection_modifyitems(config, items):
+    # Skip the macOS-only signing tests when Mach-O tooling is absent.
+    if sys.platform != "darwin":
+        for item in items:
+            if "macos_signing" in pathlib.Path(str(item.fspath)).name.lower():
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason="macOS signing tooling is unavailable on this platform"
+                    )
+                )
+    # Symlink-dependent cases opt in explicitly via @pytest.mark.requires_symlink;
+    # no fragile source-text scanning. Skip them only when the OS cannot create
+    # symlinks (e.g. Windows without the SeCreateSymbolicLinkPrivilege token).
     if _CAN_CREATE_SYMLINK:
         return
     for item in items:
-        source_path = pathlib.Path(str(item.fspath))
-        try:
-            source = source_path.read_text(encoding="utf-8")
-        except OSError:
-            source = ""
-        # Skip the macOS-only signing tests when Mach-O tooling is absent.
-        if (
-            sys.platform != "darwin"
-            and "macos_signing" in source_path.name.lower()
-        ):
+        if item.get_closest_marker("requires_symlink"):
             item.add_marker(
                 pytest.mark.skip(
-                    reason="macOS signing tooling is unavailable on this platform"
+                    reason="OS-level symlink creation is unavailable in this environment"
                 )
             )
-            continue
-        base_name = item.name.split("[", 1)[0]
-        if base_name not in _symlink_dependent_test_names(source):
-            continue
-        item.add_marker(
-            pytest.mark.skip(
-                reason="OS-level symlink creation is unavailable in this environment"
-            )
-        )

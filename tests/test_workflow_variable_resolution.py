@@ -59,6 +59,7 @@ def test_workflow_file_path_rejects_workspace_escape(tmp_path, target):
         resolve_workspace_file_path(workspace, target)
 
 
+@pytest.mark.requires_symlink
 def test_workflow_file_path_rejects_symlink_escape(tmp_path):
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside"

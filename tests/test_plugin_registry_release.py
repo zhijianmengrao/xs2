@@ -125,6 +125,7 @@ def test_registry_build_is_deterministic_and_client_verifiable(tmp_path: Path) -
         assert (extracted / "run.sh").stat().st_mode & 0o111
 
 
+@pytest.mark.requires_symlink
 def test_registry_build_rejects_git_symlinks(tmp_path: Path) -> None:
     repository, _ = _repository(tmp_path, symlink=True)
 

@@ -890,6 +890,7 @@ def test_package_download_failsover_between_endpoints(
     assert f"{backup}/packages/demo-plugin/{commit}.zip" in http.calls
 
 
+@pytest.mark.requires_symlink
 def test_zip_rejects_traversal_symlink_and_abnormal_size(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

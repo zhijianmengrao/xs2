@@ -144,6 +144,7 @@ def test_relative_override_cannot_escape_to_external_data_dir(
     assert not (data_root / "plugin-workspace").exists()
 
 
+@pytest.mark.requires_symlink
 def test_absolute_override_rejects_symlink_escape_from_data_dir(
     workspace_roots,
 ) -> None:

@@ -213,6 +213,7 @@ def test_plugin_config_rejects_invalid_values(
         store.save("demo", schema, values)
 
 
+@pytest.mark.requires_symlink
 def test_load_settings_schema_rejects_remote_ref_and_path_escape(tmp_path: Path):
     plugin_dir = tmp_path / "plugin"
     plugin_dir.mkdir()
@@ -438,6 +439,7 @@ def test_in_process_runtime_materializes_file_secret_without_persisting_it(
     assert applied == {"ENABLED": False}
 
 
+@pytest.mark.requires_symlink
 def test_in_process_runtime_rejects_unsafe_setting_file(tmp_path: Path) -> None:
     target = tmp_path / "secret"
     target.write_text("secret", encoding="utf-8")

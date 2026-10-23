@@ -292,6 +292,7 @@ def test_update_refuses_builtin_local_and_missing_installs(tmp_path: Path) -> No
     assert missing_error.value.status_code == 404
 
 
+@pytest.mark.requires_symlink
 def test_update_validates_downloaded_version_and_refuses_symlinks(tmp_path: Path) -> None:
     manager = _empty_manager(tmp_path)
     service = _service(tmp_path, manager=manager)
@@ -312,6 +313,7 @@ def test_update_validates_downloaded_version_and_refuses_symlinks(tmp_path: Path
     assert symlink_error.value.code == "conflict"
 
 
+@pytest.mark.requires_symlink
 def test_update_route_reuses_install_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DETERMINFLOW_DESKTOP", "1")
     service = _service(tmp_path, manager=_empty_manager(tmp_path))
@@ -337,6 +339,7 @@ def test_update_route_reuses_install_request(tmp_path: Path, monkeypatch: pytest
 
 
 @pytest.mark.parametrize("mutation", ["content", "provenance", "symlink"])
+@pytest.mark.requires_symlink
 def test_update_rechecks_local_state_after_download(tmp_path: Path, mutation: str) -> None:
     service = _service(tmp_path, manager=_empty_manager(tmp_path))
     asyncio.run(service.install("shared-skill", **_pin(service)))
@@ -368,6 +371,7 @@ def test_update_rechecks_local_state_after_download(tmp_path: Path, mutation: st
     assert path.read_bytes() == (before + b"\nlocal edit during download\n" if mutation == "content" else before)
 
 
+@pytest.mark.requires_symlink
 def test_update_does_not_remove_unknown_temporary_files(tmp_path: Path) -> None:
     service = _service(tmp_path, manager=_empty_manager(tmp_path))
     asyncio.run(service.install("shared-skill", **_pin(service)))

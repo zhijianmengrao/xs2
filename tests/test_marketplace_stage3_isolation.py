@@ -66,6 +66,7 @@ async def _assert_account_switch(tmp_path: Path, operation: str) -> None:
     assert restored["draft"]["revision"] == 1
 
 
+@pytest.mark.requires_symlink
 def test_draft_partition_symlink_cannot_read_or_delete_another_accounts_file(tmp_path: Path) -> None:
     asyncio.run(_assert_symlink_isolation(tmp_path))
 

@@ -52,3 +52,6 @@ include = ["src*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "requires_symlink: test case creates symlinks and is skipped when the OS cannot (e.g. Windows without SeCreateSymbolicLinkPrivilege)",
+]

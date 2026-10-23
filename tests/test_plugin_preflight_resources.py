@@ -411,6 +411,7 @@ def test_preflight_rejects_group_helpers_and_sibling_script_imports(
         validate_plugin_checkout("demo-plugin", plugin)
 
 
+@pytest.mark.requires_symlink
 def test_preflight_rejects_invalid_script_python_without_executing(
     tmp_path: Path,
 ) -> None:
@@ -431,6 +432,7 @@ def test_preflight_rejects_invalid_script_python_without_executing(
 
 
 @pytest.mark.parametrize("use_symlink", [False, True])
+@pytest.mark.requires_symlink
 def test_preflight_rejects_resource_path_escape_and_symlinks(
     tmp_path: Path,
     use_symlink: bool,
@@ -453,6 +455,7 @@ def test_preflight_rejects_resource_path_escape_and_symlinks(
         validate_plugin_checkout("demo-plugin", plugin)
 
 
+@pytest.mark.requires_symlink
 def test_preflight_rejects_nested_bundle_symlink(tmp_path: Path) -> None:
     plugin = tmp_path / "plugin"
     _write_manifest(

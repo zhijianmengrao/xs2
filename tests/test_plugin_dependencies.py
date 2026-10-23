@@ -52,6 +52,7 @@ def test_install_plugin_requirements_uses_argv_and_current_python(
     assert observed["kwargs"].get("shell") is not True
 
 
+@pytest.mark.requires_symlink
 def test_install_plugin_requirements_rejects_symlink_escape(tmp_path: Path):
     plugin = tmp_path / "plugin"
     plugin.mkdir()

@@ -560,6 +560,7 @@ def test_plugin_id_must_be_lowercase_kebab_case(
         store.install(plugin_id, str(repo))
 
 
+@pytest.mark.requires_symlink
 def test_symlink_cannot_escape_checked_out_package(tmp_path: Path) -> None:
     repo, package, _ = _create_repo(tmp_path, subdirectory="package")
     (repo / "outside.txt").write_text("outside\n", encoding="utf-8")

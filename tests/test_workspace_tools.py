@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from src.agent.definition import AgentDefinition, resolve_agent_tools
 from src.session.context import set_session_context
 from src.tools.registry import ToolRegistry
@@ -61,6 +63,7 @@ def test_existing_agent_coding_whitelist_is_unchanged():
     assert [tool.name for tool in resolve_agent_tools(definition, coding + workspaces, [])] == ["execute_command", "workspace_read"]
 
 
+@pytest.mark.requires_symlink
 def test_cache_is_disposable_version_and_scope_separated(tmp_path):
     root = tmp_path / "cache"
     cache = WorkspaceCache(root)

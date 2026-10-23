@@ -6,6 +6,7 @@ import pytest
 from desktop.scripts.sign_macos_backend import sign_macos_backend
 
 
+@pytest.mark.requires_symlink
 def test_signs_actual_macho_files_before_copy_not_data_or_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     binary = tmp_path / "Python"
     binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"runtime")

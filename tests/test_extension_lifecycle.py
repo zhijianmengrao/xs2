@@ -363,6 +363,7 @@ def test_runner_passes_shell_metacharacters_as_literal_argument(
     assert not injected.exists()
 
 
+@pytest.mark.requires_symlink
 def test_runner_receives_only_explicit_plugin_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -410,6 +411,7 @@ def test_runner_receives_only_explicit_plugin_environment(
     not hasattr(os, "symlink"),
     reason="symlink is not supported",
 )
+@pytest.mark.requires_symlink
 def test_runner_rejects_working_directory_symlink_escape(
     tmp_path: Path,
 ) -> None:
