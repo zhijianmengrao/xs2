@@ -121,3 +121,20 @@ xs2 回归 63 passed → 提交（d2f1e2b / dbaae08）
 
 - **测试**：插件 test_humanware_helper.py 新增 2 条防回归（冷静平稳 emotion≥85；爆发显著低于平稳 + tone_spike），15/15 通过。
 - **端到端**（插件 e4ba419 + 更新 + 重启）：welcome/林晚 score-content——平稳 96/A、爆发 65 且 emotion=0；输出契约与前端 HumanwareScoreCard 字段完全不变。
+
+## 6D. 剩余事项收尾（2026-10-23）
+
+### R14-2 analyze-voice 端到端冒烟 ✅
+- `scripts/_hw_analyze_smoke.py`：为 demo-voice 写入 `references/sample-novel.md`（两个角色各 3 句引号对白），调用 `POST /api/humanware/generate-voice-file {from_references: true}` → **200，character_count=2**，`meta/character_voice.md` 由参考样本提炼生成（含句法指纹）。
+
+### R14-6 conftest 跳过机制装饰器化 ✅（commit de671fe）
+- 移除对测试函数体的文本扫描（R11-2 遗留的漏判风险），改为显式 `@pytest.mark.requires_symlink`（23 条用例逐一标注，marker 注册于 pyproject.toml）。
+- 全量回归：**1523 passed / 36 skipped / 0 failed**，跳过分布与改造前完全一致。
+
+### R14-4 前端 react-refresh 告警清零 ✅（commit c563fc7）
+- 拆分 6 个模块：`novel-reference.ts`（纯函数）、`novel-preferences-context.ts`、`settings-workspace-context.ts`、`use-register-settings-store.ts`、`core-config-context-value.ts`、`plugins-context-value.ts`。
+- provider/组件文件只保留组件导出；14 个引用方改从新模块 import。
+- **lint 25 warnings → 0 problems（0 errors / 0 warnings）**；`npm test` 8 套件全过；`npm run build` 成功。
+
+### R14-5 环境限制项（不可在本机推进）
+- 36 条 skipped 中 23 条依赖 `SeCreateSymbolicLinkPrivilege`（本机令牌为 Disabled，进程内无法启用），6 条 macOS 签名工具链、2 条 POSIX fcntl、2 条 Unix 进程组/树断言。需管理员会话、启用 Developer Mode 后重新登录，或 WSL/Linux、macOS 机器复跑。**非代码缺陷。**
