@@ -12,8 +12,9 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from src.web import humanware_routes
@@ -96,19 +97,26 @@ class HumanwareRoutesTests(unittest.TestCase):
             full = "data/workspaces/books/alpha"
             response = client.get(f"/api/humanware/status/{full.split('/')[-1]}")
             self.assertEqual(response.status_code, 200)
-            body = client.post(
-                "/api/humanware/generate-voice-file",
-                json={"workspace_id": full, "from_profiles": True},
-            )
-            # CLI 未随插件发布 -> 501（业务未就绪），而非 500
+            # 显式模拟 CLI 未部署：完整相对路径能通过校验并到达 CLI 调用点
+            def _missing_cli():
+                raise HTTPException(status_code=501, detail="Humanware CLI 未部署（测试模拟）")
+            with patch.object(humanware_routes, "_get_humanware_cli_path", side_effect=_missing_cli):
+                body = client.post(
+                    "/api/humanware/generate-voice-file",
+                    json={"workspace_id": full, "from_profiles": True},
+                )
+            # 路径解析通过后由 CLI 缺失返回 501（业务未就绪），而非 400/500
             self.assertEqual(body.status_code, 501, body.text)
 
     def test_generate_reports_501_when_cli_absent(self):
         with self._client() as client:
-            response = client.post(
-                "/api/humanware/generate-voice-file",
-                json={"workspace_id": "alpha", "from_profiles": True},
-            )
+            def _missing_cli():
+                raise HTTPException(status_code=501, detail="Humanware CLI 未部署（测试模拟）")
+            with patch.object(humanware_routes, "_get_humanware_cli_path", side_effect=_missing_cli):
+                response = client.post(
+                    "/api/humanware/generate-voice-file",
+                    json={"workspace_id": "alpha", "from_profiles": True},
+                )
             self.assertEqual(response.status_code, 501, response.text)
             self.assertIn("humanware", response.json()["detail"].lower())
 
