@@ -176,7 +176,8 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
           <div className="flex gap-2">
             <button
               onClick={generateFromProfiles}
-              disabled={generating || !status?.profiles_file_exists}
+              disabled={generating}
+              title={status?.profiles_file_exists ? undefined : '请先在「创作流程 → 创建角色」生成角色档案（character_profiles.md）'}
               className={secondaryButtonClass}
             >
               <Wand2 className="h-4 w-4" />
@@ -192,6 +193,13 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
             </button>
           </div>
         </div>
+
+        {!status?.profiles_file_exists && (
+          <p role="status" className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-6 text-warning">
+            尚未创建角色档案：请先到「创作流程」运行「创建角色」步骤生成 character_profiles.md，
+            然后回到这里点击「从角色档案生成」。
+          </p>
+        )}
 
         <div className="mt-4 flex gap-6 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">

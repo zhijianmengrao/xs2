@@ -94,11 +94,17 @@ test("generate button posts workspace_id with the bare id", async () => {
   assert.equal(body.from_profiles, true);
 });
 
-test("generate button is disabled when profiles are missing", async () => {
+test("generate button stays clickable without profiles and shows guidance on click", async () => {
   statusBody = { voice_file_exists: false, profiles_file_exists: false, humanware_enabled: false, character_count: 0 };
   await mount();
   const generateButton = button("从角色档案生成");
-  assert.equal((generateButton as HTMLButtonElement).disabled, true);
+  // 无档案时不再禁用，点击应给出引导提示
+  assert.equal((generateButton as HTMLButtonElement).disabled, false);
+  await click(generateButton);
+  const messages = [...document.querySelectorAll("span")].map(el => el.textContent || "").join(" ");
+  assert.ok(messages.includes("character_profiles.md"), "guidance message shown");
+  // 未生成前不应调用生成端点
+  assert.ok(!calls.some(c => c.url.includes("/generate-voice-file")), "no generate call without profiles");
 });
 
 test("save posts PUT with normalized workspace_id and content, then reloads status", async () => {
