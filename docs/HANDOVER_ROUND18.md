@@ -21,7 +21,7 @@
 | 全量回归 **0 失败**（两种 IL 各一次）：Low-IL **1623 passed / 98 skipped**；High-IL **1708 passed / 13 skipped**（较 R17 **净增 124 条用例**：passed +122、skipped +2 为 F6/F7） | §6 实跑 |
 | 前端无改动：lint 0 problems、**406 个测试全过（8 套件，fail 0）**、build ✓ 6.32s | §6（本轮用完整落盘输出统计，不再用 `-First/-Last` 截断） |
 | 性能：守卫开销实测 **0.88 μs/id**（纯 Python、无 IO），对每次请求最多 1 次的路径，可忽略 | §7 O3 |
-| 两仓库**仍未推送**（xs2 现 27 笔含本收尾提交 / 插件 5 笔）；本轮再次未擅自推送 | §8 R18-1 |
+| 两仓库**仍未推送**（xs2 **29 笔** = R17 收尾时 26 + 本轮代码 `ec52c89` + 文档 `5cffeb5` + 本更正提交；插件 5 笔）；本轮再次未擅自推送 | §8 R18-1 |
 
 ## 2. 测试计划（本轮）
 
@@ -157,8 +157,8 @@
 ### B6 — core 的客户端输入错误逃逸为 **HTTP 500**
 - **现象**：`PUT /api/novel-console/text` 与 `GET /api/workflows/workspace-files` 对
   `workflow_id="中文"`（清洗后为空）返回 **500 Internal Server Error**；8021 线上同样 500。
-- **根因**：`WorkspaceManager._sanitize_id` 抛**裸 `ValueError`**，26 个 novel 端点与
-  3 个 workflow 端点都不捕获它，异常直达 Starlette 兜底。R15 曾在 humanware 面把
+- **根因**：`WorkspaceManager._sanitize_id` 抛**裸 `ValueError`**，novel 面 26 处与
+  workflow 面 3 处 `resolve_workflow_workspace` 调用点（实测 grep 计数）都不捕获它，异常直达 Starlette 兜底。R15 曾在 humanware 面把
   subprocess 的 `ValueError` 映射为 400，但那是**另一处**（CLI argv 校验），core 这条路径漏了。
   后果：作者填了中文名只会看到"服务器错误"，不知道是自己名字不合法，且反复重试。
 - **修复**：
@@ -238,7 +238,7 @@
   所以 R17 那几行「→ 400」也是巧合正确（测的其实是去掉点的名字）。
 
 ### P0-1（R17 遗留，仍未完成）— 两仓库推送
-- xs2 26 笔（本收尾提交后 27）/ 插件 5 笔未推送；`credential.helper=manager` 需弹窗，
+- xs2 **28 笔**（R17 收尾时 26 + 本轮 `ec52c89` 代码 + `5cffeb5` 文档 + 本更正提交）/ 插件 5 笔未推送；`credential.helper=manager` 需弹窗，
   无人值守被拦。需用户手动：
   `cd "F:\DeterminFlow x2\DeterminFlow-Plugins" && git push origin main`，随后 xs2 同法。
 - 验收：两仓库 `git log origin/main..main` 为空。
@@ -311,7 +311,7 @@
 
 | 编号 | 问题 | 说明 | 风险 |
 |---|---|---|---|
-| **R18-1** | 两仓库未推送（xs2 26→27 笔 / 插件 5 笔） | 无缓存凭据，需用户手动 `git push`（GCM 弹窗） | 中（协作/备份） |
+| **R18-1** | 两仓库未推送（xs2 **29 笔**：R17 收尾 26 + 本轮 3 笔含本文档更正；插件 5 笔） | 无缓存凭据，需用户手动 `git push`（GCM 弹窗）；以 `git log origin/main..main` 实测为准 | 中（协作/备份） |
 | **R18-2** | 8021 仍运行 **v3.2** 代码（pid 78636，另一会话持有） | B6/B7 的**线上**表现未变（500 / 谎报 200），进程内与单测已修复并验证；需重启才会生效。e2e F6/F7 当前诚实 skip | **中**（修复未上线；本轮未擅自重启他人进程） |
 | R18-3 | `web/dist/` 由本轮 `npm run build` 重新生成（前端代码未改） | 若服务以静态目录对外，产物时间戳变化但内容等价 | 低 |
 | R18-4 | marketplace 去重后新增集合含 `CONIN$`/`CONOUT$`/`CLOCK$` | 实测被 `_COMPONENT` 字符集先拒，**行为等价**（99 条对照）；若将来放宽 `_COMPONENT` 允许 `$`，新集合会多拒这三族——方向安全（更严），但需知悉 | 低 |
@@ -328,7 +328,7 @@
 | 优先级 | 任务 | 预估工作量 | 验收标准 |
 |---|---|---|---|
 | **P0** | 重启 8021 使 v3.3（core 守卫 + 400 映射）上线；随后 `pytest tests/test_humanware_e2e.py` 应 **15 passed / 0 skipped**（F6/F7 由 skip 转 PASS） | 0.5h（需用户确认，进程属另一会话） | 服务侧 `workflow_id=中文`→400、`workspace=…/NUL`→400；行为指纹记录 |
-| **P0** | 手动推送两仓库（xs2 27 笔 / 插件 5 笔） | 0.2h | 两仓库 `git log origin/main..main` 为空 |
+| **P0** | 手动推送两仓库（xs2 29 笔 / 插件 5 笔，以 `git log origin/main..main` 实测为准） | 0.2h | 两仓库 `git log origin/main..main` 为空 |
 | **P0** | 协调单一写入流：与并发会话约定各自 `git add` 显式路径或改用独立 worktree/分支（R17-10 / R18-6） | 0.5h | 无第三主体半提交；交接中 HEAD 与工作树状态可解释 |
 | P1 | 名字拼接点全面复查（R17 §9 P2 的剩余部分）：`novel_reference_*`、`export` 下载名、插件 `runtime-resources` 目录名、`attachments`/`mentions` 文件名 | 1.5h | 列出清单 + 每个危险点有测试或明确豁免理由 |
 | P1 | 以 High-IL 为准把「权威基线」写入 CI（GitHub Actions windows runner 或文档化 job），Low-IL 仅作快速跑 | 1h | CI 文件或 `.github/workflows` 一次成功记录；文档写明两种模式数字与用途 |
