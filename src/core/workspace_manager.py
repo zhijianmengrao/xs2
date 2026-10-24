@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Optional
 
 import src.config as config
+from src.core.win_names import (
+    UnsafeWorkspaceIdError,
+    unsafe_windows_component,
+    unsafe_windows_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,22 @@ def resolve_workspace_base_path(base_dir: str | Path | None = None) -> Path:
         else config.BASE_DIR
     )
     return (anchor / candidate).resolve()
+
+
+def _ensure_resolvable_root(resolved: Path, anchor: Path) -> Path:
+    """拒绝落在 Windows「幻影目录」上的 workspace 覆盖路径（R18 B7）。
+
+    只检查 ``anchor`` **以下**由调用方提供的那几段，不复查祖先目录——仓库自身所在
+    路径不属于本次输入，检查它会把正常部署整体打死。
+
+    为何必须在 core 拦：``NUL`` 段 `mkdir` 静默成功、`exists()` 恒真，因此
+    `resolve_workflow_workspace` 会把这条「看起来存在」的路径返回给调用方；只读端点
+    据此返回 200 + 空列表（谎报工作区存在且为空），写入端点则必然 WinError 3 崩溃。
+    """
+    reason = unsafe_windows_root(resolved.relative_to(anchor))
+    if reason:
+        raise UnsafeWorkspaceIdError(f"工作区路径名不安全：{reason}")
+    return resolved
 
 
 def resolve_workflow_workspace_path(
@@ -73,7 +94,8 @@ def resolve_workflow_workspace_path(
                 allowed_roots,
             )
             return default_path
-        return resolved
+        anchor = next(root for root in allowed_roots if resolved.is_relative_to(root))
+        return _ensure_resolvable_root(resolved, anchor)
 
     resolved = (config.BASE_DIR / override_path).resolve()
     if not resolved.is_relative_to(config.BASE_DIR.resolve()):
@@ -83,7 +105,7 @@ def resolve_workflow_workspace_path(
             resolved,
         )
         return default_path
-    return resolved
+    return _ensure_resolvable_root(resolved, config.BASE_DIR.resolve())
 
 
 @dataclass
@@ -128,10 +150,21 @@ class WorkspaceManager:
         """过滤 session/workflow ID，仅保留安全字符，防止路径穿越。
 
         仅允许字母、数字、下划线、连字符。空结果抛 ValueError。
+
+        额外拦 Windows 保留设备名（R17-3 / R18 B8）：``NUL`` 等清洗后原样保留，
+        Windows 下 ``mkdir`` 会静默「成功」出一个幻影目录（``exists()`` 恒真、
+        ``is_dir()`` 为假、其下写入必然失败、``shutil.rmtree`` 删不掉），
+        既污染 ``data/workspaces/`` 又让后续读写与清理全部失真。
+        尾随点/空白不在此拒：清洗本身已把它们剥掉（``welcome.`` → ``welcome``），
+        返回值与落盘名一致，不构成读写错位；非规范名的原始字符串仍由各 web 面
+        在解析入参时按 path_guard 拒绝（R17 v3.2）。
         """
         safe = re.sub(r"[^a-zA-Z0-9_-]", "", raw_id)
         if not safe:
-            raise ValueError(f"无效的 ID（清洗后为空）: {raw_id!r}")
+            raise UnsafeWorkspaceIdError(f"无效的 ID（清洗后为空）: {raw_id!r}")
+        reason = unsafe_windows_component(safe)
+        if reason:
+            raise UnsafeWorkspaceIdError(f"无效的 ID（{raw_id!r}）：{safe} {reason}")
         return safe
 
     # ============================================================

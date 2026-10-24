@@ -99,13 +99,16 @@ def test_community_defaults_to_process_pool_and_allows_inline_rollback():
             "AI_COMPANY_WORKFLOW_EXECUTOR_COUNT",
         }
     }
+    # 与本文件其余 subprocess 用例一致：显式约定 UTF-8，与本机 locale 解耦（R18 B9）。
+    environment["PYTHONIOENCODING"] = "utf-8"
     defaulted = subprocess.run(
         [sys.executable, "-c", (
             "from src.config import WORKFLOW_EXECUTOR_MODE, WORKFLOW_EXECUTOR_COUNT; "
             "print(WORKFLOW_EXECUTOR_MODE, WORKFLOW_EXECUTOR_COUNT)"
         )],
         env=environment,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -120,7 +123,8 @@ def test_community_defaults_to_process_pool_and_allows_inline_rollback():
             "print(WORKFLOW_EXECUTOR_MODE, WORKFLOW_EXECUTOR_COUNT)"
         )],
         env=environment,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -130,6 +134,10 @@ def test_community_defaults_to_process_pool_and_allows_inline_rollback():
 
 def test_executor_count_reads_prefixed_environment_and_rejects_invalid_value():
     environment = os.environ.copy()
+    # 子进程报错走中文 stderr：显式约定两端都用 UTF-8，否则父进程按本机 locale
+    # （cp936）解码子进程的 UTF-8 输出会抛 UnicodeDecodeError，subprocess 把
+    # stderr 置为 None，断言退化成 TypeError（R18 B9）。
+    environment["PYTHONIOENCODING"] = "utf-8"
     environment["DETERMINFLOW_WORKFLOW_EXECUTOR_COUNT"] = "3"
     valid = subprocess.run(
         [sys.executable, "-c", (
@@ -137,7 +145,8 @@ def test_executor_count_reads_prefixed_environment_and_rejects_invalid_value():
             "print(WORKFLOW_EXECUTOR_COUNT)"
         )],
         env=environment,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -148,11 +157,13 @@ def test_executor_count_reads_prefixed_environment_and_rejects_invalid_value():
     invalid = subprocess.run(
         [sys.executable, "-c", "import src.config"],
         env=environment,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
     assert invalid.returncode != 0
+    assert invalid.stderr is not None
     assert "WORKFLOW_EXECUTOR_COUNT 必须是整数" in invalid.stderr
 
 

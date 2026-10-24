@@ -193,3 +193,82 @@ def test_delete_project_with_phantom_workspace_root_does_not_500(novel_client, t
         "/api/novel-console/projects",
         params={"workflow_id": "xs2-novel-flywheel", "workspace": str(phantom)})
     assert response.status_code in (400, 403), response.text
+
+
+# ---------------------------------------------------------------------------
+# Round 18：core 层守卫在 **真实调用链** 上的收敛（B6/B7）
+# 上面各例用 SimpleNamespace 替换了 _ws_manager，因此不会经过 WorkspaceManager 自身；
+# 这里改用真实 WorkspaceManager + create_app 的错误处理器，验证端点返回的状态码。
+# ---------------------------------------------------------------------------
+
+
+def _r18_app(workspace_root: Path):
+    """真实 WorkspaceManager 驱动的 app，并注册与线上同一的错误映射。"""
+    from src.core.workspace_manager import WorkspaceManager
+    from src.web.error_handlers import install_workspace_error_handlers
+    from src.web import workflow_routes
+
+    manager = SimpleNamespace(
+        _ws_manager=WorkspaceManager(base_dir=str(workspace_root)),
+        get_workflow_execution_policy=lambda _workflow: "public",
+        is_workflow_owner_enabled=lambda _workflow: True,
+    )
+    app = FastAPI()
+    app.include_router(novel_routes.router)
+    app.include_router(workflow_routes.router)
+    app.state.workflow_manager = manager
+    install_workspace_error_handlers(app)
+    return app, manager
+
+
+def test_r18_cjk_workflow_id_returns_400_not_500(tmp_path):
+    """B6 端到端：清洗后为空的 id（纯中文）必须是 4xx，不得是 500。
+
+    修复前实测：`PUT /api/novel-console/text` 与 `GET /api/workflows/workspace-files`
+    对 `workflow_id="中文书"` 返回 **500 Internal Server Error**（裸 ValueError 逃逸）。
+    """
+    app, _ = _r18_app(tmp_path / "ws")
+    with TestClient(app) as client:
+        for path, kwargs in (
+            ("/api/novel-console/text", {
+                "json": {"workflow_id": "中文书", "workspace": str(tmp_path / "ws" / "book"),
+                         "path": "a.md", "content": "x"}}),
+            ("/api/workflows/workspace-files", {
+                "params": {"workflow_id": "中文书", "workspace": str(tmp_path / "ws" / "book")}}),
+        ):
+            method = "put" if path.endswith("text") else "get"
+            response = getattr(client, method)(path, **kwargs)
+            assert response.status_code == 400, (path, response.status_code, response.text)
+            assert response.status_code != 500
+            assert "detail" in response.json(), response.text
+
+
+def test_r18_phantom_override_returns_400_on_readonly_endpoint(tmp_path):
+    """B7 端到端：只读端点不得对幻影根返回 200 + 空列表（谎报工作区存在且为空）。
+
+    修复前实测：`GET /api/workflows/workspace-files?workspace=.../books/NUL` → **200**
+    `{\"workspace\": \"...NUL\", \"files\": []}`。
+    """
+    if not IS_NT:
+        pytest.skip("幻影目录仅在 Windows 文件系统语义下成立")
+    app, _ = _r18_app(tmp_path / "ws")
+    phantom = tmp_path / "ws" / "books" / "NUL"
+    with TestClient(app) as client:
+        response = client.get("/api/workflows/workspace-files", params={
+            "workflow_id": "wf1", "workspace": str(phantom)})
+        assert response.status_code == 400, (response.status_code, response.text)
+    assert not (tmp_path / "ws" / "books").exists()
+
+
+def test_r18_normal_ids_still_work_through_manager(tmp_path):
+    """守卫不误伤：真实 WorkspaceManager 下常规 id 与常规 override 照常可用。"""
+    app, manager = _r18_app(tmp_path / "ws")
+    book = tmp_path / "ws" / "books" / "welcome"
+    book.mkdir(parents=True)
+    with TestClient(app) as client:
+        response = client.put("/api/novel-console/text", json={
+            "workflow_id": "xs2-novel-flywheel", "workspace": str(book),
+            "path": "references/outline.md", "content": "正文"})
+        assert response.status_code == 200, response.text
+        assert (book / "references/outline.md").read_text(encoding="utf-8") == "正文"
+        assert manager._ws_manager.create_workflow_workspace("wf-1").is_dir()

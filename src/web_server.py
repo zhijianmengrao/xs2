@@ -58,6 +58,7 @@ from src.web.workflow_node_control_routes import router as workflow_node_control
 from src.web.attachment_routes import router as attachment_router
 from src.web.mention_routes import router as mention_router
 from src.web.humanware_routes import router as humanware_router
+from src.web.error_handlers import install_workspace_error_handlers
 from src.web.ws_handlers import handle_chat_ws, handle_events_ws
 from src.account.routes import router as account_router
 from src.skill_marketplace.routes import router as resource_marketplace_router
@@ -845,6 +846,7 @@ def create_app(extension_manager: ExtensionManager | None = None) -> FastAPI:
     application.include_router(workspace_settings_router)
     application.include_router(extension_router)
     application.include_router(plugin_router)
+    install_workspace_error_handlers(application)
     for owner, router in manager.routers:
         application.include_router(
             router,

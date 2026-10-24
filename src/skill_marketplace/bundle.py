@@ -12,6 +12,7 @@ import stat
 from pathlib import Path
 
 from .errors import LocalSkillError
+from src.core.win_names import has_unsafe_trailing_char, is_reserved_device_name
 
 FORMAT = "determinflow.skill-bundle.v1"
 MAX_FILE_BYTES = 256 * 1024
@@ -19,7 +20,11 @@ MAX_TOTAL_BYTES = 1024 * 1024
 MAX_PACKAGE_BYTES = 2 * 1024 * 1024
 MAX_FILES = 64
 _COMPONENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
-_RESERVED = re.compile(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", re.I)
+# Windows 保留设备名 / 尾随点的判定复用 src/core/win_names 的单一规则源（R17-4、R18 O1）。
+# 这里刻意用**平台无关**谓词（不按 os.name 门控）：Skill 包必须跨平台可移植，POSIX 上
+# 也应拒绝 `NUL.md`，否则包在 Windows 解包时会撞上设备语义。
+# 行为与替换前逐项一致：旧的内联 `_RESERVED` 只含 CON/PRN/AUX/NUL/COM1-9/LPT1-9，新增的
+# CONIN$/CONOUT$/CLOCK$ 因含 `$` 早已被 `_COMPONENT` 拒绝（见对照测试）。
 
 
 def _invalid(message: str, code: str = "invalid_package") -> LocalSkillError:
@@ -42,7 +47,8 @@ def validate_paths(files: dict[str, bytes], *, check_types: bool = True) -> None
     for path, content in files.items():
         parts = path.split("/")
         if len(path) > 240 or len(parts) > 16 or any(
-            not _COMPONENT.fullmatch(part) or part.endswith(".") or _RESERVED.match(part)
+            not _COMPONENT.fullmatch(part) or has_unsafe_trailing_char(part)
+            or is_reserved_device_name(part)
             for part in parts
         ):
             raise _invalid(f"Skill 包文件路径无效：{path}")

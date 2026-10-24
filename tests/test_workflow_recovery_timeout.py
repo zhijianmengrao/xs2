@@ -17,6 +17,10 @@ REPO_ROOT = Path(__file__).parents[1]
 
 def test_executor_recovery_timeout_config_is_strict_and_prefixed() -> None:
     environment = os.environ.copy()
+    # 子进程报错走中文 stderr：显式约定两端都用 UTF-8，否则父进程按本机 locale
+    # （cp936）解码子进程的 UTF-8 输出会抛 UnicodeDecodeError，subprocess 把
+    # stderr 置为 None，断言退化成 TypeError（R18 B9）。
+    environment["PYTHONIOENCODING"] = "utf-8"
     environment["DETERMINFLOW_WORKFLOW_EXECUTOR_RECOVERY_TIMEOUT_SECONDS"] = "240"
     valid = subprocess.run(
         [
@@ -29,7 +33,8 @@ def test_executor_recovery_timeout_config_is_strict_and_prefixed() -> None:
             ),
         ],
         env=environment,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -41,12 +46,14 @@ def test_executor_recovery_timeout_config_is_strict_and_prefixed() -> None:
     invalid = subprocess.run(
         [sys.executable, "-c", "import src.config"],
         env=environment,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
 
     assert invalid.returncode != 0
+    assert invalid.stderr is not None
     assert "必须在 30 到 900 秒之间" in invalid.stderr
 
 

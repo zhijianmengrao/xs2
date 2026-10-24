@@ -25,6 +25,7 @@ import json
 import os
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -280,4 +281,67 @@ def test_f5_workspace_id_trailing_dot_is_not_an_alias():
         assert status2 == 400, alias
     # 对照：真实名字与名字中间的点不受影响
     assert _get(f"/api/humanware/status/{WS}")[0] == 200
+
+
+# ---------------------------------------------------------------- F6/F7：R18 core 守卫服务侧验收
+
+# 两条都用**只读 GET**，不写任何数据；当前服务若未加载 R18 代码则诚实 skip
+# （与 F5 同一处置），不把未部署的修复当成已验证。
+
+def _service_enforces_r18_400_rule() -> "bool | None":
+    """探测运行中的服务是否已把「非法 id / 幻影根」映射为 400（R18 B6/B7）。
+
+    返回 None 表示服务不可达；False 表示仍是 R18 之前的代码（B6→500 / B7→200）。
+    """
+    probe = "/api/workflows/workspace-files?workflow_id=" + urllib.parse.quote("中文书")
+    status, _ = _get(probe)
+    if status == -1:
+        return None
+    return status == 400
+
+
+def test_f6_cjk_workflow_id_is_400_not_500():
+    """契约 v3.3（B6）：清洗后为空的工作流 id 是客户端错误，服务侧必须 400。
+
+    修复前实测：`GET /api/workflows/workspace-files?workflow_id=中文书` → **500**
+    Internal Server Error（core 的裸 ValueError 逃逸到 Starlette）。
+    """
+    enforced = _service_enforces_r18_400_rule()
+    if enforced is None:
+        pytest.skip("服务不可达")
+    if not enforced:
+        pytest.skip(
+            f"运行中的服务（{BASE_URL}）仍为契约 v3.3 之前的代码："
+            "非法 workflow_id 仍返回 500。需重启服务加载 R18 core 守卫后本用例才会执行。"
+        )
+    for bad in ("中文书", "纯中文工作区"):
+        status, body = _get(
+            "/api/workflows/workspace-files?workflow_id=" + urllib.parse.quote(bad)
+            + "&workspace=" + urllib.parse.quote("data/workspaces/books/" + WS)
+        )
+        assert status == 400, (bad, body)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="幻影目录仅在 Windows 文件系统语义下成立")
+def test_f7_phantom_workspace_override_is_400_not_200():
+    """契约 v3.3（B7）：workspace 覆盖参数指向幻影目录时必须 400，不得谎报空工作区。
+
+    修复前实测：`GET /api/workflows/workspace-files?workspace=.../books/NUL` → **200**
+    `{"workspace": "...NUL", "files": []}`——把一个不可用的幻影目录报告成「存在且为空」
+    的工作区，前端会显示成一个空白但可编辑的作品。
+    """
+    enforced = _service_enforces_r18_400_rule()
+    if enforced is None:
+        pytest.skip("服务不可达")
+    if not enforced:
+        pytest.skip(
+            f"运行中的服务（{BASE_URL}）仍为契约 v3.3 之前的代码："
+            "非法 workflow_id 仍返回 500（core 守卫未上线）。需重启服务后本用例才会执行。"
+        )
+    phantom = urllib.parse.quote("data/workspaces/books/NUL")
+    status, body = _get(
+        f"/api/workflows/workspace-files?workflow_id={urllib.parse.quote('wf1')}"
+        f"&workspace={phantom}"
+    )
+    assert status == 400, (status, body)
 
