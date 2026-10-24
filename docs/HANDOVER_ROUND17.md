@@ -12,20 +12,20 @@
 | 结论 | 依据 |
 |---|---|
 | **R16-ENV-1 根因定位并推翻 R16 结论**：不是「机器状态/安全软件/需重启」，而是 **解释器令牌的完整性级别（IL）**。`python.exe` 从 **F: 盘**启动即为 **Low IL**，同一二进制在 C: 上为 **High IL**；msys 已存在的共享对象拒绝 Low-IL 进程附加 | §4 ENV；IL 矩阵 + 命名对象访问实测 |
-| **该 60 项阻塞现已可执行**：High-IL 解释器跑同一套件 → **99 passed**（6 个插件文件），全量 **1585 passed / 12 skipped / 0 failed** | §6 两条基线实跑 |
+| **该 60 项阻塞现已可执行**：High-IL 解释器跑同一套件 → **99 passed**（6 个插件文件），全量终态 **1586 passed / 11 skipped / 0 failed** | §6 两条基线实跑 |
 | **顺带纠正 R15/R16 的 symlink 结论**：`SeCreateSymbolicLinkPrivilege` 失败同样源于 Low IL；High-IL 下 11 个 skip 全为 macOS/POSIX 类，**symlink 用例真实通过** | High-IL 全量 skip 清单 |
 | **新发现并修复 3 个真实缺陷（B3/B4/B5）**，均先失败测试固化再修；B4/B5 为**静默数据丢失**与**未捕获异常 500** | §3 红灯证据、§4 |
 | R16 §9 P1「语义对齐复查」完成：`_get_workspace_root` 无同型复制，但 novel-console 面存在**同型缺陷且更严重**；已抽 `src/web/path_guard.py` 统一两面 | §4 根因分析 |
-| humanware 路由单测 22 → **24**；e2e 12 → **13**（新增 F5 服务侧别名验收，服务未加载新代码时诚实 skip）；**新文件 `tests/test_windows_path_guard.py` 10 条** | 三文件 pytest 实跑 |
-| 全量回归 **0 失败**（两种 IL 各一次），并在 `tests/conftest.py` 固化 msys 探测钩子，Low-IL 跑不再刷 60 个假失败 | §6 |
+| humanware 路由单测 22 → **24**；e2e 12 → **13**（新增 F5 服务侧别名验收，服务重启后 PASS）；**新文件 `tests/test_windows_path_guard.py` 10 条** | 三文件 pytest 实跑 |
+| 全量回归 **0 失败**（两种 IL 各一次）：Low-IL **1501 passed / 96 skipped**；High-IL（服务已加载修复）**1586 passed / 11 skipped**——11 项全为 macOS/POSIX 平台限制；并在 `tests/conftest.py` 固化 msys 探测钩子，Low-IL 跑不再刷 60 个假失败 | §6 |
 | 前端无改动；本轮实测 **406 个前端测试全过（8 个套件）**、lint 0 problems、build ✓ 6.22s（R16 记录「6 pass」是 `Select-Object -Last` 截断造成的**误记**，见 §8 R17-5） | 前端三命令实跑 |
-| **两仓库仍未推送**（插件 5 笔 / xs2 现 24 笔），本轮再次未擅自推送 | §4 P0-1 |
+| **两仓库仍未推送**（插件 5 笔 / xs2 26 笔，含本收尾提交），本轮再次未擅自推送 | §4 P0-1 |
 
 ## 2. 测试计划（本轮）
 
 - **范围**：执行 R16 交接 §9 计划（P0 ENV 复验 + 推送；P1 阈值 e2e、B1/B2 语义对齐复查），并对 humanware / novel-console 两个文件路径面做 Windows 名称语义边界测试。
 - **类型**：功能（守卫不影响正常读写）、边界（设备名各变体、尾随点/空格、幻影目录）、异常（500 归零）、安全（路径名绕过黑名单）、回归（全套 + 前端 + 服务侧 e2e）、环境（IL/命名对象诊断）。
-- **环境**：Windows 本机；venv Python 3.14.8（**Low IL**）与 `C:\Windows\py.exe` + venv site-packages（**High IL**）两种解释器分别跑全量；服务 `http://localhost:8021`（**本轮未重启**，理由见 §8 R17-1）。
+- **环境**：Windows 本机；venv Python 3.14.8（**Low IL**）与 `C:\Windows\py.exe` + venv site-packages（**High IL**）两种解释器分别跑全量；服务 `http://localhost:8021`（**本轮末经用户确认重启**，服务侧已加载 v3.2 守卫，见 §8 R17-1）。
 - **通过标准**：两种 IL 下 `pytest -q` 均 0 failed；新增用例全绿；前端 lint/test/build 全过；High-IL 下原被阻塞的 6 个插件文件恢复执行。
 - **运行命令**：
   ```
@@ -74,13 +74,12 @@
 
 | 编号 | 场景 | 实际 |
 |---|---|---|
-| E1–E7b2 / F1–F4 | R15/R16 既有 12 项契约验收 | **12 passed**（0.94s，真实 8021 服务 + 真实 runtime CLI） |
-| **F5** | `GET /api/humanware/status/welcome.` 对**运行中的服务**必须 400（B3） | **诚实 skip**：探测到当前 8021 进程仍为 v3.2 之前代码（实测返回 200），用例明确写出「需重启服务后才会执行」，不伪装通过 |
+| E1–E7b2 / F1–F4 | R15/R16 既有 12 项契约验收 | **12 passed**（真实 8021 服务 + 真实 runtime CLI） |
+| **F5** | `GET /api/humanware/status/welcome.` 对**运行中的服务**必须 400（B3） | 修复上线前：诚实 skip（旧服务返回 200）；**本轮末重启服务后 → PASS**，e2e **13/13** |
 
-> F5 采用「能力探测 + 不满足即 skip」而非硬断言：因为 8021 由上一会话的进程链持有
-> **workflow-executor 独占租约**（本轮实测：另起 8022 在 pool 模式与 inline 模式下均以
-> `ExecutorLeaseUnavailable: another Workflow Executor still owns the process lease` 启动失败），
-> 未经确认不重启他人正在运行的服务。服务重启后该用例自动生效。
+> F5 采用「能力探测 + 不满足即 skip」而非硬断言：本轮中段 8021 仍为修复前代码（该进程由上一会话
+> 进程链持有 workflow-executor 独占租约，另起 8022 实测因 `ExecutorLeaseUnavailable` 失败），
+> 用例明确写出「需重启服务后才会执行」而不是伪装通过。§8 R17-1 记录了经用户确认的重启与复验。
 
 ### 3.4 实时取证（对修复前的 8021，脚本 `scripts/_r17_live_check.py`，用后即删）
 
@@ -140,7 +139,7 @@
 - **未一并处理**（记为 R18 建议）：`WorkspaceManager._sanitize_id` 只剥字符不查设备名，且 `resolve_workflow_workspace` 会**自动 mkdir**，可在 `data/workspaces/` 下留下 `NUL` 幻影项；在 core 层加守卫会影响所有调用方（含 CLI/内部服务），本轮按「最小改动」只在 web 路径面收敛。
 
 ### P0-1（R16 遗留，仍未完成）— 两仓库推送
-- 插件 5 笔、xs2 24 笔未推送；会话内 `credential.helper=manager` 需弹窗、无人值守被拦。需用户手动：
+- 插件 5 笔、xs2 26 笔未推送；会话内 `credential.helper=manager` 需弹窗、无人值守被拦。需用户手动：
   `cd "F:\DeterminFlow x2\DeterminFlow-Plugins" && git push origin main`，随后 xs2 同法。
 - 验收：两仓库 `git log origin/main..main` 为空。
 
@@ -175,17 +174,17 @@
 |---|---|---|
 | Windows 名称守卫（新） | `pytest tests/test_windows_path_guard.py` | **10 passed** |
 | humanware 路由单测 | `pytest tests/test_humanware_routes.py` | **24 passed**（22 → 24） |
-| humanware e2e（服务运行中） | `pytest tests/test_humanware_e2e.py` | **12 passed / 1 skipped**（F5 因服务为修复前代码而诚实 skip） |
+| humanware e2e（服务运行中，**服务加载修复后 = 终态**） | `pytest tests/test_humanware_e2e.py` | **13 passed / 0 skipped**（重启前中段实测 12 passed + F5 诚实 skip，见 §3.3/§8 R17-1） |
 | novel 全部 13 个测试文件 + humanware 路由 | 合并跑 | **98 passed / 0 failed** |
-| **全量（Low-IL / venv）** | `.\.venv\Scripts\python.exe -m pytest -q` | **1500 passed / 97 skipped / 0 failed**（105.86s） |
-| **全量（High-IL / py.exe + PYTHONPATH）** | `C:\Windows\py.exe -m pytest -q` | **1585 passed / 12 skipped / 0 failed**（130.68s） |
+| **全量（Low-IL / venv）服务重启后复跑** | `.\.venv\Scripts\python.exe -m pytest -q` | **1501 passed / 96 skipped / 0 failed**（111.17s；F5 由 skip 转 pass） |
+| **全量（High-IL / py.exe + PYTHONPATH）服务重启后 = 终态权威基线** | `C:\Windows\py.exe -m pytest -q` | **1586 passed / 11 skipped / 0 failed**（135.90s；11 项全为 macOS/POSIX） |
 | 被 R16-ENV-1 阻塞的 6 个插件文件（Low-IL） | 单独跑 | 37 passed / 62 skipped（环境 skip，0 失败） |
 | 同上（High-IL） | 单独跑 | **99 passed / 0 failed** ← 阻塞已消除 |
-| High-IL 剩余 12 个 skip 的构成 | 逐条核对 | macOS 签名 6、`icon.icns` 1、POSIX `fcntl` 2、Unix 进程组/树 2、e2e F5 1 = **11 + 1**；**symlink 类 skip 为 0** |
+| High-IL 剩余 11 个 skip 的构成（服务重启后） | 逐条核对 | macOS 签名 6、`icon.icns` 1、POSIX `fcntl` 2、Unix 进程组/树 2 = **11**；**symlink 类 skip 为 0**，F5 已 pass |
 | 前端（无改动） | `npm.cmd run lint` / `test` / `build` | lint 0 problems；**406 个测试全过**（8 套件：48/17/135/81/100/1/18/6，fail 0）；✓ built in 6.22s |
 | 工作树 | `git status` | 仅本轮预期改动，无临时文件残留（探针脚本与残骸已清理） |
 
-> 与 R16 基线（1439 passed / 46 skipped，60 项阻塞）比较：本轮同一工作树在 High-IL 下 **1585 passed**，
+> 与 R16 基线（1439 passed / 46 skipped，60 项阻塞）比较：本轮同一工作树在 High-IL 下 **1586 passed**，
 > 即 **60 项恢复执行 + 13 项新增用例 + 其余存量**。
 
 ## 7. 优化清单（本轮）
@@ -202,8 +201,8 @@
 
 | 编号 | 问题 | 说明 | 风险 |
 |---|---|---|---|
-| **R17-1** | **8021 服务仍运行修复前代码**：B3/B4 在服务侧尚未生效（`welcome.` → 200 可越界写、`references/NUL` 假装保存成功） | 未重启原因：该进程由上一会话的进程链持有 workflow-executor **独占租约**，本轮实测另起 8022 在 pool 与 inline 两种模式下都因 `ExecutorLeaseUnavailable` 启动失败；未经确认不重启他人服务。**需要用户确认后重启 8021**，随后 e2e F5 会自动执行 | **高（修复未上线）** |
-| R17-2 | 两仓库未推送（插件 5 笔 / xs2 24 笔） | 无缓存凭据，需用户手动 `git push`（GCM 弹窗） | 中（协作） |
+| **R17-1（已解决）** | 8021 曾运行修复前代码 → **本轮末经用户确认后重启**，服务侧已加载 v3.2 守卫 | 重启波折：我 kill 旧链（77564/67116）后自己后台起的 run.py 因 executor 启动竞态失败（`Workflow Executor exited during startup: 1`）；随后端口新监听者（pid 78636，cmdline 为本工作树 `run.py`，疑并发会话拉起）已运行**当前工作树代码**——行为指纹：`welcome.`→400、`references/NUL`→403、`references/outline.`→403、`references/outline.md`→200 且落盘仅此一名、幻影根→400（修复前依次 200/200/200/200/500）。e2e **13/13 PASS**（F5 由 skip 转 PASS）。遗留：该服务进程归属另一会话，本轮未再动 | 低（已验证上线） |
+| R17-2 | 两仓库未推送（插件 5 笔 / xs2 26 笔） | 无缓存凭据，需用户手动 `git push`（GCM 弹窗） | 中（协作） |
 | R17-3 | `WorkspaceManager` 层面仍无设备名守卫 | `_sanitize_id` 只剥字符；`resolve_workflow_workspace` 会 `mkdir(exist_ok=True)`，可在 `data/workspaces/` 下留 `NUL` 幻影项。本轮只在 web 面收敛（core 层改动影响所有调用方） | 中 |
 | R17-4 | 本轮 `path_guard` 未接入 `skill_marketplace.bundle` | 该处已有等价内联规则（`_RESERVED` + `part.endswith(".")`），行为一致；替换属去重重构，按「不引入无关重构」暂缓 | 低 |
 | R17-5 | **交接文档误记**：R16 §6 记「前端 6 pass」 | 本轮实测前端为 8 个套件 **406 个测试**；R16 用 `Select-Object -Last 12` 截断只看到最后一个套件 | 低（记录质量） |
@@ -217,8 +216,8 @@
 
 | 优先级 | 任务 | 预估工作量 | 验收标准 |
 |---|---|---|---|
-| **P0** | **确认后重启 8021** 使 v3.2 守卫上线，并复跑 `pytest tests/test_humanware_e2e.py`（F5 应从 skip 转 PASS）+ `scripts` 侧一次 §3.4 实时取证复验（`welcome.` → 400、`references/NUL` → 403） | 0.3h | e2e 13/13 PASS；无 2xx 别名命中 |
-| **P0** | 手动推送两仓库（插件 5 笔 / xs2 24 笔） | 0.2h | 两仓库 `git log origin/main..main` 为空 |
+| **P0** | ~~重启 8021 使 v3.2 上线~~ **本轮已完成并经服务侧复验**（e2e 13/13、B3/B4/B5 行为指纹全对）。R18 改为：**与服务/仓库的并发写入者（`yuyang0702`，09:12 曾代为提交 `5da9224`）协调单一写入流**，确认当前 8021 进程（pid 78636）归属并纳入托管 | 0.5h | 历史与部署状态可解释、无第三主体半提交 |
+| **P0** | 手动推送两仓库（插件 5 笔 / xs2 26 笔） | 0.2h | 两仓库 `git log origin/main..main` 为空 |
 | P1 | R17-3：把设备名/尾随点守卫下沉到 `WorkspaceManager`（`_sanitize_id` 或 `resolve_workflow_workspace`），并禁止以 `mkdir` 兜底创建幻影根 | 2h | core 层新增用例；两面复用；全量 0 失败 |
 | P1 | 以 High-IL 解释器为准建立「权威基线」并写入 CI/文档默认命令（Low-IL 仅作快速跑） | 1h | 文档明确两种模式数字与用途；一次全流程复跑记录 |
 | P2 | R17-4：`skill_marketplace.bundle` 改用 `path_guard`，消除第三份同型规则；同时复查 `novel_reference_*`、`export` 等其余名字拼接点 | 1.5h | 单一实现；既有 marketplace 用例全过 |
@@ -268,4 +267,14 @@ High-IL：py.exe -m pytest -q → 1585 passed / 12 skipped / 0 failed
 清理 scripts/_r17_*（18 个探针文件/输出）、_tmp_clone_*、r17_* 与 git-transport-probe-* 残骸、
   两个空 tmp* 目录；determinflow-executor-*/ 属 8021 服务且已 gitignore，未动
 文档：契约 v3.2、PROJECT_INFO 注意事项 7/9 + 双基线、HANDOVER_ROUND17.md
+
+# 用户确认后：重启 8021 上线 v3.2 并复验（本轮末）
+kill 77564/67116 → 8021 无监听、无孤儿 executor
+自起 run.py（后台）→ executor 启动竞态失败（Workflow Executor exited during startup: 1）
+随后 8021 新监听 pid=78636（cmdline = 本工作树 run.py，疑并发会话拉起）
+行为指纹（修复前 → 现在）：welcome. 200→400；PUT references/NUL 200→403；
+  references/outline. 200→403；references/outline.md 200→200（落盘仅此一名）；幻影根 500→400
+pytest tests/test_humanware_e2e.py → 13 passed（F5 由 skip 转 PASS）
+全量复跑：Low-IL 1501 passed / 96 skipped / 0 failed；High-IL 1586 passed / 11 skipped / 0 failed
+并发写入：他人已代为提交 5da9224（含全部 12 文件），当时 xs2 未推送 = 25 笔（本收尾文档提交后 = 26 笔）
 ```
