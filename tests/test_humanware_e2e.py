@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -75,6 +76,8 @@ def _post(path: str, payload: dict, timeout: int = 150):
         except json.JSONDecodeError:
             parsed = body
         return exc.code, parsed
+    except (urllib.error.URLError, OSError) as exc:
+        return -1, f"{BASE_URL} 服务不可达（{exc.__class__.__name__}）"
 
 
 def _get(path: str, timeout: int = 15):
@@ -88,6 +91,10 @@ def _get(path: str, timeout: int = 15):
         except json.JSONDecodeError:
             parsed = body
         return exc.code, parsed
+    except (urllib.error.URLError, OSError) as exc:
+        # B15：服务中途宕机时返回 -1 而非抛未捕获异常——F5–F7 探测的
+        # 「status == -1 → None → 诚实 skip」路径此前从未可达（死代码）。
+        return -1, f"{BASE_URL} 服务不可达（{exc.__class__.__name__}）"
 
 
 # ---------------------------------------------------------------- E1–E7
@@ -348,4 +355,40 @@ def test_f7_phantom_workspace_override_is_400_not_200():
         f"&workspace={phantom}"
     )
     assert status == 400, (status, body)
+
+
+# ---------------------------------------------------------------- B15：中途宕机语义
+
+# 这两条是纯逻辑回归（不依赖服务行为），但跟随模块级 pytestmark：服务不可达时
+# 与其余 e2e 一起诚实 skip——本文件的职责就是「服务在跑」语境下的语义钉子。
+
+
+def test_b15_get_and_post_report_unreachable_as_minus_one(monkeypatch):
+    """服务中途宕机：_get/_post 返回 (-1, 原因) 而非抛未捕获 URLError。
+
+    修复前 _get 只接 HTTPError；URLError 直接穿透，F5–F7 探测的
+    `status == -1 → None → skip` 分支是死代码，中途宕机表现为一串
+    URLError traceback 而非设计的诚实 skip 语义。
+    """
+    def _refuse(req, timeout):  # noqa: ANN001 - 测试桩，签名兼容 urlopen
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _refuse)
+    status, body = _get("/api/humanware/status/welcome")
+    assert status == -1
+    assert "URLError" in body
+    status2, body2 = _post("/api/humanware/score-content", {"workspace_id": WS})
+    assert status2 == -1
+    assert "URLError" in body2
+
+
+def test_b15_unreachable_probe_yields_honest_skip(monkeypatch):
+    """_rule_enforced 的 None（不可达）必须真实可达，且 _require_service_rule
+    据此 skip——不因服务宕机把「规则未验证」伪装成「规则已验证」。"""
+    monkeypatch.setattr(
+        sys.modules[__name__], "_get", lambda path, timeout=15: (-1, "服务不可达")
+    )
+    assert _rule_enforced("/api/humanware/status/welcome.") is None
+    with pytest.raises(pytest.skip.Exception):
+        _require_service_rule(None, rule="契约 v3.2", symptom="任何")
 

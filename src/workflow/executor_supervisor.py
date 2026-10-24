@@ -244,6 +244,7 @@ class WorkflowExecutorSupervisor:
         except Exception:
             self._process = None
             self._worker_pid = None
+            self.client = None
             if self._event_receiver is not None:
                 await self._event_receiver.close()
                 self._event_receiver = None
@@ -438,6 +439,14 @@ class WorkflowExecutorSupervisor:
             if self._monitor_task is not asyncio.current_task():
                 await asyncio.gather(self._monitor_task, return_exceptions=True)
             self._monitor_task = None
+        process = self._process
+        if process is not None:
+            # stop() 与 monitor 重启的竞态兜底：_closing 置位前 monitor 已进入
+            # _spawn，并在上方清空引用后又赋值了新一代 worker（窗口极窄但真实）。
+            # 兜底收割，防止孤儿 worker 带着租约活到控制器退出。
+            self._process = None
+            self._worker_pid = None
+            await self._abort_process(process)
         if self._runtime_dir is not None:
             if self._event_receiver is not None:
                 await self._event_receiver.close()

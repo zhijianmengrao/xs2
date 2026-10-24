@@ -44,6 +44,16 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   CI windows-backend job；④O-b 活体 e2e F5–F7 探测公共管线去重。双基线
   **1735/96/0（Low-IL）、1820/11/0（High-IL 权威）**，总用例 1828→1831。
   详见 docs/HANDOVER_ROUND23.md。
+- **R24 维护轮（2026-10-24，维护态第二轮）**：R23 §9 候选落地——①修复
+  **B15**：活体 e2e `_get`/`_post` 补 URLError/OSError 分支（服务中途宕机返回
+  -1 而非未捕获异常；F5–F7 探测的「-1→诚实 skip」路径此前是死代码）；
+  ②修复 **B16**：supervisor `stop()` 与 monitor 重启竞态的兜底收割（防孤儿
+  worker 带租约活到控制器退出）+ `start()` 失败清 stale client；
+  ③P3 收口：`installation_state()` 真实 nul 目录证据钉成回归（R20 修复面）；
+  ④关闭 R21「pool 语义」复核备注（部分失败处理经逐行复核无缺陷）。
+  双基线 **1740/96/0（Low-IL）、1825/11/0（High-IL 权威）**，总用例
+  1831→**1836**。注意：R23、R24 两个提交均未推送；工作树存在 15 个
+  HANDOVER 文档的外来删除（未提交，需维护者核查）。详见 docs/HANDOVER_ROUND24.md。
 
 ## 技术栈与运行方式
 
@@ -114,6 +124,7 @@ xs2/
 - 2026-10-24 R20 双基线（插件 id / 资源 id / 市场 Skill id 设备名拒绝）：Low-IL → **1720 passed / 96 skipped / 0 failed**（服务在跑，故 e2e 15 条执行而非 skip）；High-IL → **1805 passed / 11 skipped / 0 failed**。净增 **93** 条用例（`test_plugin_name_guard.py` 60 + `test_marketplace_skill_id_guard.py` 33）。对账：Low-IL 1627+93=1720；High-IL 1697+93+15(e2e skip→pass)=1805。
 - 2026-10-24 R21 双基线（executor runtime 目录钉位 + 存储名只读审计 + 市场安装真实包 e2e + update exists() 语义锚定）：Low-IL → **1732 passed / 96 skipped / 0 failed**；High-IL → **1817 passed / 11 skipped / 0 failed**。净增 **12** 条用例（`test_storage_name_audit.py` 5 + `test_executor_runtime_dir.py` 2 + `test_marketplace_install_e2e.py` 3 + update 锚定 2）。对账：Low-IL 1720+12=1732；High-IL 1805+12=1817。
 - 2026-10-24 R23 双基线（维护态首轮：B14 修复 + 真实设备名常驻回归 + e2e 探测去重）：Low-IL → **1735 passed / 96 skipped / 0 failed**（105.49s）；High-IL → **1820 passed / 11 skipped / 0 failed**（122.78s，权威）。净增 **3** 条（`test_executor_runtime_dir.py` B14 回归 1 + `test_real_device_name_dirs.py` 2，后者 POSIX/不支持环境诚实 skip）。对账：Low-IL 1732+3=1735；High-IL 1817+3=1820。总用例 R21 口径 1828 → **1831**。
+- 2026-10-24 R24 双基线（维护态二轮：B15 e2e 宕机语义 + B16 supervisor 竞态兜底 + installation_state 真实证据）：Low-IL → **1740 passed / 96 skipped / 0 failed**（109.75s）；High-IL → **1825 passed / 11 skipped / 0 failed**（125.27s，权威）。净增 **5** 条（`test_humanware_e2e.py` B15 逻辑回归 2（服务不在跑时随模块诚实 skip）+ `test_executor_runtime_dir.py` B16 回归 2 + `test_real_device_name_dirs.py` 1）。对账：Low-IL 1735+5=1740；High-IL 1820+5=1825。总用例 R23 口径 1831 → **1836**。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个
