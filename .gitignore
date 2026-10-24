@@ -73,3 +73,7 @@ tmp*/
 # `tempfile.mkstemp()` 在 %TEMP% ACL 受限时回落到 CWD，产出的是**文件**（tmpXXXX），
 # 上面的 `tmp*/` 只匹配目录，故补一条仓库根锚定的文件规则（PROJECT_INFO 注意事项 8）。
 /tmp*
+
+# Tauri updater 签名密钥（R22 完结后生成；私钥绝不入库，公钥如需替换 tauri.conf.json 时从本地取）
+/determinflow-updater.key
+/determinflow-updater.key.pub
