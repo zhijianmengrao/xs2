@@ -411,3 +411,51 @@ def test_update_restores_runtime_after_reload_partially_succeeds(tmp_path: Path)
 
 def test_semver_rejects_numeric_prerelease_leading_zero() -> None:
     assert compare_semver("1.0.0-01", "1.0.0-alpha") is None
+
+
+# ---------------------------------------------- R21 P2：updates.py exists() 语义锚定
+
+
+class _RecordingMarketplace(FakeMarketplace):
+    """记录 get_skill 调用，用于断言拒绝发生在任何市场查询之前。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.detail_calls: list[str] = []
+
+    async def get_skill(self, slug: str) -> dict:
+        self.detail_calls.append(slug)
+        return await super().get_skill(slug)
+
+
+def test_update_rejects_device_name_slug_before_exists_lookup(tmp_path: Path) -> None:
+    """设备名 slug 在 update 面 → 400 invalid_slug，且先于 updates.py:166 的 exists()。
+
+    若入口的 `_validate_slug` 被移除或次序变动，幻影语义（`marketplace-skills/nul`
+    的 `exists()` 恒真）会让 `_require_updatable_install` 谎报 409「本地存在同名但
+    来源不同的 Skill」（R20 B13 修复前实测行为）。
+    """
+    marketplace = _RecordingMarketplace()
+    service = _service(tmp_path, manager=_empty_manager(tmp_path), marketplace=marketplace)
+    pin = _pin(service)
+    marketplace.detail_calls.clear()  # _pin 自身会取一次详情，不计入
+    with pytest.raises(LocalSkillError) as error:
+        asyncio.run(service.update("nul", **pin))
+    assert error.value.code == "invalid_slug"
+    assert error.value.status_code == 400, "不得以 409 谎报存在性"
+    assert marketplace.detail_calls == []  # 拒绝先于任何市场查询
+
+
+def test_update_conflict_for_real_leftover_directory_is_kept(tmp_path: Path) -> None:
+    """exists() 分支的正当语义保持：真实残留目录（非设备名）无配置条目 → 409 conflict。
+
+    这是 `_require_updatable_install` 使用 `exists()` 判定的合法场景（半卸载残留），
+    锚定它防止有人把 R20 修复误扩大成「删掉 exists() 判定」。
+    """
+    manager = _empty_manager(tmp_path)
+    (manager.marketplace_skills_dir / "shared-skill").mkdir(parents=True)
+    service = _service(tmp_path, manager=manager)
+    with pytest.raises(LocalSkillError) as error:
+        asyncio.run(service.update("shared-skill", **_pin(service)))
+    assert error.value.code == "conflict"
+    assert error.value.status_code == 409

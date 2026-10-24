@@ -34,6 +34,19 @@ from src.config import DATA_DIR
 logger = logging.getLogger(__name__)
 RestartCallback = Callable[[ExecutorIdentity, ExecutorIdentity], Awaitable[None]]
 
+
+def _runtime_dir_root() -> Path:
+    """Executor runtime 目录的固定落点（data/ 下，PROJECT_INFO 注意事项 8）。
+
+    ``tempfile.mkdtemp()`` 不带 ``dir=`` 时按 ``TEMP → TMP → CWD`` 回落；本机
+    %TEMP% 受 ACL 限制时落点即进程工作目录（实测 ``gettempdir()`` 返回仓库根），
+    进程被硬杀后 ``determinflow-executor-*`` 残留便散落在仓库根且无人追踪。
+    显式 ``dir=`` 同时钉住位置、让残留可审计可清理。
+    """
+    root = DATA_DIR / "system" / "executor-runtimes"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
 STATUS_STARTING = "starting"
 STATUS_READY = "ready"
 STATUS_RESTARTING = "restarting"
@@ -208,7 +221,9 @@ class WorkflowExecutorSupervisor:
         self._closing = False
         self._set_status(STATUS_STARTING)
         self._worker_pid = None
-        self._runtime_dir = Path(tempfile.mkdtemp(prefix="determinflow-executor-"))
+        self._runtime_dir = Path(
+            tempfile.mkdtemp(prefix="determinflow-executor-", dir=_runtime_dir_root())
+        )
         restrict_private_path(self._runtime_dir, 0o700)
         try:
             if self.event_handler is not None:
