@@ -65,6 +65,10 @@ xs2/
 - 验证方式：`python -m pytest -q`；`cd web && npm run lint && npm run test:* && npm run build`；`docker compose -f docker-compose.yml config -q`
 - 2026-10-22 最终本地回归（`.\.venv\Scripts\python.exe -m pytest -q`）：**1514 passed / 0 failed / 36 skipped**；所有剩余 skip 均为平台环境限制（Windows symlink 特权 / macOS 签名 / POSIX fcntl），不再有失败项；前端 `npm run lint` 0 errors、`npm test` 全过、`npm run build` 成功。
 - 2026-10-24 R17 双基线（同一提交，Windows）：Low-IL（venv）`pytest -q` → **1501 passed / 96 skipped / 0 failed**；High-IL（`C:\Windows\py.exe` + venv site-packages 经 `PYTHONPATH`，见平台注意事项 9）→ **1586 passed / 11 skipped / 0 failed**。High-IL 是权威基线（symlink 与 msys git 用例都真实执行）；Low-IL 下这些用例转为 skip。
+- 2026-10-24 R18 双基线（core 层 Windows 名称守卫 + 错误映射 + 测试健壮性修复）：Low-IL → **1623 passed / 98 skipped / 0 failed**；High-IL → **1708 passed / 13 skipped / 0 failed**（13 = 11 平台 skip + 2 条 `test_humanware_e2e` F6/F7，服务未重启加载 R18 代码时诚实 skip）。净增 **124** 条用例（core 名称守卫 20 + marketplace 规则等价性 99 + web 端到端 3 + 服务侧 e2e F6/F7 2；其中 F6/F7 在 Low/High 两种 IL 下各计 1 条 skip，故 passed 增 122、skip 增 2）。总用例数 R17 1597 → R18 1721。
+  > R18 B9 已让 `test_workflow_executor_protocol` / `test_workflow_recovery_timeout` 与系统 locale
+  > 解耦（子进程 env 内显式 `PYTHONIOENCODING=utf-8` + 父进程按 UTF-8 解码），因此下面两条命令
+  > **无论会话是否预设 `PYTHONIOENCODING` 都会通过**（实测四种组合各 39 passed）。
 - 2026-10-22 运行状态抽查：`/api/plugins` 双插件 `runtime_status=running`（bishu-novel 0.2.2 / xs2-novel-flywheel 0.1.13）；`/api/system/status` 四执行器 `ready`（pid 为**真实 worker 解释器**，非启动桩）；`cd web && npm.cmd run build` 成功。
 
 ## 平台注意事项（Windows，2026-10-22 实测确认）
@@ -138,3 +142,23 @@ xs2/
    - 实测基线：Low-IL（venv）`pytest -q` → **1497 passed / 96 skipped / 0 failed**；
      High-IL（py.exe + PYTHONPATH）同一提交 → **1582 passed / 11 skipped / 0 failed**
      （11 项为 macOS/POSIX 类平台 skip）。
+
+11. **（2026-10-24 R18 实测）PowerShell / .NET `System.Uri` 会剥掉 URL 路径段的尾随点**
+    `[System.Uri]"http://host/api/status/welcome."` 的 `AbsolutePath` 是 `/api/status/welcome`
+    （`welcome...` 同样被剥成 `welcome`），因此 `Invoke-WebRequest` / `curl`（经 PowerShell
+    参数绑定）发出的请求**根本不含尾随点**。后果：对「尾随点别名」这类缺陷做服务侧取证时，
+    用 `Invoke-WebRequest` 会得到 **200**，误判成「服务端守卫失效」；实测同一 URL 用 Python
+    `urllib` 直连则正确返回 **400**（`%2E` 编码形式亦 400）。
+    **验证名字规范化类缺陷必须用不经 .NET URI 解析的客户端**（`urllib.request`、`httpx`，
+    或本项目 `tests/test_humanware_e2e.py`）。R17 §3.4「实时取证」表中 3 行以
+    `Invoke-WebRequest` 记录的 `welcome.`→200 属该客户端假象，而非服务端行为；R18 予以更正
+    （服务端当时已正确 400，见 HANDOVER_ROUND18 §4 R18-ENV-2）。
+
+12. **（2026-10-24 R18 实测）Windows 设备名作为「目录」与作为「文件」语义不同**
+    R17 把 `CON`/`PRN`/`AUX`/`COM1`/`LPT1`/`CONIN$` 与 `NUL` 同等对待，实测有偏差：
+    - 若已存在真实目录 `<x>\CON`，则 `CON\data.md` 的读写**完全正常**（`is_dir()=True`、
+      `iterdir()` 可列出、`\\?\` 前缀读回一致），`mkdir` 亦成功。
+    - `NUL` 是唯一「幻影目录」：`mkdir` 静默成功、`exists()` 恒真但 `is_dir()=False`，
+      其下任何写入 → `FileNotFoundError(WinError 3)`，`shutil.rmtree` 删不掉。
+    - 处置结论不变：一律**拒绝**（保持 R17 已上线的 web 面行为与跨工具一致性——资源管理器
+      拒绝创建这些名字），但根因表述以此条为准，不再写作「CON 写入也会静默丢弃」。

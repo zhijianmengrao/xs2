@@ -1,6 +1,10 @@
 # Humanware Helper CLI 接口契约（P0 前置物）
 
-> 版本：v3.2（2026-10-24；v3.2 新增：`workspace_id` 尾随点/空白别名一律 400，Windows 名称约束
+> 版本：v3.3（2026-10-24；v3.3 新增：Windows 名称约束下沉到 **core 层**
+> （`src/core/win_names.py` 为单一规则源，`src/web/path_guard.py` 退为兼容门面），
+> `WorkspaceManager` 拒绝设备名 id 与幻影 override；core 的 `UnsafeWorkspaceIdError`
+> 由 `src/web/error_handlers.py` 统一映射为 **HTTP 400**（此前为 500），见 §2.2。
+> v3.2：`workspace_id` 尾随点/空白别名一律 400，Windows 名称约束
 > 统一收敛到 `src/web/path_guard.py`（humanware 与 novel-console 两个路由面共用）。
 > v3.1（2026-10-23）：stdin 阈值可经环境变量覆盖、后端输入预校验语义
 > （NUL 字符 / Windows 保留设备名 → HTTP 400，见 §2.2）。
@@ -63,7 +67,7 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
 - `code` 取值范围：400（输入错误）、404（文件不存在）、409（工作区状态不满足）、500（内部失败）。
 - 后端将 `code` 直接作为 HTTP 状态码返回给前端（见 `_generate_voice_file` / `score_content` /
   `score_chapter` / `check_dialogue`——v3 起 check-dialogue 与其余端点一致透传，此前误为固定 500）。
-- **后端输入预校验（v3.1，v3.2 扩展）**：以下输入在后端即被拒绝（HTTP 400），不会启动 CLI 进程：
+- **后端输入预校验（v3.1，v3.2 扩展，v3.3 下沉 core）**：以下输入在后端即被拒绝（HTTP 400），不会启动 CLI 进程：
   - `character` / `dialogue` / `chapter_file` 含 NUL 等无法进入 argv 的字符
     （此前 500「embedded null character」）；
   - `workspace_id` 为 Windows 保留设备名（`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`/`CONIN$`/
@@ -73,6 +77,14 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
     并可读写真实工作区内容），而 POSIX 上两者是不同名字。为保证「按给定名字定位工作区」在
     两个平台语义一致，此类名字一律 400；名字**中间**的点（`alpha.md`）仍然合法（→ 404）。
     判定规则集中在 `src/web/path_guard.py`，与 novel-console 的 `safe_target`/`library_path` 共用。
+  - **（v3.3）core 层同名守卫**：规则源下沉到 `src/core/win_names.py`（`path_guard` 退为兼容门面，
+    判定与文案不变）。`WorkspaceManager` 的 `_sanitize_id` 现拒绝清洗后仍为设备名的 id
+    （如 `NUL`——Windows 下 `mkdir` 静默「成功」出一个删不掉、写不了的幻影目录），清洗后为空
+    （如纯中文 id）与幻影 workspace override 亦同。这些输入以 `UnsafeWorkspaceIdError`
+    （`ValueError` 子类）表达，由 `src/web/error_handlers.py` 统一映射为 **HTTP 400**——
+    此前 novel/workflow 端点把裸 `ValueError` 逃逸成 **500**（客户端错误被报成服务端故障）。
+    对 humanware 面（`_get_workspace_root` 直接拼 `data/workspaces/books/<id>`，不经
+    WorkspaceManager）行为无变化；本条主要约束 novel-console / workflows / 插件工具面。
 
 ### 2.3 硬性规则
 
