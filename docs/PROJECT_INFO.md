@@ -72,8 +72,16 @@ xs2/
 - **基线政策（R19 起）**：本地 Low-IL（`.venv`）仅作**快速跑**；**权威基线**为 ① 本机 High-IL 命令
   （见平台注意事项 9）与 ② CI `windows-backend` job（`.github/workflows/ci.yml`：windows-latest +
   Python 3.14 + `requirements-dev.lock`，与本机 High-IL 平台一致，Windows 专属用例在 CI 真实执行）。
-  ubuntu `backend` job 保留作跨平台快速信号。CI job 首次运行记录**待两仓库推送后**产生（R19 时推送仍受阻）。
+  ubuntu `backend` job 保留作跨平台快速信号。
 - 2026-10-24 R20 双基线（插件 id / 资源 id / 市场 Skill id 设备名拒绝）：Low-IL → **1720 passed / 96 skipped / 0 failed**（服务在跑，故 e2e 15 条执行而非 skip）；High-IL → **1805 passed / 11 skipped / 0 failed**。净增 **93** 条用例（`test_plugin_name_guard.py` 60 + `test_marketplace_skill_id_guard.py` 33）。对账：Low-IL 1627+93=1720；High-IL 1697+93+15(e2e skip→pass)=1805。
+- **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
+  `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
+  windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个
+  CI 环境缺陷：① backend/windows 缺兄弟目录 `../DeterminFlow-Plugins`（7 个测试文件按 `parents[2]` 读取
+  本地开发布局，现 CI 显式 depth-1 克隆插件仓库）；② workflow 步骤名含冒号+空格致 YAML 解析失败（0 job，
+  教训：改 workflow 须先 `yaml.safe_load` 本地验证）；③ `test_novel_progress` 两处 `write_text('正文')`
+  未传 encoding——本机 cp936 掩盖、CI cp1252 必炸（注意事项 5 的实证；其余 1788 条在 cp1252 下全过 =
+  全仓唯此两处残留）。
 - 2026-10-22 运行状态抽查：`/api/plugins` 双插件 `runtime_status=running`（bishu-novel 0.2.2 / xs2-novel-flywheel 0.1.13）；`/api/system/status` 四执行器 `ready`（pid 为**真实 worker 解释器**，非启动桩）；`cd web && npm.cmd run build` 成功。
 
 ## 平台注意事项（Windows，2026-10-22 实测确认）
