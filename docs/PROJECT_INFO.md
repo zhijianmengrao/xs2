@@ -34,6 +34,16 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - **维护入口**：接口契约 docs/humanware-helper-contract.md（**v3.4 完结版**，
   含 §6.1 常驻回归基线）；数据巡检 `python scripts/audit_storage_names.py`
   （exit 0 clean / 1 有发现）；回归命令与权威基线定义见下文「测试环境」。
+- **R23 维护轮（2026-10-24，完结后首轮维护）**：HANDOVER_ROUND21 §9 候选起点
+  落地——①P1「幻影目录免疫」复查以**真实 NTFS 证据**收口（`\\?\` 前缀创建
+  真实 nul 目录实测：常规 `Path` 对其仍呈幻影属性语义但内部可读写；
+  `_trusted_marketplace_skill_path` 未打补丁即正确拒绝 409，入口守卫链闭合，
+  无需改码），证据钉成常驻回归 `tests/test_real_device_name_dirs.py`；
+  ②修复 **B14**：`start()` 里 mkdtemp/restrict_private_path 失败时 supervisor
+  状态悬挂 `starting`（移入 try 块，状态复位 stopped）；③O-a 审计脚本挂进
+  CI windows-backend job；④O-b 活体 e2e F5–F7 探测公共管线去重。双基线
+  **1735/96/0（Low-IL）、1820/11/0（High-IL 权威）**，总用例 1828→1831。
+  详见 docs/HANDOVER_ROUND23.md。
 
 ## 技术栈与运行方式
 
@@ -103,6 +113,7 @@ xs2/
   ubuntu `backend` job 保留作跨平台快速信号。
 - 2026-10-24 R20 双基线（插件 id / 资源 id / 市场 Skill id 设备名拒绝）：Low-IL → **1720 passed / 96 skipped / 0 failed**（服务在跑，故 e2e 15 条执行而非 skip）；High-IL → **1805 passed / 11 skipped / 0 failed**。净增 **93** 条用例（`test_plugin_name_guard.py` 60 + `test_marketplace_skill_id_guard.py` 33）。对账：Low-IL 1627+93=1720；High-IL 1697+93+15(e2e skip→pass)=1805。
 - 2026-10-24 R21 双基线（executor runtime 目录钉位 + 存储名只读审计 + 市场安装真实包 e2e + update exists() 语义锚定）：Low-IL → **1732 passed / 96 skipped / 0 failed**；High-IL → **1817 passed / 11 skipped / 0 failed**。净增 **12** 条用例（`test_storage_name_audit.py` 5 + `test_executor_runtime_dir.py` 2 + `test_marketplace_install_e2e.py` 3 + update 锚定 2）。对账：Low-IL 1720+12=1732；High-IL 1805+12=1817。
+- 2026-10-24 R23 双基线（维护态首轮：B14 修复 + 真实设备名常驻回归 + e2e 探测去重）：Low-IL → **1735 passed / 96 skipped / 0 failed**（105.49s）；High-IL → **1820 passed / 11 skipped / 0 failed**（122.78s，权威）。净增 **3** 条（`test_executor_runtime_dir.py` B14 回归 1 + `test_real_device_name_dirs.py` 2，后者 POSIX/不支持环境诚实 skip）。对账：Low-IL 1732+3=1735；High-IL 1817+3=1820。总用例 R21 口径 1828 → **1831**。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个

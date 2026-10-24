@@ -40,6 +40,11 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-dev.lock
       - run: python -m pytest -q
+      # 存储名只读巡检（R23）：Windows 权威基线跑完后对仓库做一次设备名遗留
+      # 体检，防新数据回归。CI 克隆不含运行期 data/，此步主要锚定配置面与
+      # 未来可能入库的数据面；本地权威巡检仍以 PROJECT_INFO 维护入口为准。
+      - name: Storage name audit (read-only)
+        run: python scripts/audit_storage_names.py
 
   frontend:
     runs-on: ubuntu-latest

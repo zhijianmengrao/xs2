@@ -221,11 +221,14 @@ class WorkflowExecutorSupervisor:
         self._closing = False
         self._set_status(STATUS_STARTING)
         self._worker_pid = None
-        self._runtime_dir = Path(
-            tempfile.mkdtemp(prefix="determinflow-executor-", dir=_runtime_dir_root())
-        )
-        restrict_private_path(self._runtime_dir, 0o700)
         try:
+            # runtime 目录准备必须在 try 内：mkdtemp/restrict_private_path 失败
+            # 时 except 分支负责把状态从 starting 复位为 stopped，否则健康面板
+            # 会永久悬挂在 starting（HANDOVER_ROUND21 §7 记录项，R23 修复）。
+            self._runtime_dir = Path(
+                tempfile.mkdtemp(prefix="determinflow-executor-", dir=_runtime_dir_root())
+            )
+            restrict_private_path(self._runtime_dir, 0o700)
             if self.event_handler is not None:
                 initial_identity = ExecutorIdentity(
                     self.executor_id, uuid.uuid4().hex,
