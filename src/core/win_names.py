@@ -85,6 +85,21 @@ def has_unsafe_trailing_char(name: str) -> bool:
     return name != name.rstrip(". ")
 
 
+def unsafe_device_name(name: str) -> Optional[str]:
+    """**平台无关**判定：``name`` 是否为 Windows 保留设备名；是则返回拒因。
+
+    与 :func:`unsafe_windows_component` 的区别：本函数**不**按 ``os.name`` 门控，
+    供「名字同时是跨平台共享键」的调用方使用——插件 id / 资源前缀 / 进程 id 会写进
+    ``plugins.lock.json``、注册表清单与 ``runtime-resources/<id>`` 目录，若只在 nt
+    拒绝，同一份 registry 在 Linux 与 Windows 上会得到不同的「清单是否有效」结论
+    （``_parse_registry_plugin`` 对任一非法 id 使整份清单失效）。
+
+    仅覆盖设备名，不覆盖尾随点/空格：后者的规则源在 web 面按平台门控，且插件侧的
+    kebab-case 正则本就不含点，无需重复判定。
+    """
+    return REASON_DEVICE_NAME if is_reserved_device_name(name) else None
+
+
 def unsafe_windows_component(name: str) -> Optional[str]:
     """返回路径段 ``name`` 在 Windows 上的问题描述；安全时返回 ``None``。
 

@@ -52,7 +52,12 @@ from .local_skills import (
 )
 from .operation_log import record_marketplace_operation
 from .publish_metadata import require_publish_text_limits
-from .ownership import SKILL_ID_PATTERN, installation_state, resolve_openable_skill
+from .ownership import (
+    SKILL_ID_PATTERN,
+    assert_safe_skill_id,
+    installation_state,
+    resolve_openable_skill,
+)
 from .updates import update_marketplace_skill
 from .portal import (
     MarketplaceRequestError,
@@ -812,6 +817,10 @@ class SkillMarketplaceService(CommunityOperations):
     def _validate_slug(slug: str) -> None:
         if not _SKILL_ID_PATTERN.fullmatch(slug):
             raise LocalSkillError("invalid_slug", "Skill 标识格式无效")
+        # slug 会成为 `marketplace-skills/<slug>` 的目录名：小写设备名（nul/con/…）
+        # 合法于正则却是 Windows 幻影目录，会让该名字被永久占用（exists() 恒真、
+        # 无任何实体可删），故一并拒绝。见 ownership.assert_safe_skill_id。
+        assert_safe_skill_id(slug)
 
     @staticmethod
     def _validate_version_id(version_id: str) -> str:

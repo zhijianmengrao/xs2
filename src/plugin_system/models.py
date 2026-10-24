@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Mapping
 
+from src.core.win_names import unsafe_device_name
+
 
 _PLUGIN_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _RESOURCE_PREFIX_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -91,6 +93,12 @@ class ProcessSpec:
     def __post_init__(self) -> None:
         if not _PROCESS_ID_RE.fullmatch(self.process_id):
             raise ValueError(f"invalid process_id: {self.process_id}")
+        # `processes.py` 用 `log_root/<owner>/<process_id>.log` 落盘日志。
+        # `nul.log` 这类「设备名 + 扩展名」在本机（Win11 + Py3.14）实测是真文件，
+        # 但老版本 Windows 与其它工具仍按设备解析 → 日志静默进黑洞。与 B10
+        # （附件 `NUL.txt`）同族，按单一规则源统一拒绝。
+        if (reason := unsafe_device_name(self.process_id)) is not None:
+            raise ValueError(f"invalid process_id: {self.process_id}（{reason}）")
         if not self.argv or any(not isinstance(item, str) or not item for item in self.argv):
             raise ValueError("process argv must contain non-empty strings")
         if any(
@@ -108,6 +116,14 @@ def validate_plugin_id(plugin_id: str) -> str:
     normalized = str(plugin_id).strip()
     if len(normalized) > 128 or not _PLUGIN_ID_RE.fullmatch(normalized):
         raise ValueError(f"invalid plugin id: {plugin_id}")
+    # 小写形式（nul/con/aux/com1/lpt1）是合法的 kebab-case 写法，却是 Windows 保留
+    # 设备名：插件 id 会直接成为 `checkouts/<id>`、`runtime-resources/<id>` 的目录名
+    # 与锁文件键。`NUL` 目录是幻影（mkdir 静默成功、exists() 恒真、is_dir() 假），
+    # 于是 _atomic_replace_directory 报 WinError 87、os.replace 报 WinError 3——
+    # 两者都是 OSError，逃出 _raise_http_error 的 400 映射而变成 HTTP 500。
+    # 判定不按平台门控：同一 id 也是 registry/lock 的跨平台共享键。
+    if (reason := unsafe_device_name(normalized)) is not None:
+        raise ValueError(f"invalid plugin id: {plugin_id}（{reason}）")
     return normalized
 
 
@@ -136,6 +152,10 @@ def validate_resource_prefix(
         return ""
     if len(normalized) > 128 or not _RESOURCE_PREFIX_RE.fullmatch(normalized):
         raise ValueError(f"invalid resource prefix: {resource_prefix}")
+    # 前缀会参与拼出 effective 资源 id，而路径型资源（workflow/script_library/skill/
+    # rule）的 effective id 是 copytree 的目标目录名，故与插件 id 同样拒绝设备名。
+    if (reason := unsafe_device_name(normalized)) is not None:
+        raise ValueError(f"invalid resource prefix: {resource_prefix}（{reason}）")
     return normalized
 
 

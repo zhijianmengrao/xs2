@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
+from src.core.win_names import unsafe_device_name
 from src.plugin_system import validate_plugin_id, validate_resource_prefix
 
 
@@ -32,6 +33,15 @@ _RESOURCE_KIND_ALIASES = {
 
 class ResourceIdError(ValueError):
     """Base error for invalid resource identity declarations."""
+
+
+# 这些资源类型的 ``effective_id`` 会被 `resource_preparation` 直接用作 copytree 的
+# 目标**目录名**（workflows/script_libraries/skill/rule bundle），因此必须满足文件系统
+# 命名约束；agent/prompt/preset_phrase 等只是 JSON 文档内的键，不落盘为路径，
+# 不在此拒绝面内（否则会误伤插件正文里恰好叫 nul 的键）。
+_PATH_BEARING_RESOURCE_KINDS = frozenset(
+    {"workflow", "script_library", "skill", "rule"}
+)
 
 
 class ResourceIdConflictError(ResourceIdError):
@@ -108,6 +118,16 @@ def build_resource_id_plan(
                     f"duplicate local resource ID: {owner}/{resource_type}/{local_id}"
                 )
             effective_id = effective_resource_id(prefix, local_id)
+            if resource_type in _PATH_BEARING_RESOURCE_KINDS:
+                # `effective_id` 会成为 runtime-resources 下的真实目录名；设备名在
+                # Windows 上是幻影目录（copytree 报 WinError 1、rmtree 静默失效），
+                # 判定平台无关以免同一插件在 Linux 装好、在 Windows 无声丢资源。
+                reason = unsafe_device_name(effective_id)
+                if reason is not None:
+                    raise ResourceIdError(
+                        f"resource ID {local_id!r} resolves to {effective_id!r} "
+                        f"in {resource_type}（{reason}）"
+                    )
             effective_key = (resource_type, effective_id)
             previous = effective_keys.get(effective_key)
             if previous is not None:

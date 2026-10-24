@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .errors import LocalSkillError
-from .ownership import SKILL_ID_PATTERN
+from .ownership import SKILL_ID_PATTERN, assert_safe_skill_id
 
 SCHEMA_VERSION = 1
 MAX_DRAFT_BYTES = 64 * 1024
@@ -97,7 +97,7 @@ def normalize_skill_id(skill_id: str) -> str:
     value = skill_id.strip()
     if not SKILL_ID_PATTERN.fullmatch(value):
         raise LocalSkillError("invalid_slug", "Skill 标识格式无效")
-    return value
+    return assert_safe_skill_id(value)
 
 
 def normalize_optional_skill_id(value: Any) -> str:

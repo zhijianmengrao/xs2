@@ -70,3 +70,6 @@ _svc_out.log
 _svc_err.log
 
 tmp*/
+# `tempfile.mkstemp()` 在 %TEMP% ACL 受限时回落到 CWD，产出的是**文件**（tmpXXXX），
+# 上面的 `tmp*/` 只匹配目录，故补一条仓库根锚定的文件规则（PROJECT_INFO 注意事项 8）。
+/tmp*

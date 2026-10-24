@@ -17,7 +17,7 @@ from src.skills.manager import SkillManager
 from .catalog import MAX_SKILL_BYTES
 from .bundle import pack, unpack, root_document, read_directory
 from .errors import LocalSkillError
-from .ownership import SKILL_ID_PATTERN
+from .ownership import SKILL_ID_PATTERN, assert_safe_skill_id
 
 COMMUNITY_USE_LICENSE = "LicenseRef-DF-Community-1.0"
 ALLOWED_PUBLISH_LICENSES = frozenset(
@@ -56,7 +56,8 @@ def validate_skill_content(content: bytes) -> str:
         raise LocalSkillError("invalid_description", "Skill description 不能为空")
     if not body.strip():
         raise LocalSkillError("invalid_body", "SKILL.md 正文不能为空")
-    return name
+    # 返回的 name 会被 `installs.py` 直接拼成 `marketplace-skills/<name>` 目录名。
+    return assert_safe_skill_id(name, field="Skill name")
 
 
 def read_shareable_skill(skill_manager: SkillManager, skill_id: str) -> tuple[Path, bytes]:
@@ -98,7 +99,7 @@ def skill_identity(content: bytes) -> tuple[str, str]:
     name = frontmatter.get("name")
     if not isinstance(name, str) or not SKILL_ID_PATTERN.fullmatch(name):
         raise LocalSkillError("invalid_name", "Skill name 格式无效")
-    return name, _read_version(frontmatter)
+    return assert_safe_skill_id(name, field="Skill name"), _read_version(frontmatter)
 
 
 def declared_skill_license(content: bytes) -> str:
@@ -210,7 +211,7 @@ def require_skill_id(skill_id: str) -> str:
     value = skill_id.strip()
     if not SKILL_ID_PATTERN.fullmatch(value):
         raise LocalSkillError("invalid_slug", "Skill 标识格式无效")
-    return value
+    return assert_safe_skill_id(value)
 
 
 def _decode_skill_text(content: bytes) -> str:
@@ -270,6 +271,10 @@ def _write_version(frontmatter: dict, version: str) -> None:
 
 
 def install_skill_atomically(target: Path, content: bytes, *, check_types: bool = True) -> None:
+    # 纵深防御：`target` 的最后一段就是 Skill 目录名。上游 slug/name 校验已拒绝
+    # 设备名，此处再挡一次，防止将来新增调用点时把幻影目录写进文件系统
+    # （实测：`nul` 目录下 os.replace 报 WinError 183，且 exists() 恒真无法清理）。
+    assert_safe_skill_id(target.name, field="Skill 目录名")
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".marketplace-", dir=target.parent))
     try:

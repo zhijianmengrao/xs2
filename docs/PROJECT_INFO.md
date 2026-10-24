@@ -73,6 +73,7 @@ xs2/
   （见平台注意事项 9）与 ② CI `windows-backend` job（`.github/workflows/ci.yml`：windows-latest +
   Python 3.14 + `requirements-dev.lock`，与本机 High-IL 平台一致，Windows 专属用例在 CI 真实执行）。
   ubuntu `backend` job 保留作跨平台快速信号。CI job 首次运行记录**待两仓库推送后**产生（R19 时推送仍受阻）。
+- 2026-10-24 R20 双基线（插件 id / 资源 id / 市场 Skill id 设备名拒绝）：Low-IL → **1720 passed / 96 skipped / 0 failed**（服务在跑，故 e2e 15 条执行而非 skip）；High-IL → **1805 passed / 11 skipped / 0 failed**。净增 **93** 条用例（`test_plugin_name_guard.py` 60 + `test_marketplace_skill_id_guard.py` 33）。对账：Low-IL 1627+93=1720；High-IL 1697+93+15(e2e skip→pass)=1805。
 - 2026-10-22 运行状态抽查：`/api/plugins` 双插件 `runtime_status=running`（bishu-novel 0.2.2 / xs2-novel-flywheel 0.1.13）；`/api/system/status` 四执行器 `ready`（pid 为**真实 worker 解释器**，非启动桩）；`cd web && npm.cmd run build` 成功。
 
 ## 平台注意事项（Windows，2026-10-22 实测确认）
@@ -166,3 +167,25 @@ xs2/
       其下任何写入 → `FileNotFoundError(WinError 3)`，`shutil.rmtree` 删不掉。
     - 处置结论不变：一律**拒绝**（保持 R17 已上线的 web 面行为与跨工具一致性——资源管理器
       拒绝创建这些名字），但根因表述以此条为准，不再写作「CON 写入也会静默丢弃」。
+
+13. **（2026-10-24 R20 实测）设备名不只是「路径段」问题，也是「标识符」问题**
+    第 12 条讲的是设备名当**路径段**；R20 发现同一族缺陷也出现在**标识符**上——插件 id、
+    资源 effective id、市场 Skill id 的合法字符集（kebab-case `^[a-z0-9]+(?:-[a-z0-9]+)*$`）
+    与小写设备名同型，`nul`/`con`/`com1` 全部合法，而这些 id 会被直接拼成目录名：
+    - **插件 id** → `checkouts/<id>`、`runtime-resources/<id>`、锁文件键。实测
+      `prepare_plugin_resources(extension_id="nul")` 报 **WinError 87**、
+      `os.replace(... → checkouts/nul/<rev>)` 报 **WinError 3**；两者都是 `OSError`，
+      而 `_raise_http_error` 只映射 `ValueError`/`PluginStoreError`/`SourceTrustError`，
+      故**逃逸成 HTTP 500 而非 400**。
+    - **路径型资源 id**（workflow/script_library/skill/rule）→ `copytree` 目标目录名。
+      实测 `copytree(src/nul → dst/nul)` 报 **WinError 1**，留下 `exists()=True` 的幻影，
+      内容不可达且 `rmtree(ignore_errors=True)` 静默无效。
+    - **市场 Skill id** → `marketplace-skills/<id>`。最隐蔽的一处：**`exists()` 恒真发生在
+      任何创建动作之前**（NUL 设备本身），于是 `resolve_openable_skill("nul")` 会返回
+      **409「本地存在同名但来源不同的 Skill」**——纯属谎报；该名字被永久占用，既装不上
+      也卸不掉。
+    - **处置**：三处入口统一拒绝，判定谓词为 `win_names.unsafe_device_name()`，
+      **平台无关**（不按 `os.name` 门控）——因为这些 id 是跨平台共享键（写进
+      `plugins.lock.json`、registry 清单、`skills_config.json`），条件式校验会让同一份配置
+      在 POSIX 有效、在 Windows 永久损坏。仅**路径型**资源才拒；`agent`/`prompt`/
+      `preset_phrase` 等纯 JSON 键不拒（否则误伤正文里恰好叫 `nul` 的键）。
