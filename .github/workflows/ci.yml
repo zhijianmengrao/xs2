@@ -12,6 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 7 个测试文件（插件注册/市场/桌面打包/章节删除/story assistant 等）按本地开发
+      # 布局读取主仓库旁的 ../DeterminFlow-Plugins（见 tests/ 内 parents[2] 引用），
+      # CI 需复现该兄弟布局，否则收集阶段 FileNotFoundError。
+      - name: Checkout sibling plugins repo (dev layout: ../DeterminFlow-Plugins)
+        run: git clone --depth 1 https://github.com/zhijianmengrao/xs2-plugins "${{ github.workspace }}/../DeterminFlow-Plugins"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -27,6 +32,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling plugins repo (dev layout: ../DeterminFlow-Plugins)
+        run: git clone --depth 1 https://github.com/zhijianmengrao/xs2-plugins "${{ github.workspace }}/../DeterminFlow-Plugins"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
