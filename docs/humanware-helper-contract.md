@@ -1,6 +1,10 @@
 # Humanware Helper CLI 接口契约（P0 前置物）
 
-> 版本：v3（2026-10-23；v3 新增：超长内容 `-` stdin 约定、check-dialogue 业务错误码透传。
+> 版本：v3.2（2026-10-24；v3.2 新增：`workspace_id` 尾随点/空白别名一律 400，Windows 名称约束
+> 统一收敛到 `src/web/path_guard.py`（humanware 与 novel-console 两个路由面共用）。
+> v3.1（2026-10-23）：stdin 阈值可经环境变量覆盖、后端输入预校验语义
+> （NUL 字符 / Windows 保留设备名 → HTTP 400，见 §2.2）。
+> v3（2026-10-23）：超长内容 `-` stdin 约定、check-dialogue 业务错误码透传。
 > v2 依据实现回写：CLI 文件名为同名入口 humanware_helper.py、
 > 章节路径为 story/{n}/chapter.md、业务失败 exit 0）
 > 对应 `src/web/humanware_routes.py` 的调用约定。
@@ -29,6 +33,8 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
 原因：Windows `CreateProcess` 命令行上限约 32,767 UTF-16 单元（超限报
 `WinError 206`，实测 33,000 字符触发）、POSIX 受 `ARG_MAX` 约束，
 而 HTTP 层 `score-content` 允许至 10M 字符。短内容仍走 argv（行为不变）。
+阈值可经环境变量 `DETERMINFLOW_HUMANWARE_STDIN_ARG_THRESHOLD` 覆盖
+（正整数字符数；缺失或非法值回退默认 8,192——v3.1）。
 注意：内容恰为字面量 `"-"` 时会被 stdin 通道吞掉（stdin 空则按无内容评分），
 属可接受的边界语义。
 
@@ -57,6 +63,16 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
 - `code` 取值范围：400（输入错误）、404（文件不存在）、409（工作区状态不满足）、500（内部失败）。
 - 后端将 `code` 直接作为 HTTP 状态码返回给前端（见 `_generate_voice_file` / `score_content` /
   `score_chapter` / `check_dialogue`——v3 起 check-dialogue 与其余端点一致透传，此前误为固定 500）。
+- **后端输入预校验（v3.1，v3.2 扩展）**：以下输入在后端即被拒绝（HTTP 400），不会启动 CLI 进程：
+  - `character` / `dialogue` / `chapter_file` 含 NUL 等无法进入 argv 的字符
+    （此前 500「embedded null character」）；
+  - `workspace_id` 为 Windows 保留设备名（`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`/`CONIN$`/
+    `CONOUT$`，含大小写与带扩展名变体，如 `NUL.txt`——此前 `NUL` 因 `Path.exists()` 恒真可返回 200）；
+  - **（v3.2）`workspace_id` 尾随点或空格**（`welcome`、`welcome..`）：Windows 解析路径段时
+    会剥离尾随点/空白，使 `welcome.` 成为真实工作区 `welcome` 的**别名**（实测 v3.1 服务返回 200
+    并可读写真实工作区内容），而 POSIX 上两者是不同名字。为保证「按给定名字定位工作区」在
+    两个平台语义一致，此类名字一律 400；名字**中间**的点（`alpha.md`）仍然合法（→ 404）。
+    判定规则集中在 `src/web/path_guard.py`，与 novel-console 的 `safe_target`/`library_path` 共用。
 
 ### 2.3 硬性规则
 

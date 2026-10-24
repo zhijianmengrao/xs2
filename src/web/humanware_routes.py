@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+from .path_guard import unsafe_windows_component
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,7 @@ _WORKSPACE_BOOKS_ROOT = _PROJECT_ROOT / "data" / "workspaces" / "books"
 _CLI_SEMAPHORE = asyncio.Semaphore(4)
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$")
+# Windows 保留设备名 / 尾随点空白的别名规则统一在 src/web/path_guard.py（与 novel_routes 共用）。
 # 前端传 workspace 完整相对路径（data/workspaces/books/<id>）的前缀
 _WORKSPACE_PATH_PREFIX = "data/workspaces/books/"
 _VOICE_FILE_LOCK = asyncio.Lock()
@@ -78,6 +82,11 @@ def _get_workspace_root(workspace_id: str) -> Path:
         raise HTTPException(status_code=400, detail="workspace_id 非法")
     if not _SAFE_ID_RE.match(candidate):
         raise HTTPException(status_code=400, detail="workspace_id 含非法字符")
+    # Windows：保留设备名（NUL 的 exists() 恒真）与尾随点/空白（Windows 解析时剥离，
+    # 使 "welcome." 成为真实工作区 "welcome" 的别名）都会让存在性校验失真 → 直接 400。
+    reason = unsafe_windows_component(candidate)
+    if reason:
+        raise HTTPException(status_code=400, detail=f"workspace_id {reason}")
     books_root = _WORKSPACE_BOOKS_ROOT.resolve()
     root = (books_root / candidate).resolve()
     # 双重校验：解析结果必须仍位于 books 根下
@@ -138,6 +147,10 @@ def _run_humanware_command_blocking(
     except subprocess.TimeoutExpired:
         logger.error("humanware 命令超时: %s", command)
         return {"status": "error", "message": f"命令执行超时: {command}", "code": 500}
+    except ValueError as exc:
+        # subprocess 对 argv 中的 NUL 等非法字符抛 ValueError：属客户端输入问题，按契约 §2.2 转 400
+        logger.warning("humanware 命令参数非法: %s", exc)
+        return {"status": "error", "message": f"命令参数非法: {exc}", "code": 400}
     except OSError as exc:
         logger.error("humanware 命令启动失败: %s", exc)
         return {"status": "error", "message": f"命令启动失败: {exc}", "code": 500}
@@ -174,12 +187,34 @@ async def _run_humanware_command(
 
 # 超过该长度的大段文本改走 stdin（“-” 占位）：Windows CreateProcess 命令行
 # 上限约 32,767 UTF-16 单元、Linux 受 ARG_MAX 约束；CLI 契约 v3。
+# 默认值可经环境变量 DETERMINFLOW_HUMANWARE_STDIN_ARG_THRESHOLD 覆盖（R15-4）。
 _STDIN_ARG_THRESHOLD = 8_192
+_STDIN_ARG_THRESHOLD_ENV = "DETERMINFLOW_HUMANWARE_STDIN_ARG_THRESHOLD"
+
+
+def _stdin_arg_threshold() -> int:
+    """读取 stdin 通道阈值；环境变量缺失/非法（非整数、<1）时回退默认值。"""
+    raw = os.environ.get(_STDIN_ARG_THRESHOLD_ENV)
+    if not raw:
+        return _STDIN_ARG_THRESHOLD
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r 非整数，回退默认 %s", _STDIN_ARG_THRESHOLD_ENV, raw, _STDIN_ARG_THRESHOLD
+        )
+        return _STDIN_ARG_THRESHOLD
+    if value < 1:
+        logger.warning(
+            "%s=%r 须为正整数，回退默认 %s", _STDIN_ARG_THRESHOLD_ENV, raw, _STDIN_ARG_THRESHOLD
+        )
+        return _STDIN_ARG_THRESHOLD
+    return value
 
 
 def _content_arg(value: str) -> tuple[str, Optional[str]]:
     """长内容返回 (“-”, value) 经 stdin 传输；短内容原样经 argv 传递。"""
-    if len(value) > _STDIN_ARG_THRESHOLD:
+    if len(value) > _stdin_arg_threshold():
         return "-", value
     return value, None
 

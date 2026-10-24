@@ -1,4 +1,4 @@
-﻿# DeterminFlow（yuyang0702/xs2）项目信息
+# DeterminFlow（yuyang0702/xs2）项目信息
 
 ## 项目名称
 DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性 AI 工作流运行框架。把 LLM、脚本、API、数据库操作和人工审批组织成有版本、可校验、可重试、可恢复、可审计的工作流。
@@ -64,6 +64,7 @@ xs2/
 - **禁止直接操作生产环境**；`F:\DeterminFlow`（端口 8020）为既有运行环境，未改动其数据
 - 验证方式：`python -m pytest -q`；`cd web && npm run lint && npm run test:* && npm run build`；`docker compose -f docker-compose.yml config -q`
 - 2026-10-22 最终本地回归（`.\.venv\Scripts\python.exe -m pytest -q`）：**1514 passed / 0 failed / 36 skipped**；所有剩余 skip 均为平台环境限制（Windows symlink 特权 / macOS 签名 / POSIX fcntl），不再有失败项；前端 `npm run lint` 0 errors、`npm test` 全过、`npm run build` 成功。
+- 2026-10-24 R17 双基线（同一提交，Windows）：Low-IL（venv）`pytest -q` → **1500 passed / 97 skipped / 0 failed**；High-IL（`C:\Windows\py.exe` + venv site-packages 经 `PYTHONPATH`，见平台注意事项 9）→ **1585 passed / 12 skipped / 0 failed**。High-IL 是权威基线（symlink 与 msys git 用例都真实执行）；Low-IL 下这些用例转为 skip。
 - 2026-10-22 运行状态抽查：`/api/plugins` 双插件 `runtime_status=running`（bishu-novel 0.2.2 / xs2-novel-flywheel 0.1.13）；`/api/system/status` 四执行器 `ready`（pid 为**真实 worker 解释器**，非启动桩）；`cd web && npm.cmd run build` 成功。
 
 ## 平台注意事项（Windows，2026-10-22 实测确认）
@@ -93,7 +94,47 @@ xs2/
 6. **`Path.write_text()` 默认把 `\n` 翻译为 `\r\n`**
    若后续对**原始字节**做哈希（如 marketplace 的 `source_sha256`），跨平台结果会不同；需要确定性字节时传 `newline="\n"`。
 
-7. **symlink 相关用例在本机必然失败**
-   会话令牌中 `SeCreateSymbolicLinkPrivilege` 为 Disabled 且进程内启用无效，`os.symlink` 报 WinError 1314。需管理员令牌或重新登录后再跑。
+7. **symlink 相关用例仅在 Low-IL 解释器下不可用（R17 修正，见平台注意事项 9）**
+   会话令牌中 `SeCreateSymbolicLinkPrivilege` 为 Disabled 且进程内启用无效，`os.symlink` 报 WinError 1314。根因与本机解释器被降为 **Low 完整性级别**有关，不必然需要管理员令牌或重新登录：以 High-IL 解释器（`C:\Windows\py.exe` + venv site-packages 经 `PYTHONPATH` 挂载）跑同一套件时，symlink 用例可正常创建链接并通过。
 
 8. **`%TEMP%` 有 ACL 限制**，`tempfile.mkdtemp()` 会落到当前工作目录，导致仓库根出现 `determinflow-executor-*/`、`pytest-of-wenbo/` 等临时目录；建议加入 `.gitignore`。
+
+9. **（2026-10-23 R16 发现 / R17 定位根因并给出处置）msys 引导被拒——影响所有需要 git 传输的测试**
+   症状：由 python `subprocess` 派生的 Git for Windows msys 程序（`usr/bin/sh.exe`、`bash.exe`）
+   启动即崩：`*** fatal error - NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022`。
+   **R17 根因（实测，非推测）**：
+   - 令牌的强制完整性级别（IL）随**可执行文件所在位置**变化：任何 `python.exe`（含改名副本）
+     从 **F: 盘**启动即为 **Low IL（S-1-16-4096）**，同一二进制复制到 **C:** 启动为 **High IL**；
+     `cmd.exe`/`node.exe`/`C:\Windows\py.exe` 在本会话均为 High IL。
+   - 机器上已存在由更早的 msys 进程创建的共享对象 `\BaseNamedObjects\msys-2.0S5-<hash>`。
+     实测（本会话，ctypes 直调 ntdll）：该对象**确实存在**——自建同名目录对象返回
+     `0xC0000035`（OBJECT_NAME_COLLISION），说明先前某进程已创建它；
+     Low-IL 进程 `NtOpenDirectoryObject` 时 `DIRECTORY_QUERY`/`LIST_DIRECTORY`/`MAXIMUM_ALLOWED`
+     成功，而 `SYNCHRONIZE`/`WRITE_DAC`/`DIRECTORY_ALL_ACCESS` 一律 `0xC0000022`
+     （STATUS_ACCESS_DENIED），`MAXIMUM_ALLOWED` 实际只授予 `SYNCHRONIZE|READ_CONTROL` 级别；
+     msys 需要被拒绝的那部分访问，故引导失败。对象属主 SID 为本地用户 RID 1001。
+     （DACL 明细未能可靠读出，因此此处只陈述可达/被拒的实测结果，不断言具体 ACE。）
+     对照实验：`cmd.exe`(High IL) 直接 exec `sh.exe` → rc=0 正常；`cmd.exe` → `python.exe`(Low IL)
+     → `sh.exe` → 崩溃。因此 R16 记为「疑似安全软件 / 重启可解」的结论**不成立**——判别变量是
+     解释器令牌的 IL，而非机器状态；**无需重启机器**。
+     （R16 当日 R15 全量绿、R16 全量红的差异，同样由该 IL 差异解释。）
+   - 影响面：git 的 clone/fetch/push/ls-remote 传输（本地路径与 `file://` 也算）都要 exec msys `sh`；
+     `init/add/commit/config/rev-parse/branch/tag/log/diff` 等原生动词**不受影响**。
+     同理，Windows 建 symlink 需 `SeCreateSymbolicLinkPrivilege`，Low-IL 进程也拿不到——
+     此前记录为「需管理员/重新登录」，R17 证据：High-IL 全量运行的 11 个 skip 恰为 macOS 签名(6)+icon.icns(1)+fcntl(2)+Unix进程树(2)，symlink 类 skip 消失且用例通过，故同样由令牌 IL 决定。
+   - **处置（两者均已在仓库固化）**：
+     1) `tests/conftest.py` 新增 msys 探测钩子：失败信息含 `NtCreateDirectoryObject` 签名，
+        或失败发生在已知依赖 git 传输的 6 个插件测试模块内**且**探测确认本机传输不可用时，
+        转成 skip（附原因）。探测通过（传输可用）时钩子完全不介入，真实缺陷照常失败。
+     2) 需要真正执行这些用例时，改用 **High-IL 解释器**跑 pytest：
+        ```powershell
+        cd "F:\DeterminFlow x2\xs2"
+        $sp = "$PWD\.venv\Lib\site-packages"
+        $env:PYTHONPATH = "$sp;$sp\win32;$sp\win32\lib;$sp\pythonwin;$sp\pywin32_system32"
+        C:\Windows\py.exe -m pytest -q
+        ```
+        （`py.exe` 是 C: 上的原生启动器，它启动的 venv 包路径解释器仍为 Low IL，
+        因此需把 venv 的 site-packages 经 PYTHONPATH 挂到 C: 侧解释器上。）
+   - 实测基线：Low-IL（venv）`pytest -q` → **1497 passed / 96 skipped / 0 failed**；
+     High-IL（py.exe + PYTHONPATH）同一提交 → **1582 passed / 11 skipped / 0 failed**
+     （11 项为 macOS/POSIX 类平台 skip）。

@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from src.config import DATA_DIR, WORKFLOW_WORKSPACES_DIR
 from .workflow_access import _ensure_http_mutation_allowed, _ensure_workflow_writable, _get_manager
 from .novel_assistant import NovelAssistantJobs
+from .path_guard import unsafe_windows_component, unsafe_windows_path, unsafe_windows_root
 from .novel_library import adopted_writing, enrich_candidates, fingerprint, profile_from_workspace, usage
 from .novel_mechanism_recommender import generate_recommendations_file
 from .novel_reference_choices import with_reference_choices
@@ -319,8 +320,19 @@ def _fanqie_warnings(pages: list[dict[str, object]]) -> list[str]:
 
 def safe_target(root: Path, relative: str) -> Path:
     root = root.resolve()
+    # 工作区根自身（workspace 覆盖参数由调用方提供）可能是设备名「幻影目录」：
+    # mkdir 静默成功、exists() 恒真，但其下写入必然 WinError 3（未捕获即 500）。
+    root_reason = unsafe_windows_root(root)
+    if root_reason:
+        raise HTTPException(400, f"工作区路径名在 Windows 上不安全：{root_reason}")
     if Path(relative).is_absolute() or re.match(r"^[a-zA-Z]:", relative):
         raise HTTPException(403, "请使用工作区内的相对路径")
+    # Windows 上写 `references/NUL` 会「成功」但内容被丢弃（设备名重定向），尾随
+    # 点/空白的名字会被剥离并解析到另一个同名文件。两者都会让「按名字读回自己写的
+    # 文件」失败，须在解析前拒绝。POSIX 无此约束（path_guard 在非 nt 平台返回 None）。
+    reason = unsafe_windows_path(relative)
+    if reason:
+        raise HTTPException(403, f"路径名在 Windows 上不安全：{reason}")
     target = (root / relative).resolve()
     if not target.is_relative_to(root) or target == root:
         raise HTTPException(403, "路径不在工作区内")
@@ -336,6 +348,10 @@ def safe_library_id(raw: str) -> str:
 
 def library_path(item_id: str) -> Path:
     value = safe_library_id(item_id)
+    # 清洗后仍可能得到设备名（"NUL" → "nul"），写法库条目目录同样受 Windows 约束。
+    reason = unsafe_windows_component(value)
+    if reason:
+        raise HTTPException(400, f"写法库条目名称{reason}")
     target = (_library_root / value).resolve()
     if not target.is_relative_to(_library_root.resolve()):
         raise HTTPException(403, "写法库路径无效")
