@@ -3,9 +3,35 @@
 ## 项目名称
 DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性 AI 工作流运行框架。把 LLM、脚本、API、数据库操作和人工审批组织成有版本、可校验、可重试、可恢复、可审计的工作流。
 
-- 仓库：https://github.com/yuyang0702/xs2
-- 上游：https://github.com/alikon-art/DeterminFlow
+- 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
+
+## 项目状态（2026-10-24 完结）
+
+- **迭代完结于 Round 22（完结轮，纯终验+文档定稿）**（R15–R22 共 8 轮「审计→修复→
+  回归→交接」循环，逐轮记录见 docs/HANDOVER_ROUND15..22.md）；全部提交已推送
+  （`origin/main..main` = 0）。
+- **交付摘要**：修复 13 个编号缺陷（B1–B13，涵盖 HTTP 500 逃逸、幻影目录数据损坏、
+  内容静默丢失、409 谎报占用等类别）；「名字面」安全治理全线闭环（路径面 +
+  标识符面，单一规则源 `src/core/win_names.py` + 历史数据只读体检
+  `scripts/audit_storage_names.py`）；executor 临时目录治理（钉位
+  `data/system/executor-runtimes`，仓库根残留清零）；总用例 1597（R17 口径）→
+  **1828**（R21：High-IL **1817 passed / 11 skipped / 0 failed** 权威、Low-IL
+  1732/96/0 快速）；CI 四 job 全绿（backend / windows-backend / frontend /
+  container-config）。
+- **有意遗留**（详见 HANDOVER_ROUND21 §9）：POSIX 真跑验证（需容器/WSL 环境）、
+  HumanwareScoreCard 前端组件（纯新增 UI，无缺陷压力）、`start()` 失败时
+  supervisor 状态悬挂（无实际泄漏）。
+- **上游桌面发布管线说明**：`.github/workflows/desktop-windows.yml` 为上游继承的
+  Tauri/NSIS 发布流水线（发布清单指向 alikon-art 上游 release 与
+  downloads.determinflow.com）。在本 fork 上其 "Build NSIS installer" 步骤需要
+  `TAURI_SIGNING_PRIVATE_KEY` 密钥（本仓库未配置），故预期红；失败点之前的全部
+  步骤（web 构建、PyInstaller 冻结后端、smoke、执行器池测试）在 runner 上均通过。
+  与 R15–R21 迭代交付物无关；若需产出桌面安装包，配置签名密钥或将触发收敛到
+  tag/workflow_dispatch。
+- **维护入口**：接口契约 docs/humanware-helper-contract.md（**v3.4 完结版**，
+  含 §6.1 常驻回归基线）；数据巡检 `python scripts/audit_storage_names.py`
+  （exit 0 clean / 1 有发现）；回归命令与权威基线定义见下文「测试环境」。
 
 ## 技术栈与运行方式
 
@@ -84,6 +110,12 @@ xs2/
   未传 encoding——本机 cp936 掩盖、CI cp1252 必炸（注意事项 5 的实证；其余 1788 条在 cp1252 下全过 =
   全仓唯此两处残留）。
 - 2026-10-22 运行状态抽查：`/api/plugins` 双插件 `runtime_status=running`（bishu-novel 0.2.2 / xs2-novel-flywheel 0.1.13）；`/api/system/status` 四执行器 `ready`（pid 为**真实 worker 解释器**，非启动桩）；`cd web && npm.cmd run build` 成功。
+- 2026-10-24 R21 完结态抽查：8021 服务运行 R21 代码（重启加载 `29b8eb8`，4/4 执行器
+  `ready`、`degraded=false`）；活体 e2e `tests/test_humanware_e2e.py` **15 passed /
+  0 skipped**（F5/F6/F7 版本探测全部执行，确认新代码在线）；存储名审计
+  `scripts/audit_storage_names.py` → `[clean]`；仓库根 `determinflow-executor-*`
+  残留**清零**（runtime 目录已在 `data/system/executor-runtimes/`）；`29b8eb8`
+  的 CI（ubuntu backend）success。
 
 ## 平台注意事项（Windows，2026-10-22 实测确认）
 

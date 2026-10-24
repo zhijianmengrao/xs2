@@ -1,6 +1,12 @@
 # Humanware Helper CLI 接口契约（P0 前置物）
 
-> 版本：v3.3（2026-10-24；v3.3 新增：Windows 名称约束下沉到 **core 层**
+> 版本：v3.4（2026-10-24，**完结版**；v3.4 收官：自 v3.1 起始的「名字面」安全治理
+> 全线闭环——**路径面**（workspace id / 章节路径 / 附件文件名）与**标识符面**
+> （插件 id / 资源 effective id / 市场 Skill id）统一拒绝 Windows 保留设备名，
+> 单一规则源 `src/core/win_names.py`；另附历史数据只读体检
+> `scripts/audit_storage_names.py`。**humanware CLI 契约自身自 v3.3 起无行为
+> 变化**，v3.4 为治理收官与维护态定稿，见 §2.2 末条与 §6.1。）
+> v3.3（2026-10-24）：Windows 名称约束下沉到 **core 层**
 > （`src/core/win_names.py` 为单一规则源，`src/web/path_guard.py` 退为兼容门面），
 > `WorkspaceManager` 拒绝设备名 id 与幻影 override；core 的 `UnsafeWorkspaceIdError`
 > 由 `src/web/error_handlers.py` 统一映射为 **HTTP 400**（此前为 500），见 §2.2。
@@ -12,7 +18,7 @@
 > v2 依据实现回写：CLI 文件名为同名入口 humanware_helper.py、
 > 章节路径为 story/{n}/chapter.md、业务失败 exit 0）
 > 对应 `src/web/humanware_routes.py` 的调用约定。
-> 状态：**已实现并端到端验证**（插件 commit 91c4914 → e4ba419 → 本轮，xs2 commit d2f1e2b → 本轮）。
+> 状态：**已实现并端到端验证；项目迭代完结（2026-10-24，R15–R21）**。常驻回归见 §6.1。
 
 ## 1. 部署位置与发现方式
 
@@ -85,6 +91,18 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
     此前 novel/workflow 端点把裸 `ValueError` 逃逸成 **500**（客户端错误被报成服务端故障）。
     对 humanware 面（`_get_workspace_root` 直接拼 `data/workspaces/books/<id>`，不经
     WorkspaceManager）行为无变化；本条主要约束 novel-console / workflows / 插件工具面。
+  - **（v3.4 收官注记）标识符面的同类守卫已全线闭环，不改 humanware 行为**：
+    插件 id / 资源前缀 / process_id（`src/plugin_system/models.py`）、路径型资源
+    effective id（`src/extension_host/resource_ids.py`）、市场 Skill id
+    （`src/skill_marketplace/*`，含包内 `name` 字段）均拒绝设备名——这些 id 会成为
+    `checkouts/<id>`、`runtime-resources/<id>`、`marketplace-skills/<id>` 的**目录名**
+    并写进 `plugins.lock.json` / `skills_config.json` 等**跨平台共享键**，故判定
+    `win_names.unsafe_device_name` **平台无关**（条件式校验会让同一份配置在 POSIX
+    有效、在 Windows 永久损坏）。历史数据可用 `python scripts/audit_storage_names.py`
+    只读体检（exit 0 clean / 1 有发现）。缺陷细节见 docs/HANDOVER_ROUND20.md
+    （B11/B12/B13）与 docs/HANDOVER_ROUND21.md；回归锚定在
+    `tests/test_plugin_name_guard.py`（60）、`tests/test_marketplace_skill_id_guard.py`（33）、
+    `tests/test_storage_name_audit.py`（5）等。
 
 ### 2.3 硬性规则
 
@@ -217,7 +235,19 @@ CLI **不得**读写工作区之外的文件；所有路径解析须以 `workspa
   → 重启 8021 → runtime-resources 重建出 humanware_helper/humanware_helper.py
 GET  /api/humanware/status/welcome       → 200（voice_file_exists=false）
 PUT  /api/humanware/voice-file/{id}      → 200（写入）
-POST /api/humanware/generate-voice-file  → 200（character_count=2，不再 501）
-POST /api/humanware/score-content        → 200（四维评分透传）
-POST /api/humanware/check-dialogue       → 200（matches 判定）
+POST  /api/humanware/generate-voice-file  → 200（character_count=2，不再 501）
+POST  /api/humanware/score-content        → 200（四维评分透传）
+POST  /api/humanware/check-dialogue       → 200（matches 判定）
 ```
+
+## 6.1 常驻回归（完结后维护基线）
+
+| 层级 | 套件 | 说明 |
+|---|---|---|
+| 进程内 | `tests/test_humanware_routes.py`（全量套件组成部分） | mock CLI，契约字段/错误码断言 |
+| 活体服务 | `tests/test_humanware_e2e.py`（15 条：E1–E7b 功能链 + F1–F7 名称安全 fuzz） | 8021 服务在跑时执行；服务未跑或运行旧代码时**诚实 skip**（探测函数判定契约版本，不假通过）。注意取证客户端不得经 .NET `System.Uri`（会剥尾随点造成假象，见 PROJECT_INFO 注意事项 11） |
+| 名字面全域 | `test_workspace_manager.py` / `test_plugin_name_guard.py` / `test_marketplace_skill_id_guard.py` / `test_storage_name_audit.py` 等 | §2.2 全部拒绝规则的回归锚；双基线数字见 PROJECT_INFO「测试环境」 |
+| 插件侧 | DeterminFlow-Plugins 仓库 `plugins/xs2-novel-flywheel/tests/` | CLI 本体行为（评分/口头禅/归属算法） |
+
+运行方式与权威基线定义（Low-IL 快速跑 / High-IL 权威 / CI windows-backend）见
+`docs/PROJECT_INFO.md`「测试环境」与「平台注意事项」；逐轮历史见 `docs/HANDOVER*.md`。
