@@ -13,7 +13,7 @@ class NovelProgressTests(unittest.TestCase):
                      'outline/near_term_outline.md', 'story/0001/chapter.md', 'quality/reader_report.json',
                      'story/0001/diff_story_confirmed.md', 'export/manuscript.md']
             for rel in paths:
-                p=root/rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{}' if rel.endswith('.json') else '正文')
+                p=root/rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{}' if rel.endswith('.json') else '正文', encoding='utf-8')
             state={'mode':'short', 'values':{'chapter_number':'0001'}, 'refs':{}}
             for i,(stage,_) in enumerate(STAGES):
                 state['refs'][stage]={'workflow_id':stage, 'task_id':'task'}
@@ -31,7 +31,7 @@ class NovelProgressTests(unittest.TestCase):
     def test_chapter_count_does_not_imply_completion(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)/'book'; root.mkdir()
-            p=root/'story/0001/chapter.md';p.parent.mkdir(parents=True);p.write_text('正文')
+            p=root/'story/0001/chapter.md';p.parent.mkdir(parents=True);p.write_text('正文', encoding='utf-8')
             result=progress(root,{'mode':'serial','values':{'chapter_number':'../0001'}},Path(directory)/'flows')
             self.assertEqual(result['chapter_count'],1)
             self.assertEqual(result['percent'],0)
