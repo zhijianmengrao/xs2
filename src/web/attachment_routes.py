@@ -15,6 +15,7 @@ import aiofiles
 from fastapi import APIRouter, HTTPException, Query, Request
 
 import src.config as config
+from src.core.win_names import unsafe_windows_component
 
 
 logger = logging.getLogger(__name__)
@@ -35,14 +36,22 @@ def _safe_attachment_name(filename: str) -> str:
     # discarding the extension that helps tools identify the file type.
     encoded = basename.encode("utf-8")
     if len(encoded) <= 240:
-        return basename
+        candidate = basename
+    else:
+        suffix = Path(basename).suffix
+        suffix_bytes = suffix.encode("utf-8")
+        available = max(1, 240 - len(suffix_bytes))
+        stem_bytes = Path(basename).stem.encode("utf-8")[:available]
+        stem = stem_bytes.decode("utf-8", errors="ignore") or "file"
+        candidate = f"{stem}{suffix}"
 
-    suffix = Path(basename).suffix
-    suffix_bytes = suffix.encode("utf-8")
-    available = max(1, 240 - len(suffix_bytes))
-    stem_bytes = Path(basename).stem.encode("utf-8")[:available]
-    stem = stem_bytes.decode("utf-8", errors="ignore") or "file"
-    return f"{stem}{suffix}"
+    # Windows 名称约束（B10）：设备名（NUL 实测打开设备本身，上传「成功」但内容被
+    # 静默丢弃）与尾随点/空格（落盘名被剥离，上报名与实际名不一致）统一由 win_names
+    # 判定；POSIX 上这些是合法文件名，恒放行。放在截断之后，截断产物同样受检。
+    unsafe_reason = unsafe_windows_component(candidate)
+    if unsafe_reason:
+        raise ValueError(f"文件名无效（{unsafe_reason}）")
+    return candidate
 
 
 def _reserve_attachment_path(directory: Path, filename: str) -> Path:

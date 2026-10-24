@@ -69,6 +69,10 @@ xs2/
   > R18 B9 已让 `test_workflow_executor_protocol` / `test_workflow_recovery_timeout` 与系统 locale
   > 解耦（子进程 env 内显式 `PYTHONIOENCODING=utf-8` + 父进程按 UTF-8 解码），因此下面两条命令
   > **无论会话是否预设 `PYTHONIOENCODING` 都会通过**（实测四种组合各 39 passed）。
+- **基线政策（R19 起）**：本地 Low-IL（`.venv`）仅作**快速跑**；**权威基线**为 ① 本机 High-IL 命令
+  （见平台注意事项 9）与 ② CI `windows-backend` job（`.github/workflows/ci.yml`：windows-latest +
+  Python 3.14 + `requirements-dev.lock`，与本机 High-IL 平台一致，Windows 专属用例在 CI 真实执行）。
+  ubuntu `backend` job 保留作跨平台快速信号。CI job 首次运行记录**待两仓库推送后**产生（R19 时推送仍受阻）。
 - 2026-10-22 运行状态抽查：`/api/plugins` 双插件 `runtime_status=running`（bishu-novel 0.2.2 / xs2-novel-flywheel 0.1.13）；`/api/system/status` 四执行器 `ready`（pid 为**真实 worker 解释器**，非启动桩）；`cd web && npm.cmd run build` 成功。
 
 ## 平台注意事项（Windows，2026-10-22 实测确认）

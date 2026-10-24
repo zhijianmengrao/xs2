@@ -19,6 +19,21 @@ jobs:
       - run: python -m pip install -r requirements-dev.lock
       - run: python -m pytest -q
 
+  # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
+  # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
+  # 快速跨平台信号；本 job 与本机 High-IL 全量跑（docs/PROJECT_INFO.md 测试环境）
+  # 平台一致，Windows-only 用例在 CI 上真实执行而不是 skip。
+  windows-backend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: python -m pip install -r requirements-dev.lock
+      - run: python -m pytest -q
+
   frontend:
     runs-on: ubuntu-latest
     steps:

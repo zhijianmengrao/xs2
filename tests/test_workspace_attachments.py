@@ -1,6 +1,8 @@
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -70,3 +72,31 @@ def test_upload_rejects_unknown_session(tmp_path):
     )
 
     assert response.status_code == 404
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows 设备名/尾随点语义仅在 nt 平台特判")
+def test_attachment_name_rejects_windows_device_names_and_trailing_dots():
+    """B10：设备名/尾随点附件名在 Windows 上不可用，必须在命名层拒绝。
+
+    实测（R19）：``NUL`` 经 os.open 打开的是设备本身——上传返回 200 但内容被静默
+    丢弃；``notes.`` 落盘名被剥离成 ``notes``（上报名与实际名不一致）。
+    """
+    for bad in ("NUL", "nul", "NUL.txt", "con.md", "COM1", "notes.", "report. "):
+        with pytest.raises(ValueError):
+            _safe_attachment_name(bad)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows 设备名/尾随点语义仅在 nt 平台特判")
+def test_upload_device_name_returns_400_and_writes_nothing(tmp_path):
+    workspace = tmp_path / "workspace"
+    response = _client(workspace).post(
+        "/api/workspace/session-1/attachments",
+        params={"filename": "NUL"},
+        content=b"attachment body",
+    )
+
+    assert response.status_code == 400
+    assert "文件名" in response.json()["detail"]
+    # 不得留下幻影条目：attachments 目录要么不存在，要么为空
+    attachments = workspace / "attachments"
+    assert not attachments.exists() or not any(attachments.iterdir())
