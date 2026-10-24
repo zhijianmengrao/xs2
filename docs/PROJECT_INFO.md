@@ -22,13 +22,15 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - **有意遗留**（详见 HANDOVER_ROUND21 §9）：POSIX 真跑验证（需容器/WSL 环境）、
   HumanwareScoreCard 前端组件（纯新增 UI，无缺陷压力）、`start()` 失败时
   supervisor 状态悬挂（无实际泄漏）。
-- **上游桌面发布管线说明**：`.github/workflows/desktop-windows.yml` 为上游继承的
-  Tauri/NSIS 发布流水线（发布清单指向 alikon-art 上游 release 与
-  downloads.determinflow.com）。在本 fork 上其 "Build NSIS installer" 步骤需要
-  `TAURI_SIGNING_PRIVATE_KEY` 密钥（本仓库未配置），故预期红；失败点之前的全部
-  步骤（web 构建、PyInstaller 冻结后端、smoke、执行器池测试）在 runner 上均通过。
-  与 R15–R21 迭代交付物无关；若需产出桌面安装包，配置签名密钥或将触发收敛到
-  tag/workflow_dispatch。
+- **上游桌面发布管线（2026-10-24 已转绿）**：`.github/workflows/desktop-windows.yml`
+  为上游继承的 Tauri/NSIS 发布流水线（发布清单指向 alikon-art 上游 release 与
+  downloads.determinflow.com）。曾因缺 `TAURI_SIGNING_PRIVATE_KEY` 密钥在本 fork
+  预期红；完结后已补齐：本地 minisign 密钥对（空密码，密钥文件已 gitignore）+
+  GitHub secret 配置 + `tauri.conf.json` 的 updater `pubkey` 替换为本 fork 公钥
+  （`25282d4`：core/full 两条 NSIS job **success**，管线史上首绿；macOS/release
+  job 按 tag-only 规则正确跳过）。注意：`endpoints` 仍指向上游 latest.json，
+  在自有分发地址落地前自动更新呈**安全失效态**（新公钥验上游签名不过即拒绝）；
+  若要启用自动更新需替换 endpoints 为自己的 latest.json 地址。
 - **维护入口**：接口契约 docs/humanware-helper-contract.md（**v3.4 完结版**，
   含 §6.1 常驻回归基线）；数据巡检 `python scripts/audit_storage_names.py`
   （exit 0 clean / 1 有发现）；回归命令与权威基线定义见下文「测试环境」。
