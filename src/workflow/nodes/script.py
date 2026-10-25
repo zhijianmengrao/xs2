@@ -56,24 +56,60 @@ _INTERPRETER_MAP = {"shell": "bash", "python": sys.executable}
 _MAX_OUTPUT_BYTES = 50 * 1024  # 50KB
 
 
+def _proc_children_map() -> dict[int, list[int]] | None:
+    """Read the parent->children map from /proc without external commands.
+
+    Returns None when /proc is unavailable (e.g. macOS); the caller falls
+    back to `ps`. Silent degradation here would orphan grandchildren.
+    """
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None
+    children: dict[int, list[int]] = {}
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as handle:
+                stat = handle.read()
+        except OSError:
+            continue
+        # comm 可含空格与括号,以最后一个 ")" 切分;其后为 state ppid ...
+        close = stat.rfind(b")")
+        if close == -1:
+            continue
+        fields = stat[close + 2:].split()
+        if len(fields) < 2:
+            continue
+        try:
+            parent = int(fields[1])
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(int(entry))
+    return children
+
+
 def _descendant_pids(root_pid: int) -> list[int]:
     """Return descendants deepest-first for an inherited Executor process group."""
-    try:
-        listing = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    children: dict[int, list[int]] = {}
-    for line in listing.splitlines():
+    children = _proc_children_map()
+    if children is None:
         try:
-            pid_text, parent_text = line.split()
-            children.setdefault(int(parent_text), []).append(int(pid_text))
-        except (ValueError, TypeError):
-            continue
+            listing = subprocess.run(
+                ["ps", "-axo", "pid=,ppid="],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return []
+        children = {}
+        for line in listing.splitlines():
+            try:
+                pid_text, parent_text = line.split()
+                children.setdefault(int(parent_text), []).append(int(pid_text))
+            except (ValueError, TypeError):
+                continue
     descendants: list[int] = []
 
     def visit(parent: int) -> None:
