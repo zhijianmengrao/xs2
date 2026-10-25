@@ -93,3 +93,26 @@ def test_real_repo_tree_is_clean() -> None:
     本机真实数据树若被旧版本污染，此处会先行失败给出线索。
     """
     assert scan_storage_names(REPO_ROOT) == []
+
+
+def test_script_survives_non_utf8_stdout() -> None:
+    """B18 回归锚：stdout 为 cp1252（CI PowerShell 实况）时脚本不得崩溃。
+
+    windows-latest 曾在打印中文 [clean] 结论处抛 UnicodeEncodeError（cp1252
+    charmap 无法编码中文），把通过的审计误报成步骤失败——本机 cp936 可编码
+    中文，故只有强制 cp1252 的子进程才能复现。"""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "audit_storage_names.py")],
+        capture_output=True,
+        env=env,
+        cwd=str(REPO_ROOT),
+        timeout=120,
+    )
+    stderr = proc.stderr.decode("utf-8", errors="replace")
+    assert proc.returncode == 0, f"exit={proc.returncode} stderr={stderr}"
+    assert "[clean]" in proc.stdout.decode("utf-8", errors="replace")

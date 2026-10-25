@@ -14,6 +14,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# B18：CI（windows-latest PowerShell）stdout 为 cp1252，中文结论输出在此
+# 编码下抛 UnicodeEncodeError，把实际 clean 的审计误报成步骤失败。与
+# humanware CLI 的契约约定（§5）一致：脚本输出一律 UTF-8。
+if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
