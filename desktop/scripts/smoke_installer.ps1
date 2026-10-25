@@ -217,29 +217,19 @@ try {
         throw "Installed application did not create isolated user configuration"
     }
     $Plugins = (Invoke-RestMethod -Uri "$BackendBaseUrl/api/plugins" -TimeoutSec 5).plugins
-    $Bishu = $Plugins | Where-Object { $_.id -eq "bishu-novel" } | Select-Object -First 1
-    $PublicApi = $Plugins | Where-Object { $_.id -eq "public-api" } | Select-Object -First 1
+    $Flywheel = $Plugins | Where-Object { $_.id -eq "xs2-novel-flywheel" } | Select-Object -First 1
     if ($Flavor -eq "full") {
-        if (-not $Bishu) {
-            throw "Full installer did not seed bishu-novel"
+        if (-not $Flywheel) {
+            throw "Full installer did not seed xs2-novel-flywheel"
         }
-        if (-not $Bishu.active_enabled -or -not $Bishu.desired_enabled) {
-            throw "Full installer did not enable bishu-novel"
+        if (-not $Flywheel.active_enabled -or -not $Flywheel.desired_enabled) {
+            throw "Full installer did not enable xs2-novel-flywheel"
         }
-        if ($Bishu.runtime_status -ne "running") {
-            throw "Full installer bishu-novel is not running: $($Bishu.runtime_status)"
-        }
-        if (-not $PublicApi) {
-            throw "Full installer did not seed public-api"
-        }
-        if (-not $PublicApi.active_enabled -or -not $PublicApi.desired_enabled) {
-            throw "Full installer did not enable public-api"
-        }
-        if ($PublicApi.runtime_status -ne "running") {
-            throw "Full installer public-api is not running: $($PublicApi.runtime_status); $($PublicApi.error)"
+        if ($Flywheel.runtime_status -ne "running") {
+            throw "Full installer xs2-novel-flywheel is not running: $($Flywheel.runtime_status); $($Flywheel.error)"
         }
     }
-    elseif ($Bishu -or $PublicApi) {
+    elseif ($Flywheel) {
         throw "Core installer unexpectedly seeded an official Plugin"
     }
     Write-Output "Installed application status endpoint verified"
