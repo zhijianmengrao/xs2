@@ -65,10 +65,18 @@ fork 版本线自 1.0.0 起自有，fork 仓库无上游 tag 冲突）→ tag `v
 
 ## 5. 发布与 CI 结果（已核对）
 
-- 提交：`<填 code commit>`（历史持久化 + SOP + 脚本 + 1.0.1 bump）、
-  `<填 docs commit>`（本文档 + PROJECT_INFO）。
-- CI / Desktop Windows（tag `v1.0.1`）：见填记。
-- Release 验收（scripts/verify_release.py --tag v1.0.1）：见填记。
+- 提交：`8213732`（历史持久化 + SOP + 验收脚本 + 1.0.1 六处 bump + notes + 本文档初稿）。
+- **流水线（`8213732`）四 run 全 completed/success**：CI[v1.0.1]（run 40159865655）、
+  CI[main]（40159860737）、Desktop Windows[main]（40159860730）、
+  **Desktop Windows[v1.0.1]**（40159865665，Win+macOS 四构建 + release job）。
+- **Release v1.0.1**：https://github.com/zhijianmengrao/xs2/releases/tag/v1.0.1，
+  11 资产齐全（Win core/full NSIS+sha256+sig、macOS core/full dmg+sha256、latest.json）。
+- **验收（下载产物实测）**：sha256 ✓；minisign ed25519 验签 ✓（keynum
+  `c7ebb04df17244ed` 两端一致，与桌面更新器同链）；tauri.conf 版本/公钥
+  一致性 ✓；latest.json 四项 ✓（version=1.0.1、URL 指向本仓库 v1.0.1 资产、
+  signature 与 .sig 逐字一致、notes 正确）。验签网络层注记：urllib 直连
+  latest.json 端点会被本机网络重置（不走代理），SOP 已按 curl 断点续传
+  口径执行，脚本支持 `--skip-manifest` 离线降级。
 
 ## 6. 项目终态与遗留（交接即终稿）
 
