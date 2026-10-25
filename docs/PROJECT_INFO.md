@@ -125,6 +125,20 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   + 截图视觉核验；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；
   双基线不变：**1741/96/0（Low-IL）、1826/11/0（High-IL 权威）**（改动前树
   复测 + 交叉文件复验 36/1 一致）。详见 docs/HANDOVER_ROUND30.md。
+- **R31 发版演练轮（2026-10-25，用户决策版本号 v1.0.0）**：fork 首个 tag
+  发版全链路落地——①版本号统一 `1.1.1→1.0.0` 六处（tauri/Cargo.toml/
+  Cargo.lock 应用包/desktop package.json/**official-plugins.lock 的
+  desktop_version**（load 硬校验必须同步）/钉值测试）+ release-notes；
+  ②tag `v1.0.0` 推送 → 四个 run 全 success（**macOS core/full 构建为 fork
+  首次真实执行**，ad-hoc 签名无证书依赖）→ release job 发布
+  https://github.com/zhijianmengrao/xs2/releases/tag/v1.0.0（11 资产）；
+  ③验收全过：updater 端点 latest.json **200**（R29 的 404 空态终结）、
+  下载 URL 指向本仓库（R29 base-url 修复实测生效）、tauri pubkey↔本地
+  .pub 逐字一致、**端到端 minisign 验签通过**（`scripts/verify_release_v100.py`：
+  sha256 ✓ + ed25519 对 blake2b-512(安装器) ✓，与桌面更新器同链）。
+  版本线说明：1.0.0 低于上游 1.1.1 属 fork 自有起点，上游客户端需全新
+  安装；大陆直连下载慢（33MB 实测 ~30KB/s），痛点成真时按 R28 §6 选项 B
+  迁移。详见 docs/HANDOVER_ROUND31.md。
 
 ## 技术栈与运行方式
 
