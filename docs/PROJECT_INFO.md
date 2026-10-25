@@ -91,6 +91,19 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   alert 人因化活体验证；活体 e2e 17 passed；双基线不变：
   **1740/96/0（Low-IL）、1825/11/0（High-IL 权威）**。R23–R27 五个提交未推送。
   详见 docs/HANDOVER_ROUND27.md。
+- **R28 维护者任务执行轮（2026-10-25，用户授权）**：①15 个 HANDOVER 外来
+  删除正式提交归档（`a249e17`，连续五轮的「疑似用户归档」闭环）；
+  ②**首次推送成功**——R23–R27 全部积压提交 + 后续修复共 7 个提交推送至
+  origin（GCM 已存账号 zhijianmengrao，推送障碍未复发，`origin/main..main`=0）；
+  ③CI 四 job 实跑核对发现并修复 **B18**：R23 挂 CI 的存储名审计步骤在
+  cp1252 stdout（windows-latest PowerShell）下打印中文结论即崩
+  （UnicodeEncodeError 把 clean 误报成失败；R23 后从未推送故从未真实执行）——
+  脚本 stdout 重配 UTF-8 + `PYTHONIOENCODING=cp1252` 子进程回归锚
+  （`d3d75d5`）。修复后 **CI 四 job 全绿**（backend/windows-backend/
+  frontend/container-config）+ Desktop Windows NSIS 流水线 success。
+  双基线 **1741/96/0（Low-IL）、1826/11/0（High-IL 权威）**，总用例
+  1837。desktop updater 分发地址决策选项分析见 HANDOVER_ROUND28 §6。
+  详见 docs/HANDOVER_ROUND28.md。
 
 ## 技术栈与运行方式
 
@@ -165,6 +178,7 @@ xs2/
 - 2026-10-25 R25 双基线（维护态三轮，纯前端接线，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**；High-IL → **1825 passed / 11 skipped / 0 failed**（权威）——与 R24 完全一致（后端用例集未变）。前端 `npm test` **8 组 415 条 0 fail**（净增 9：`CharacterVoiceEditor.test.ts` +5、`HumanwareScoreCard.test.ts` +4，`test:desktop` 100→109）；lint 0 problems；build ✓ 6.78s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]。另：真实浏览器 e2e 首次打通 UI→score-content→CLI→评分卡链路（详见 HANDOVER_ROUND25 §4.2）。
 - 2026-10-25 R26 双基线（维护态四轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（104.88s）；High-IL → **1825 passed / 11 skipped / 0 failed**（121.42s，权威）——与 R24/R25 完全一致。前端 `npm test` **8 组 422 条 0 fail**（净增 7：`ChapterHumanwareScore.test.ts`，`test:desktop` 109→116）；lint 0 problems；build ✓ 6.30s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→score-chapter→CLI→聚合评分卡（demo-voice 第 1 章 81/B/2 段对话）+ B17 活体 409 拒因透传（详见 HANDOVER_ROUND26 §4.2）。
 - 2026-10-25 R27 双基线（维护态五轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（105.55s）；High-IL → **1825 passed / 11 skipped / 0 failed**（124.83s，权威）——不变。前端 `npm test` **8 组 434 条 0 fail**（净增 12：`CharacterVoiceEditor.test.ts` +5、`http-client.test.ts` 新文件 5、`roundtableStream.test.ts` +2；`test:desktop` 116→121、`test:conversation` 135→137）；lint 0 problems；build ✓ 6.34s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→check-dialogue→CLI→violations/suggestion（demo-voice 林晚偏离/符合两态）+ 读者评估页 alert 人因化活体验证（详见 HANDOVER_ROUND27 §4.2）。
+- 2026-10-25 R28 双基线（维护者任务执行轮：删除归档 + 首次推送 + CI 核对 + B18）：Low-IL → **1741 passed / 96 skipped / 0 failed**（102.25s）；High-IL → **1826 passed / 11 skipped / 0 failed**（118.84s，权威）。净增 **1** 条（B18 回归锚 `test_script_survives_non_utf8_stdout`）。总用例 1836→**1837**。**推送闭环**：`origin/main..main`=0；CI（`d3d75d5`，run 40149647827）**四 job 全绿**（backend/windows-backend/frontend/container-config，windows-backend 测试本体 1808 passed / 28 skipped 含 e2e 诚实 skip）；Desktop Windows NSIS（`a249e17`，run 40148872233）success。B18 细节与 CI 首败取证见 HANDOVER_ROUND28 §3。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个
