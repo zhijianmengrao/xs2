@@ -21,6 +21,7 @@ import yaml
 
 from src.extension_api.models import ExtensionManifest
 from src.extension_api.registrar import OwnedPath
+from src.plugin_system import extended_path
 
 from .resource_ids import ResourceIdPlan, ResourceIdResolver, build_resource_id_plan
 
@@ -571,7 +572,7 @@ def prepare_plugin_resources(
                 if resource_type in _JSON_RESOURCE_TYPES:
                     document = rewrite_json_resource(
                         resource_type,
-                        _read_json(owned_path.path),
+                        _read_json(extended_path(owned_path.path)),
                         resolver=resolver,
                         owner=manifest.extension_id,
                     )
@@ -584,7 +585,9 @@ def prepare_plugin_resources(
                 elif resource_type == "workflows":
                     target = staging / "workflows" / str(index)
                     target.mkdir(parents=True, exist_ok=True)
-                    for source_dir in sorted(owned_path.path.iterdir()):
+                    for source_dir in sorted(
+                        extended_path(owned_path.path).iterdir()
+                    ):
                         definition = source_dir / "definition.json"
                         if not source_dir.is_dir() or not definition.is_file():
                             continue
@@ -620,7 +623,9 @@ def prepare_plugin_resources(
                 elif resource_type == "script_libraries":
                     target = staging / "script-libraries" / str(index)
                     target.mkdir(parents=True, exist_ok=True)
-                    for source_group in sorted(owned_path.path.iterdir()):
+                    for source_group in sorted(
+                        extended_path(owned_path.path).iterdir()
+                    ):
                         if not source_group.is_dir() or source_group.name.startswith("."):
                             continue
                         effective_group = resolver.resolve(
@@ -640,7 +645,7 @@ def prepare_plugin_resources(
                 elif resource_type in _BUNDLE_RESOURCE_TYPES:
                     target = staging / resource_type.replace("_", "-") / str(index)
                     _copy_bundle_root(
-                        owned_path.path,
+                        extended_path(owned_path.path),
                         target,
                         filename=(
                             "SKILL.md"
@@ -657,11 +662,12 @@ def prepare_plugin_resources(
                     )
                 else:
                     target = staging / "passthrough" / resource_type / str(index)
+                    source_path = extended_path(owned_path.path)
                     if owned_path.path.is_dir():
-                        shutil.copytree(owned_path.path, target)
+                        shutil.copytree(source_path, target)
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(owned_path.path, target)
+                        shutil.copy2(source_path, target)
                 prepared.setdefault(resource_type, []).append(
                     OwnedPath(manifest.extension_id, target, revision)
                 )

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .integrity import plugin_content_sha256
+from .longpath import extended_path
 from .models import (
     PluginLockRecord,
     PluginRevision,
@@ -434,7 +435,7 @@ class PluginStore:
                     )
                 except (PluginRegistryError, InvalidPluginPackageError) as exc:
                     registry_error = str(exc)
-                    shutil.rmtree(stage_root, ignore_errors=True)
+                    shutil.rmtree(extended_path(stage_root), ignore_errors=True)
                     stage_root = None
             stage_root = Path(
                 tempfile.mkdtemp(prefix=f"{plugin_id}-", dir=self.staging_dir)
@@ -458,7 +459,7 @@ class PluginStore:
             ) from exc
         finally:
             if stage_root is not None:
-                shutil.rmtree(stage_root, ignore_errors=True)
+                shutil.rmtree(extended_path(stage_root), ignore_errors=True)
 
     def _materialize_from_registry(
         self,
@@ -522,6 +523,8 @@ class PluginStore:
             git_binary=self.git_binary,
         )
         self._run_git(
+            "-c",
+            "core.longpaths=true",
             "clone",
             "--quiet",
             "--no-checkout",
@@ -533,6 +536,8 @@ class PluginStore:
         if selected.commit and commit != selected.commit:
             raise RuntimeError("Plugin 镜像在拉取期间发生版本漂移")
         self._run_git(
+            "-c",
+            "core.longpaths=true",
             "-C",
             str(clone_root),
             "checkout",
@@ -543,8 +548,8 @@ class PluginStore:
         package_root = clone_root / subdirectory if subdirectory else clone_root
         self._validate_package_root(plugin_id, clone_root, package_root)
         shutil.copytree(
-            package_root,
-            prepared,
+            extended_path(package_root),
+            extended_path(prepared),
             symlinks=True,
             ignore=shutil.ignore_patterns(".git"),
         )
@@ -582,7 +587,7 @@ class PluginStore:
                     f"content-addressed checkout mismatch: {destination}"
                 )
         else:
-            os.replace(prepared, destination)
+            os.replace(extended_path(prepared), extended_path(destination))
         if preflight is not None:
             preflight(destination)
         return PluginRevision(
@@ -650,7 +655,8 @@ class PluginStore:
             ) from exc
         if not resolved_package.is_dir():
             raise InvalidPluginPackageError("plugin subdirectory must be a directory")
-        for path in resolved_package.rglob("*"):
+        scan_root = extended_path(resolved_package)
+        for path in scan_root.rglob("*"):
             if path.name == "__pycache__" or path.suffix in {".pyc", ".pyo"}:
                 raise InvalidPluginPackageError(
                     f"plugin package cannot contain Python bytecode cache: {path}"
@@ -658,7 +664,7 @@ class PluginStore:
             if not path.is_symlink():
                 continue
             try:
-                path.resolve(strict=True).relative_to(resolved_package)
+                path.resolve(strict=True).relative_to(scan_root)
             except (OSError, ValueError) as exc:
                 raise InvalidPluginPackageError(
                     f"plugin symlink escapes package root: {path}"

@@ -20,6 +20,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from .longpath import extended_path
 from .models import (
     validate_plugin_id,
     validate_plugin_ref,
@@ -651,7 +652,7 @@ def extract_plugin_zip(payload: bytes, destination: Path) -> None:
 
 
 def _extract_plugin_zip(payload: bytes, destination: Path) -> None:
-    root = destination.resolve()
+    root = extended_path(destination)
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         infos = archive.infolist()
         if not infos:

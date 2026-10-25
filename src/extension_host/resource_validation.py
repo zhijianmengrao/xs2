@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.extension_api.registrar import ExtensionContributions
+from src.extension_api.registrar import ExtensionContributions, OwnedPath
+from src.plugin_system import extended_path
 from src.rules.loader import RuleLoader
 from src.skills.loader import SkillLoader
 from src.workflow.script_library import ScriptLibraryCatalog
+
+
+def _extended_roots(
+    roots: list[OwnedPath] | None,
+) -> list[OwnedPath]:
+    return [
+        OwnedPath(root.owner, extended_path(root.path), root.revision)
+        for root in (roots or [])
+    ]
 
 
 def validate_file_resources(
@@ -27,7 +37,7 @@ def validate_file_resources(
     if skill_roots:
         SkillLoader(
             data_dir / "skills",
-            resource_roots=skill_roots,
+            resource_roots=_extended_roots(skill_roots),
             owner_enabled=owner_enabled,
         ).validate_sources()
 
@@ -38,7 +48,7 @@ def validate_file_resources(
     if rule_roots:
         RuleLoader(
             data_dir / "rules",
-            resource_roots=rule_roots,
+            resource_roots=_extended_roots(rule_roots),
             owner_enabled=owner_enabled,
         ).validate_sources()
 
@@ -49,6 +59,6 @@ def validate_file_resources(
     if script_roots:
         ScriptLibraryCatalog(
             data_dir / "script-library",
-            extension_roots=script_roots,
+            extension_roots=_extended_roots(script_roots),
             owner_enabled=owner_enabled,
         ).validate_sources()

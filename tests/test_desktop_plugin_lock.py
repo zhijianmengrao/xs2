@@ -9,6 +9,7 @@ import pytest
 from desktop.scripts import official_plugin_lock as plugin_lock_module
 from desktop.scripts import stage_defaults as defaults_module
 from src.extension_host.source_config import PluginSourceConfig
+from src.plugin_system.registry import parse_registry_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,9 +70,15 @@ def test_full_plugin_catalog_must_match_the_exact_build_lock(
         url=lock["source"]["url"],
         ref="main",
         mirrors=("https://gitee.com/alikon/DeterminFlow-Plugins.git",),
-        registry=plugin_lock_module._official_sources(
-            REPO_ROOT / "config" / "plugin-sources.json"
-        )[0].registry,
+        # 官方源已切换为自有 XS2 仓库(无 registry);这里用合成 registry
+        # 专门验证 pin_official_sources 会剥离 registry 与 mirrors。
+        registry=parse_registry_config(
+            {
+                "endpoints": ["https://downloads.determinflow.com/plugins/v1"],
+                "public_key": "C4oDxekhIr8Czlx0zpkRx46k26KK3d1T3HIZGsIxIr0=",
+            },
+            label="official_sources[0]",
+        ),
     )
     pinned = plugin_lock_module.pin_official_sources((source,), lock)
 

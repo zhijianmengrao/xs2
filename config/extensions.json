@@ -1,7 +1,11 @@
 {
   "enabled": [
     "xs2-novel-flywheel",
-    "bishu-novel"
+    "apocalypse-writer",
+    "humanizer-zh",
+    "lieflat-less-ai-tone",
+    "oh-story",
+    "webnovel-writer"
   ],
   "strict_startup": false
 }

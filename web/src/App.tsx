@@ -160,6 +160,15 @@ function App() {
     setRequestedTab(value === "chat" ? null : value);
   };
 
+  const handleOpenSettingsSection = (sectionId: string) => {
+    const nextSearch = patchSearchParams(window.location.search, {
+      tab: "settings",
+      section: sectionId,
+    });
+    window.history.pushState(window.history.state, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   const handleManageExtension = (extensionId: string) => {
     const nextSearch = patchSearchParams(window.location.search, {
       tab: "extensions",
@@ -236,7 +245,7 @@ function App() {
                 </Suspense>
               </div>
             </main>
-            <DesktopUpdateNotice onOpenSettings={() => handleTabChange("settings")} />
+            <DesktopUpdateNotice onOpenSettings={() => handleOpenSettingsSection("desktop")} />
           </div>
         </FirstRunOnboarding>
       </ToastProvider>

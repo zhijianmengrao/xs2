@@ -6,9 +6,12 @@ import hashlib
 import os
 from pathlib import Path
 
+from .longpath import extended_path
+
 
 def plugin_content_sha256(root: Path) -> str:
     """Hash a plugin tree, ignoring `.git` and runtime `__pycache__`."""
+    root = extended_path(root)
     digest = hashlib.sha256()
 
     def visit(directory: Path) -> None:

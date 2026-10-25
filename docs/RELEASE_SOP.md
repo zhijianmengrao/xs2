@@ -52,14 +52,17 @@ cd .. && ./.venv/Scripts/python.exe scripts/verify_release.py --tag "v$V" --asse
 `determinflow-updater.key.pub` 与私钥 `determinflow-updater.key` 配对，私钥
 已 gitignore 且 GitHub secret `TAURI_SIGNING_PRIVATE_KEY` 已配置）/
 tauri.conf 版本与公钥一致性 / latest.json 端点三项（version、URL 指向、
-signature 与 .sig 一致）。
+signature 与 .sig 一致）/ tauri.conf endpoints 与 updater.rs
+GITHUB_UPDATE_ENDPOINT 单源一致。
 
 ## 6. 注意事项
 
 - 更新通道 = **Core 安装器**（上游既有决策）；Full 用户检查更新会被引到 Core。
 - 大陆直连下载慢是已知痛点；若需加速按 R28 §6 选项 B（Cloudflare R2 +
   自有域名）迁移，endpoints 平滑切换即可。
-- 上游 R2/Gitee 源是验签必败的死通道（fork 公钥不同），仅多两次并发探测，
-  移除需 Rust 工具链（本机无 cargo，见 HANDOVER_ROUND32）。
+- 上游 R2/Gitee 源已彻底移除（2026-10 修复）：tauri updater 在 check() 阶段
+  不验签（仅下载时验签），上游残留的更高版本号（实测 1.1.1 / v1.0.10）会
+  穿透成“发现新版本”误报且下载必败。更新源现仅 GitHub 本仓库 Releases，
+  两处端点（tauri.conf endpoints 与 updater.rs）须保持一致。
 - 回滚：Release 可在 GitHub 页面删除/编辑；已装客户端无影响（更新按
   版本比较拉取）。

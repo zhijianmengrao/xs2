@@ -31,11 +31,11 @@ _CORE_SECTIONS: tuple[dict[str, Any], ...] = (
     },
     {
         "id": "desktop",
-        "title": "桌面",
+        "title": "桌面与更新",
         "owner": "core",
         "kind": "core",
         "order": 20,
-        "description": "桌面应用更新。",
+        "description": "桌面应用版本与更新。",
     },
     {
         "id": "models",

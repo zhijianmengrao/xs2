@@ -17,6 +17,7 @@ from src.extension_api.registrar import (
 )
 from src.plugin_system import (
     InvalidPluginPackageError,
+    extended_path,
     validate_resource_prefix,
 )
 from src.rules.loader import RuleLoader
@@ -92,12 +93,14 @@ def _resource_source_path(
         )
 
     if resolved.is_dir():
-        for descendant in resolved.rglob("*"):
+        scan_root = extended_path(resolved)
+        checkout_root = extended_path(root)
+        for descendant in scan_root.rglob("*"):
             if descendant.is_symlink():
                 raise ValueError(
                     f"Plugin 资源不允许使用 symlink: "
                     f"{resource_type}: "
-                    f"{descendant.relative_to(root)}"
+                    f"{descendant.relative_to(checkout_root)}"
                 )
     return resolved
 
@@ -223,7 +226,10 @@ def _validate_bundle_resources(
     if skill_roots:
         skill_loader = SkillLoader(
             scratch_root / "user-skills",
-            resource_roots=skill_roots,
+            resource_roots=[
+                OwnedPath(root.owner, extended_path(root.path), root.revision)
+                for root in skill_roots
+            ],
         )
         skill_loader.validate_sources()
         for skill in skill_loader.load_all(include_inactive=True):
@@ -238,7 +244,10 @@ def _validate_bundle_resources(
     if rule_roots:
         RuleLoader(
             scratch_root / "user-rules",
-            resource_roots=rule_roots,
+            resource_roots=[
+                OwnedPath(root.owner, extended_path(root.path), root.revision)
+                for root in rule_roots
+            ],
         ).validate_sources()
 
 
@@ -310,7 +319,8 @@ def _validate_script_independence(
     """Reject Script Library code coupled to Core or Plugin Python packages."""
     plugin_roots = _plugin_private_import_roots(manifest)
     for owned_root in roots:
-        for group_dir in sorted(owned_root.path.iterdir()):
+        scan_root = extended_path(owned_root.path)
+        for group_dir in sorted(scan_root.iterdir()):
             if not group_dir.is_dir() or group_dir.name.startswith("."):
                 continue
             group_code = sorted(
@@ -321,7 +331,7 @@ def _validate_script_independence(
             if group_code:
                 raise ValueError(
                     "Plugin Script Library helper 必须放入具体脚本目录: "
-                    f"{group_dir.relative_to(owned_root.path)}: "
+                    f"{group_dir.relative_to(scan_root)}: "
                     f"{', '.join(group_code)}"
                 )
             script_dirs = [
@@ -342,7 +352,7 @@ def _validate_script_independence(
             if invalid_dirs:
                 raise ValueError(
                     "Plugin Script Library 组内目录必须是带同名入口的独立脚本: "
-                    f"{group_dir.relative_to(owned_root.path)}: "
+                    f"{group_dir.relative_to(scan_root)}: "
                     f"{', '.join(invalid_dirs)}"
                 )
             sibling_roots = {path.name for path in script_dirs}
@@ -370,7 +380,7 @@ def _validate_script_independence(
                         ) from exc
                     coupled = sorted(_imported_roots(tree) & forbidden_roots)
                     if coupled:
-                        relative = source.relative_to(owned_root.path)
+                        relative = source.relative_to(scan_root)
                         raise ValueError(
                             "Plugin Script Library 必须独立运行，禁止导入 "
                             "Core、Plugin Backend 或兄弟脚本模块: "

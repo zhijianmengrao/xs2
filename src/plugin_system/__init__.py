@@ -5,6 +5,7 @@ from .dependencies import (
     install_applied_plugin_requirements,
     install_plugin_requirements,
 )
+from .longpath import extended_path
 from .models import (
     PluginLockRecord,
     PluginRevision,
@@ -39,6 +40,7 @@ __all__ = [
     "ProcessSpec",
     "ProcessStartError",
     "SourceTrustError",
+    "extended_path",
     "install_applied_plugin_requirements",
     "install_plugin_requirements",
     "validate_plugin_id",

@@ -2,27 +2,13 @@
   "schema_version": 1,
   "official_sources": [
     {
-      "id": "determinflow-official",
-      "name": "DeterminFlow 官方插件",
-      "url": "https://github.com/alikon-art/DeterminFlow-Plugins.git",
-      "mirrors": [
-        "https://gitee.com/alikon/DeterminFlow-Plugins.git"
-      ],
-      "ref": "main",
-      "registry": {
-        "url": "https://downloads.determinflow.com/plugins/v1",
-        "public_key": "C4oDxekhIr8Czlx0zpkRx46k26KK3d1T3HIZGsIxIr0="
-      }
-    }
-  ],
-  "community_sources": [
-    {
-      "id": "determinflow-community",
-      "name": "DeterminFlow 社区插件",
-      "url": "https://github.com/alikon-art/DeterminFlow-Community-Plugins.git",
+      "id": "xs2-official",
+      "name": "XS2 官方插件",
+      "url": "https://github.com/zhijianmengrao/xs2-plugins.git",
       "ref": "main"
     }
   ],
+  "community_sources": [],
   "custom_sources": [
     {
       "id": "custom-xs2-local",
@@ -31,9 +17,9 @@
       "ref": "main"
     },
     {
-      "id": "custom-xs2-remote",
-      "name": "XS2 插件仓库（备用）",
-      "url": "https://github.com/yuyang0702/xs2-plugins.git",
+      "id": "custom-mydeterminflow-0998f91a",
+      "name": "myDeterminFlow",
+      "url": "https://github.com/w19834148637-rgb/myDeterminFlow-Plugins.git",
       "ref": "main"
     }
   ]

@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from .longpath import extended_path
 from .store import PluginStore, PluginStoreError
 
 RELEASE_METADATA = "release-plugins.json"
@@ -72,7 +73,9 @@ def prepare_release_snapshot(
             raise PluginReleaseError(
                 f"plugin verification failed: {plugin_id}: {exc}"
             ) from exc
-        source = Path(verified.active_revision.checkout_path).resolve()
+        source = extended_path(
+            Path(verified.active_revision.checkout_path).resolve()
+        )
         symlink = next((path for path in source.rglob("*") if path.is_symlink()), None)
         if symlink is not None:
             raise PluginReleaseError(

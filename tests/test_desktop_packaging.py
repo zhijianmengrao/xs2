@@ -111,8 +111,8 @@ def test_tauri_bundle_is_a_per_user_nsis_installer() -> None:
     ]
 
     updater = config["plugins"]["updater"]
-    # R29 方案 A：更新源自托管到本 fork 的 GitHub Releases（上游 R2/Gitee 源
-    # 因 fork 公钥验签必败成为死通道，见 desktop/src-tauri/src/updater.rs 注释）
+    # 更新源自托管到本 fork 的 GitHub Releases(单源;上游 R2/Gitee 源已移除,
+    # 见 desktop/src-tauri/src/updater.rs 注释)
     assert updater["endpoints"] == [
         "https://github.com/zhijianmengrao/xs2/releases/latest/download/latest.json"
     ]
@@ -246,11 +246,10 @@ def test_desktop_lifecycle_cleans_up_the_backend_before_every_exit() -> None:
     assert "prepare_for_update," in main_source
     assert "updater::check_update_sources," in main_source
     assert "releases/latest/download/latest.json" in updater_source
-    assert "downloads.determinflow.com/desktop/stable/latest.json" in updater_source
-    assert "gitee.com/api/v5/repos/alikon/DeterminFlow/releases/latest" in updater_source
-    assert "join3(r2, github, gitee)" in updater_source
-    assert "primary: UpdateSource::Gitee" in updater_source
-    assert "fallback: Some(UpdateSource::Github)" in updater_source
+    # 2026-10 修复:上游 R2/Gitee 源在 check() 阶段不验签,更高版本号会
+    # 穿透成“发现新版本”误报,已彻底移除——更新源仅本仓库 GitHub Releases。
+    assert "downloads.determinflow.com" not in updater_source
+    assert "gitee.com" not in updater_source
     assert "fallback_rid" in updater_source
     assert 'invoke<UpdateMetadata | null>("check_update_sources")' in updater_context
     assert "downloadUpdateWithFallback(" in updater_context
@@ -329,24 +328,18 @@ def test_stage_defaults_uses_sanitized_overrides(
     plugin_source = json.loads(
         (output / "plugin-sources.json").read_text(encoding="utf-8")
     )
-    assert plugin_source["official_sources"][0]["name"] == "DeterminFlow 官方插件"
-    assert plugin_source["official_sources"][0]["url"].startswith("https://github.com/")
-    assert plugin_source["official_sources"][0]["mirrors"] == [
-        "https://gitee.com/alikon/DeterminFlow-Plugins.git"
-    ]
-    assert plugin_source["official_sources"][0]["ref"] == "main"
-    assert plugin_source["official_sources"][0]["registry"] == {
-        "endpoints": ["https://downloads.determinflow.com/plugins/v1"],
-        "public_key": "C4oDxekhIr8Czlx0zpkRx46k26KK3d1T3HIZGsIxIr0=",
-    }
-    assert plugin_source["community_sources"] == [
+    # 2026-10 起:官方源收敛为自有 XS2 仓库(单源、无 registry/镜像),
+    # 上游社区源与 R2 registry 一并移除。
+    assert plugin_source["official_sources"] == [
         {
-            "id": "determinflow-community",
-            "name": "DeterminFlow 社区插件",
-            "url": "https://github.com/alikon-art/DeterminFlow-Community-Plugins.git",
+            "id": "xs2-official",
+            "name": "XS2 官方插件",
+            "url": "https://github.com/zhijianmengrao/xs2-plugins.git",
             "ref": "main",
         }
     ]
+    assert plugin_source["community_sources"] == []
+    assert plugin_source["custom_sources"] == []
     assert (output / "models_config.json").read_text(encoding="utf-8") == (
         output / "models_config.example.json"
     ).read_text(encoding="utf-8")
@@ -553,7 +546,7 @@ def test_desktop_versions_are_consistent() -> None:
         encoding="utf-8"
     )
 
-    assert tauri["version"] == "1.0.1"
+    assert tauri["version"] == "1.0.2"
     assert package["version"] == tauri["version"]
     assert f'version = "{tauri["version"]}"' in cargo
 

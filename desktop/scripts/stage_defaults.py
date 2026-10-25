@@ -35,29 +35,13 @@ DESKTOP_OVERRIDES: dict[str, Any] = {
         "schema_version": 1,
         "official_sources": [
             {
-                "id": "determinflow-official",
-                "name": "DeterminFlow 官方插件",
-                "url": "https://github.com/alikon-art/DeterminFlow-Plugins.git",
-                "mirrors": [
-                    "https://gitee.com/alikon/DeterminFlow-Plugins.git"
-                ],
-                "ref": "main",
-                "registry": {
-                    "endpoints": [
-                        "https://downloads.determinflow.com/plugins/v1"
-                    ],
-                    "public_key": "C4oDxekhIr8Czlx0zpkRx46k26KK3d1T3HIZGsIxIr0=",
-                },
-            }
-        ],
-        "community_sources": [
-            {
-                "id": "determinflow-community",
-                "name": "DeterminFlow 社区插件",
-                "url": "https://github.com/alikon-art/DeterminFlow-Community-Plugins.git",
+                "id": "xs2-official",
+                "name": "XS2 官方插件",
+                "url": "https://github.com/zhijianmengrao/xs2-plugins.git",
                 "ref": "main",
             }
         ],
+        "community_sources": [],
         "custom_sources": [],
     },
 }
