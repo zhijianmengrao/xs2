@@ -97,7 +97,19 @@ def prepare_release_snapshot(
             raise PluginReleaseError(
                 f"plugin checkout path is not canonical: {plugin_id}"
             )
-        target = destination / relative_checkout
+        # 快照目录使用短名(来源校验仍要求 canonical 长名):makensis 等打包器
+        # 不识别超过 MAX_PATH 的路径,57 字符目录名叠加深层 vendor 资源会使
+        # NSIS 打包失败;用户机首装(seed_bundled_plugins 原样拷贝)同理越界。
+        # 12+8 位前缀在快照内足够防碰撞,内容哈希校验兜底。
+        snapshot_checkout = (
+            Path("checkouts")
+            / plugin_id
+            / (
+                f"{verified.active_revision.commit[:12]}-"
+                f"{verified.active_revision.content_sha256[:8]}"
+            )
+        )
+        target = destination / snapshot_checkout
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(
             source,
@@ -105,10 +117,13 @@ def prepare_release_snapshot(
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
         )
         lock_document["plugins"][plugin_id]["history"] = []
+        lock_document["plugins"][plugin_id]["active_revision"]["checkout"] = (
+            snapshot_checkout.as_posix()
+        )
         metadata_plugins[plugin_id] = {
             "commit": verified.active_revision.commit,
             "content_sha256": verified.active_revision.content_sha256,
-            "checkout": relative_checkout.as_posix(),
+            "checkout": snapshot_checkout.as_posix(),
             "source": verified.source,
             "trust": verified.trust,
         }
