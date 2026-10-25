@@ -112,6 +112,19 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   流程：打 tag + release-notes → release job 自动产 NSIS/.sig/latest.json
   → 桌面端更新可用。CI 四 job + Desktop NSIS 双构建全绿；双基线不变
   （1741/96/0、1826/11/0）。详见 docs/HANDOVER_ROUND29.md。
+- **R30 维护轮（2026-10-25，维护态第六轮，纯前端重构）**：R29 §6 P2 落地——
+  角色声音页三区块（试评/检查/编辑器）共享「角色下拉+内容输入」子组件抽取
+  （R27 §6 遗留候选）：新 `CharacterVoiceInputs.tsx`（CharacterSelect +
+  ContentTextarea），主组件三处 textarea + 两处 select 换用（净 -39/+24 行）；
+  空态提示随提示进组件后检查区块也显示（原缺失属 UI 不一致，顺带收敛）；
+  编辑器补 aria-label。DOM 契约（textarea 顺序 + aria-label）不变，
+  CharacterVoiceEditor 22 条测试未改一行通过。后端零改动、无缺陷修复
+  （Phase 2 全量基线复测全绿）。前端 `npm test` **8 组 439 条 0 fail**
+  （净增 5：新组件单测）；lint 0 / build ✓；真实浏览器 e2e 三流程
+  （试评评分卡 B/85、检查符合态、检查偏离态 85 字长句触发句法指纹违规）
+  + 截图视觉核验；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；
+  双基线不变：**1741/96/0（Low-IL）、1826/11/0（High-IL 权威）**（改动前树
+  复测 + 交叉文件复验 36/1 一致）。详见 docs/HANDOVER_ROUND30.md。
 
 ## 技术栈与运行方式
 

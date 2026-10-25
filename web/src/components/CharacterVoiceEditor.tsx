@@ -11,6 +11,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw, Heart, MessageCircle, XCircle } from 'lucide-react';
 import HumanwareScoreCard, { type HumanwareScore } from './HumanwareScoreCard';
+import { CharacterSelect, ContentTextarea } from './CharacterVoiceInputs';
 
 // 契约 §3.5：check-dialogue 成功输出（violations 可为空数组，suggestion 可为空串）
 interface DialogueCheckResult {
@@ -329,11 +330,12 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
           </div>
         </div>
 
-        <textarea
+        <ContentTextarea
           value={content}
-          onChange={(e) => setContent(e.target.value)}
-          className="w-full rounded-xl border border-border bg-background p-4 font-mono text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-primary/20"
+          onChange={setContent}
           rows={30}
+          ariaLabel="角色声音锚点编辑器"
+          mono
           placeholder="# 角色声音锚点&#10;&#10;## 角色名&#10;&#10;### 核心声音定位&#10;- **表达方式**: ...&#10;&#10;### 句法指纹&#10;- **平均句长**: ...&#10;&#10;..."
         />
 
@@ -360,31 +362,19 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
         </p>
 
         <div className="mt-4 space-y-3">
-          <select
+          <CharacterSelect
+            names={characterNames}
             value={scoreCharacter}
-            onChange={(e) => setScoreCharacter(e.target.value)}
-            aria-label="选择试评角色"
-            className="w-full max-w-xs rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">选择角色</option>
-            {characterNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
+            onChange={setScoreCharacter}
+            ariaLabel="选择试评角色"
+          />
 
-          {characterNames.length === 0 && (
-            <p className="text-xs text-muted-foreground">
-              当前编辑内容里还没有「## 角色名」小节——请先生成或编写角色声音定义。
-            </p>
-          )}
-
-          <textarea
+          <ContentTextarea
             value={scoreText}
-            onChange={(e) => setScoreText(e.target.value)}
-            className="w-full rounded-xl border border-border bg-background p-4 text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-primary/20"
+            onChange={setScoreText}
             rows={6}
+            ariaLabel="待评分内容"
             placeholder="粘贴待评分的对话或内心独白…"
-            aria-label="待评分内容"
           />
 
           <div>
@@ -419,25 +409,19 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
         </p>
 
         <div className="mt-4 space-y-3">
-          <select
+          <CharacterSelect
+            names={characterNames}
             value={checkCharacter}
-            onChange={(e) => setCheckCharacter(e.target.value)}
-            aria-label="选择检查角色"
-            className="w-full max-w-xs rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">选择角色</option>
-            {characterNames.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
+            onChange={setCheckCharacter}
+            ariaLabel="选择检查角色"
+          />
 
-          <textarea
+          <ContentTextarea
             value={checkText}
-            onChange={(e) => setCheckText(e.target.value)}
-            className="w-full rounded-xl border border-border bg-background p-4 text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-primary/20"
+            onChange={setCheckText}
             rows={4}
+            ariaLabel="待检查对话"
             placeholder="粘贴待检查的对话…"
-            aria-label="待检查对话"
           />
 
           <div>
