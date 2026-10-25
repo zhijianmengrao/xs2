@@ -111,8 +111,10 @@ def test_tauri_bundle_is_a_per_user_nsis_installer() -> None:
     ]
 
     updater = config["plugins"]["updater"]
+    # R29 方案 A：更新源自托管到本 fork 的 GitHub Releases（上游 R2/Gitee 源
+    # 因 fork 公钥验签必败成为死通道，见 desktop/src-tauri/src/updater.rs 注释）
     assert updater["endpoints"] == [
-        "https://downloads.determinflow.com/desktop/stable/latest.json"
+        "https://github.com/zhijianmengrao/xs2/releases/latest/download/latest.json"
     ]
     assert len(updater["pubkey"]) > 100
     assert b"minisign public key" in base64.b64decode(

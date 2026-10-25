@@ -7,9 +7,13 @@ use tauri::{Manager, ResourceId, Runtime, Webview};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use url::Url;
 
+// fork 分发（R28 方案 A）：更新源指向本仓库 GitHub Releases。
+// 上游 R2 与 Gitee 源保留原地址——本 fork 的验签公钥与上游签名不匹配，
+// 两源在 check() 阶段必然失败、永不被选中（fail-closed 死通道），仅产生
+// 并发探测开销；如需彻底移除须同步精简 plan_update_sources 及其测试。
 const R2_UPDATE_ENDPOINT: &str = "https://downloads.determinflow.com/desktop/stable/latest.json";
 const GITHUB_UPDATE_ENDPOINT: &str =
-    "https://github.com/alikon-art/DeterminFlow/releases/latest/download/latest.json";
+    "https://github.com/zhijianmengrao/xs2/releases/latest/download/latest.json";
 const GITEE_LATEST_RELEASE_API: &str =
     "https://gitee.com/api/v5/repos/alikon/DeterminFlow/releases/latest";
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(15);

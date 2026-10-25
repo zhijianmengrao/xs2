@@ -46,7 +46,7 @@
     },
     "updater": {
       "endpoints": [
-        "https://downloads.determinflow.com/desktop/stable/latest.json"
+        "https://github.com/zhijianmengrao/xs2/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVENDQ3MkYxNERCMEVCQzcKUldUSDY3Qk44WEpFN1FDMzhSZ1BPZzc4RFpwdEh5TnBDdklRVGhUaVBqWDNteUREQldNTms5N20K"
     }
