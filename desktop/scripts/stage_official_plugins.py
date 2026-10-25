@@ -22,6 +22,7 @@ from src.extension_host.source_config import (
     fetch_plugin_catalog,
     load_plugin_sources,
 )
+from src.plugin_system import extended_path
 from src.plugin_system.release import prepare_release_snapshot
 from src.plugin_system.store import PluginStore
 
@@ -90,7 +91,8 @@ def stage_official_plugins(repo_root: Path, output_dir: Path) -> dict[str, objec
         snapshot.replace(output_dir)
         return metadata
     finally:
-        shutil.rmtree(temporary_root, ignore_errors=True)
+        # staging 内是插件原始深层树,长路径机器上未加前缀的 rmtree 会静默泄漏
+        shutil.rmtree(extended_path(temporary_root), ignore_errors=True)
 
 
 def main() -> int:
