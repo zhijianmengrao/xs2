@@ -79,6 +79,18 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   409 拒因透传，截图存档；活体 e2e 17 passed；双基线不变：
   **1740/96/0（Low-IL）、1825/11/0（High-IL 权威）**。R23–R26 四个提交未推送。
   详见 docs/HANDOVER_ROUND26.md。
+- **R27 维护轮（2026-10-25，维护态第五轮，纯前端）**：R26 §7 P2 两项落地——
+  ①**check-dialogue（契约 §3.5）接入「角色声音」页**：检查区块（复用角色
+  解析下拉 + violations/suggestion 渲染 + matches 两态徽章 + 409 detail
+  透传），**humanware 五端点 UI 接线就此收官**；②api 层 4xx 错误人因化
+  （B17 同族收口）：`http-client` 的 `describeErrorBody` 把 FastAPI
+  `{"detail": ...}` 解成人话拒因再入 message，`getRoundtableErrorDescription`
+  配套兼容（旧 JSON 格式优先、纯文本仅 4xx 直显、5xx 仍隐藏）。后端零改动。
+  验证：前端三连全绿（lint 0 / **8 组 434 条 0 fail**（净增 12）/ build ✓）；
+  真实浏览器 e2e 偏离/符合两态渲染（demo-voice 林晚，截图存档）+ 读者评估页
+  alert 人因化活体验证；活体 e2e 17 passed；双基线不变：
+  **1740/96/0（Low-IL）、1825/11/0（High-IL 权威）**。R23–R27 五个提交未推送。
+  详见 docs/HANDOVER_ROUND27.md。
 
 ## 技术栈与运行方式
 
@@ -152,6 +164,7 @@ xs2/
 - 2026-10-24 R24 双基线（维护态二轮：B15 e2e 宕机语义 + B16 supervisor 竞态兜底 + installation_state 真实证据）：Low-IL → **1740 passed / 96 skipped / 0 failed**（109.75s）；High-IL → **1825 passed / 11 skipped / 0 failed**（125.27s，权威）。净增 **5** 条（`test_humanware_e2e.py` B15 逻辑回归 2（服务不在跑时随模块诚实 skip）+ `test_executor_runtime_dir.py` B16 回归 2 + `test_real_device_name_dirs.py` 1）。对账：Low-IL 1735+5=1740；High-IL 1820+5=1825。总用例 R23 口径 1831 → **1836**。
 - 2026-10-25 R25 双基线（维护态三轮，纯前端接线，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**；High-IL → **1825 passed / 11 skipped / 0 failed**（权威）——与 R24 完全一致（后端用例集未变）。前端 `npm test` **8 组 415 条 0 fail**（净增 9：`CharacterVoiceEditor.test.ts` +5、`HumanwareScoreCard.test.ts` +4，`test:desktop` 100→109）；lint 0 problems；build ✓ 6.78s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]。另：真实浏览器 e2e 首次打通 UI→score-content→CLI→评分卡链路（详见 HANDOVER_ROUND25 §4.2）。
 - 2026-10-25 R26 双基线（维护态四轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（104.88s）；High-IL → **1825 passed / 11 skipped / 0 failed**（121.42s，权威）——与 R24/R25 完全一致。前端 `npm test` **8 组 422 条 0 fail**（净增 7：`ChapterHumanwareScore.test.ts`，`test:desktop` 109→116）；lint 0 problems；build ✓ 6.30s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→score-chapter→CLI→聚合评分卡（demo-voice 第 1 章 81/B/2 段对话）+ B17 活体 409 拒因透传（详见 HANDOVER_ROUND26 §4.2）。
+- 2026-10-25 R27 双基线（维护态五轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（105.55s）；High-IL → **1825 passed / 11 skipped / 0 failed**（124.83s，权威）——不变。前端 `npm test` **8 组 434 条 0 fail**（净增 12：`CharacterVoiceEditor.test.ts` +5、`http-client.test.ts` 新文件 5、`roundtableStream.test.ts` +2；`test:desktop` 116→121、`test:conversation` 135→137）；lint 0 problems；build ✓ 6.34s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→check-dialogue→CLI→violations/suggestion（demo-voice 林晚偏离/符合两态）+ 读者评估页 alert 人因化活体验证（详见 HANDOVER_ROUND27 §4.2）。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个

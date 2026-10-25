@@ -103,8 +103,15 @@ export function getRoundtableErrorDescription(
         return body.detail.trim();
       }
     } catch {
-      return fallback;
+      // JSON 形状损坏：落入下方状态码分支
     }
+  }
+
+  // http-client 已把 FastAPI {detail} 解为纯文本前缀；4xx 负载是人话拒因，
+  // 直接展示（5xx 保持隐藏，避免内部信息外泄）。
+  const matched = error.message.match(/^API Error (\d{3}): (.+)$/s);
+  if (matched && Number(matched[1]) < 500 && matched[2].trim()) {
+    return matched[2].trim();
   }
 
   return fallback;

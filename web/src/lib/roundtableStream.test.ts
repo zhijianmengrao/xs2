@@ -185,3 +185,24 @@ test("roundtable feedback hides malformed and internal responses", () => {
     "操作失败，请重试。",
   );
 });
+
+test("roundtable feedback shows humanized 4xx payloads from http-client", () => {
+  // http-client 已把 {"detail": ...} 解为纯文本（B17 同族人因化），4xx 直接展示
+  assert.equal(
+    getRoundtableErrorDescription(
+      new Error("API Error 409: 还没有读者评估，请先运行模拟读者。"),
+      "操作失败",
+    ),
+    "还没有读者评估，请先运行模拟读者。",
+  );
+});
+
+test("roundtable feedback keeps humanized 5xx payloads hidden", () => {
+  assert.equal(
+    getRoundtableErrorDescription(
+      new Error("API Error 500: 服务器内部错误文本"),
+      "操作失败，请重试。",
+    ),
+    "操作失败，请重试。",
+  );
+});

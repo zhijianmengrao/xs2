@@ -28,6 +28,12 @@ let scoreBody: Record<string, unknown> = {
   detailed_scores: { 声音一致性: 85, 对话自然度: 90, 情感真实度: 80, 行为一致性: 95 },
   issues: [], recommendation: "改进建议",
 };
+let checkStatus = 200;
+let checkBody: Record<string, unknown> = {
+  status: "success", matches: false, character: "林晚",
+  violations: [{ rule: "句法指纹", detail: "句长超出平均 2.5 倍" }],
+  suggestion: "缩短句式，保持 15 字以内",
+};
 
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 
@@ -45,6 +51,12 @@ afterEach(async () => {
     status: "success", total_score: 88, grade: "B", summary: "总体评价",
     detailed_scores: { 声音一致性: 85, 对话自然度: 90, 情感真实度: 80, 行为一致性: 95 },
     issues: [], recommendation: "改进建议",
+  };
+  checkStatus = 200;
+  checkBody = {
+    status: "success", matches: false, character: "林晚",
+    violations: [{ rule: "句法指纹", detail: "句长超出平均 2.5 倍" }],
+    suggestion: "缩短句式，保持 15 字以内",
   };
   globalThis.fetch = originalFetch;
 });
@@ -72,6 +84,7 @@ async function mount(workspaceId = "data/workspaces/books/demo-voice") {
       { status: "success", message: "已生成 1 个角色声音模板", character_count: 1 }, generateStatus,
     );
     if (url.includes("/api/humanware/score-content")) return response(scoreBody, scoreStatus);
+    if (url.includes("/api/humanware/check-dialogue")) return response(checkBody, checkStatus);
     throw new Error(`Unexpected request: ${url}`);
   };
   root = createRoot(document.body.appendChild(document.createElement("div")));
@@ -250,4 +263,95 @@ test("score section explains when no character sections exist yet", async () => 
   const text = document.body.textContent || "";
   assert.ok(text.includes("还没有「## 角色名」小节"), "empty-state hint shown");
   assert.equal((button("开始评分") as HTMLButtonElement).disabled, true, "disabled without characters");
+});
+
+// ===== 对话检查（check-dialogue，契约 §3.5）=====
+
+function checkSelect() {
+  const el = document.querySelector<HTMLSelectElement>("select[aria-label='选择检查角色']");
+  assert.ok(el, "check character select present");
+  return el;
+}
+
+async function chooseCheckCharacter(name: string) {
+  const el = checkSelect();
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
+    setter?.call(el, name);
+    el.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
+}
+
+async function setCheckText(value: string) {
+  const el = document.querySelectorAll<HTMLTextAreaElement>("textarea")[2];
+  assert.ok(el, "check textarea present");
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+    setter?.call(el, value);
+    el.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+}
+
+test("check section lists the same parsed characters", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  await mount();
+  const options = [...checkSelect().options].map(option => option.value);
+  assert.ok(options.includes("林晚") && options.includes("沈砚"), `got ${JSON.stringify(options)}`);
+});
+
+test("check button stays disabled until both character and dialogue are provided", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  await mount();
+  const checkButton = button("检查对话");
+  assert.equal((checkButton as HTMLButtonElement).disabled, true, "disabled without input");
+  await chooseCheckCharacter("林晚");
+  assert.equal((button("检查对话") as HTMLButtonElement).disabled, true, "still disabled without dialogue");
+  await setCheckText("「你到底想说什么？」");
+  assert.equal((button("检查对话") as HTMLButtonElement).disabled, false, "enabled with both");
+  assert.ok(!calls.some(c => c.url.includes("/check-dialogue")), "no check call");
+});
+
+test("check flow posts check-dialogue with normalized id and renders violations", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  await mount();
+  await chooseCheckCharacter("林晚");
+  await setCheckText("「难道我们就只能在这里等吗？等一个根本不会来的结果吗？」");
+  await click(button("检查对话"));
+  const checkCall = calls.find(c => c.url.includes("/api/humanware/check-dialogue"));
+  assert.ok(checkCall, "check endpoint called");
+  assert.equal(checkCall.init?.method, "POST");
+  const body = JSON.parse(String(checkCall.init?.body));
+  assert.equal(body.workspace_id, "demo-voice");
+  assert.equal(body.character, "林晚");
+  assert.match(body.dialogue, /等吗/);
+  const text = document.body.textContent || "";
+  assert.ok(text.includes("偏离「林晚」的声音定义"), "mismatch badge shown");
+  assert.ok(text.includes("句法指纹") && text.includes("句长超出平均 2.5 倍"), "violation rule and detail shown");
+  assert.ok(text.includes("修改建议") && text.includes("缩短句式"), "suggestion shown");
+});
+
+test("check result shows the match state and hides the violations list", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  checkBody = { status: "success", matches: true, character: "林晚", violations: [], suggestion: "" };
+  await mount();
+  await chooseCheckCharacter("林晚");
+  await setCheckText("「结论已经给出。」");
+  await click(button("检查对话"));
+  const text = document.body.textContent || "";
+  assert.ok(text.includes("符合「林晚」的声音定义"), "match badge shown");
+  assert.ok(!text.includes("偏离「"), "mismatch badge hidden");
+  assert.ok(!text.includes("句长超出平均"), "no violations list");
+});
+
+test("check 409 surfaces the FastAPI detail message and keeps the result hidden", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  checkStatus = 409;
+  checkBody = { detail: "角色 林晚 未在 character_voice.md 中定义" };
+  await mount();
+  await chooseCheckCharacter("林晚");
+  await setCheckText("「测试」");
+  await click(button("检查对话"));
+  const text = document.body.textContent || "";
+  assert.ok(text.includes("未在 character_voice.md 中定义"), "CLI message surfaced");
+  assert.ok(!text.includes("符合「") && !text.includes("偏离「"), "check result stays hidden");
 });

@@ -1,5 +1,16 @@
 const BASE_URL = "/api";
 
+// FastAPI 错误包络为 {"detail": ...}；字符串 detail 是人话拒因，直接外显，
+// 其余形状（非 JSON / detail 非字符串）保留原文以便排查（B17 同族人因化）。
+function describeErrorBody(body: string): string {
+  if (!body) return "";
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    if (typeof parsed?.detail === "string" && parsed.detail.trim()) return parsed.detail.trim();
+  } catch { /* 非 JSON 体按原文返回 */ }
+  return body;
+}
+
 export async function request<T>(
   url: string,
   options?: RequestInit,
@@ -18,7 +29,7 @@ export async function request<T>(
     const error = await response.text();
     console.error(`API Error ${response.status}: ${error}`);
     throw new Error(
-      `API Error ${response.status}: ${error || response.statusText}`,
+      `API Error ${response.status}: ${describeErrorBody(error) || response.statusText}`,
     );
   }
 

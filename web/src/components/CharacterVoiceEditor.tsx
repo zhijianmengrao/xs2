@@ -9,8 +9,16 @@
  */
 
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
-import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw, Heart } from 'lucide-react';
+import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw, Heart, MessageCircle, XCircle } from 'lucide-react';
 import HumanwareScoreCard, { type HumanwareScore } from './HumanwareScoreCard';
+
+// 契约 §3.5：check-dialogue 成功输出（violations 可为空数组，suggestion 可为空串）
+interface DialogueCheckResult {
+  matches: boolean;
+  character: string;
+  violations: Array<{ rule: string; detail: string }>;
+  suggestion: string;
+}
 
 interface HumanwareStatus {
   voice_file_exists: boolean;
@@ -41,6 +49,12 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
   const [scoring, setScoring] = useState(false);
   const [scoreResult, setScoreResult] = useState<HumanwareScore | null>(null);
   const [scoredFor, setScoredFor] = useState('');
+
+  // 对话检查（check-dialogue，契约 §3.5）：同一份角色解析，判定符合性并给偏离点
+  const [checkCharacter, setCheckCharacter] = useState('');
+  const [checkText, setCheckText] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<DialogueCheckResult | null>(null);
 
   const characterNames = useMemo(() => {
     const names: string[] = [];
@@ -181,6 +195,43 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
       showMessage('error', '评分失败，请重试');
     } finally {
       setScoring(false);
+    }
+  };
+
+  const runCheck = async () => {
+    if (!checkCharacter || !checkText.trim()) return;
+    setChecking(true);
+    try {
+      const response = await fetch('/api/humanware/check-dialogue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_id: workspaceKey,
+          character: checkCharacter,
+          dialogue: checkText
+        })
+      });
+      const data = await response.json().catch(() => null);
+      if (response.ok && data?.status === 'success') {
+        setCheckResult({
+          matches: data.matches === true,
+          character: typeof data.character === 'string' && data.character ? data.character : checkCharacter,
+          violations: Array.isArray(data.violations)
+            ? data.violations.filter((item: { rule?: unknown; detail?: unknown }) =>
+                typeof item?.rule === 'string' && typeof item?.detail === 'string')
+            : [],
+          suggestion: typeof data.suggestion === 'string' ? data.suggestion : ''
+        });
+      } else {
+        // 业务失败（409 角色未定义等）：真实包络为 FastAPI {detail}（B17）
+        setCheckResult(null);
+        showMessage('error', data?.detail || data?.message || '检查失败，请重试');
+      }
+    } catch (error) {
+      console.error('检查失败:', error);
+      showMessage('error', '检查失败：服务不可达，请稍后重试');
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -352,6 +403,86 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
           <div className="mt-6">
             <p className="mb-3 text-xs text-muted-foreground">{scoredFor} 的评分结果</p>
             <HumanwareScoreCard score={scoreResult} />
+          </div>
+        )}
+      </section>
+
+      {/* 对话检查（check-dialogue） */}
+      <section className={`${cardClass} p-5`} aria-label="对话声音检查">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="h-5 w-5 text-primary" />
+          <h3 className="text-sm font-semibold">检查一段对话（声音符合性）</h3>
+        </div>
+        <p className="mt-2 text-xs leading-6 text-muted-foreground">
+          判断一段对话是否符合所选角色的声音定义，并列出偏离点与修改建议。
+          检查按<strong>已保存</strong>的 character_voice.md 执行——编辑器改动后请先保存再检查。
+        </p>
+
+        <div className="mt-4 space-y-3">
+          <select
+            value={checkCharacter}
+            onChange={(e) => setCheckCharacter(e.target.value)}
+            aria-label="选择检查角色"
+            className="w-full max-w-xs rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+          >
+            <option value="">选择角色</option>
+            {characterNames.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
+          <textarea
+            value={checkText}
+            onChange={(e) => setCheckText(e.target.value)}
+            className="w-full rounded-xl border border-border bg-background p-4 text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-primary/20"
+            rows={4}
+            placeholder="粘贴待检查的对话…"
+            aria-label="待检查对话"
+          />
+
+          <div>
+            <button
+              onClick={runCheck}
+              disabled={!checkCharacter || !checkText.trim() || checking}
+              className={primaryButtonClass}
+            >
+              <MessageCircle className="h-4 w-4" />
+              {checking ? '检查中...' : '检查对话'}
+            </button>
+          </div>
+        </div>
+
+        {checkResult && (
+          <div className="mt-6 space-y-3" aria-label="对话检查结果">
+            {checkResult.matches ? (
+              <p className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+                <CheckCircle className="h-4 w-4" />
+                符合「{checkResult.character}」的声音定义
+              </p>
+            ) : (
+              <p className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                <XCircle className="h-4 w-4" />
+                偏离「{checkResult.character}」的声音定义
+              </p>
+            )}
+
+            {checkResult.violations.length > 0 && (
+              <div className="space-y-2">
+                {checkResult.violations.map((violation, index) => (
+                  <div key={index} className="rounded-lg bg-muted/50 p-3">
+                    <div className="text-xs font-semibold text-muted-foreground">{violation.rule}</div>
+                    <div className="mt-1 text-sm">{violation.detail}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {checkResult.suggestion && (
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <div className="text-sm font-semibold text-primary">修改建议</div>
+                <p className="mt-1 text-sm text-primary/80">{checkResult.suggestion}</p>
+              </div>
+            )}
           </div>
         )}
       </section>
