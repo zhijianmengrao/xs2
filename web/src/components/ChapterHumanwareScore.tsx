@@ -6,9 +6,13 @@
  * 挂载在读者评估页（ReviewView），按 workspace + chapter 键控重挂载。
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Heart } from 'lucide-react';
 import HumanwareScoreCard, { type HumanwareScore } from './HumanwareScoreCard';
+import {
+  loadHumanwareHistory, appendHumanwareHistory, clearHumanwareHistory, formatHistoryTime,
+  type ChapterScoreHistoryEntry,
+} from '../lib/humanwareHistory';
 
 // 契约 §3.4：score-chapter 成功输出 = §3.3 评分结构 + dialogues_scored
 interface ChapterScoreResult extends HumanwareScore {
@@ -28,6 +32,13 @@ export default function ChapterHumanwareScore({ workspaceId, chapter }: ChapterH
   const [scoring, setScoring] = useState(false);
   const [result, setResult] = useState<ChapterScoreResult | null>(null);
   const [error, setError] = useState('');
+  // 本章评分历史（localStorage 按工作区持久化；父组件以 workspace:chapter 键控重挂载）
+  const [history, setHistory] = useState<ChapterScoreHistoryEntry[]>([]);
+
+  useEffect(() => {
+    setHistory(loadHumanwareHistory(workspaceKey).filter(
+      (item): item is ChapterScoreHistoryEntry => item.kind === 'chapter'));
+  }, [workspaceKey]);
 
   const runScore = async () => {
     if (scoring) return;
@@ -45,6 +56,10 @@ export default function ChapterHumanwareScore({ workspaceId, chapter }: ChapterH
       const data = await response.json().catch(() => null);
       if (response.ok && data?.status === 'success') {
         setResult(data as ChapterScoreResult);
+        setHistory(appendHumanwareHistory(workspaceKey, {
+          kind: 'chapter', ts: Date.now(), chapter: String(chapter),
+          totalScore: data.total_score, grade: data.grade, dialogues: data.dialogues_scored,
+        }).filter((item): item is ChapterScoreHistoryEntry => item.kind === 'chapter'));
       } else {
         // 业务失败（404 章节不存在 / 409 缺 voice 文件或无对白）：
         // 真实包络为 FastAPI {detail}（B17），CLI 直出的 {message} 作兜底
@@ -86,6 +101,26 @@ export default function ChapterHumanwareScore({ workspaceId, chapter }: ChapterH
         <div className="mt-4">
           <p className="mb-3 text-xs text-muted-foreground">共评分 {result.dialogues_scored} 段对话</p>
           <HumanwareScoreCard score={result} />
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="mt-4" aria-label="章节评分历史记录">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground">历史记录（{history.length}）</p>
+            <button
+              onClick={() => { clearHumanwareHistory(workspaceKey); setHistory([]); }}
+              className="rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              清空历史
+            </button>
+          </div>
+          <ul className="mt-2 space-y-1">
+            {history.map((item) => (
+              <li key={item.ts} className="text-xs text-muted-foreground">
+                第 {item.chapter} 章 · {item.totalScore} 分 · {item.grade} · {item.dialogues} 段对话 · {formatHistoryTime(item.ts)}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </section>

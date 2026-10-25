@@ -3,7 +3,7 @@ import { after, afterEach, test } from "node:test";
 import { Window } from "happy-dom";
 
 const dom = new Window({ url: "http://localhost/" });
-for (const name of ["window", "document", "Node", "Text", "HTMLElement", "Element", "Event", "MouseEvent", "navigator", "sessionStorage"]) {
+for (const name of ["window", "document", "Node", "Text", "HTMLElement", "Element", "Event", "MouseEvent", "navigator", "sessionStorage", "localStorage"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? dom : dom[name as keyof Window] });
 }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -42,6 +42,7 @@ afterEach(async () => {
   holdFetch = false;
   resolveHeld = undefined;
   globalThis.fetch = originalFetch;
+  dom.localStorage.clear();
 });
 after(async () => dom.happyDOM.abort());
 
@@ -136,3 +137,31 @@ test("network failure surfaces a readable message without the card", async () =>
   assert.ok(text.includes("服务不可达"), "network failure message shown");
   assert.ok(!text.includes("共评分"), "no stale result shown");
 });
+
+// ===== 历史记录（localStorage 持久化）=====
+
+test("successful chapter score appends a history entry that persists and clears on demand", async () => {
+  await mount("data/workspaces/books/demo-voice", "1");
+  await click(scoreButton());
+  let text = document.body.textContent || "";
+  assert.ok(text.includes("历史记录（1）"), "history section shown");
+  assert.ok(text.includes("第 1 章 · 82 分 · B · 12 段对话"), "chapter entry details shown");
+
+  // 卸载重挂（同工作区同章）：历史仍在
+  await act(async () => root?.unmount());
+  document.body.replaceChildren();
+  calls.length = 0;
+  await mount("data/workspaces/books/demo-voice", "1");
+  text = document.body.textContent || "";
+  assert.ok(text.includes("历史记录（1）"), "history persisted across remount");
+
+  await click(button("清空历史"));
+  text = document.body.textContent || "";
+  assert.ok(!text.includes("历史记录（1）"), "history cleared");
+});
+
+function button(label: string) {
+  const target = [...document.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.includes(label));
+  assert.ok(target, `Missing button: ${label}`);
+  return target;
+}

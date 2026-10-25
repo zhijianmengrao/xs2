@@ -3,7 +3,7 @@ import { after, afterEach, test } from "node:test";
 import { Window } from "happy-dom";
 
 const dom = new Window({ url: "http://localhost/" });
-for (const name of ["window", "document", "Node", "Text", "HTMLElement", "Element", "Event", "MouseEvent", "navigator", "sessionStorage"]) {
+for (const name of ["window", "document", "Node", "Text", "HTMLElement", "Element", "Event", "MouseEvent", "navigator", "sessionStorage", "localStorage"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? dom : dom[name as keyof Window] });
 }
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -59,6 +59,7 @@ afterEach(async () => {
     suggestion: "缩短句式，保持 15 字以内",
   };
   globalThis.fetch = originalFetch;
+  dom.localStorage.clear();
 });
 after(async () => dom.happyDOM.abort());
 
@@ -354,4 +355,42 @@ test("check 409 surfaces the FastAPI detail message and keeps the result hidden"
   const text = document.body.textContent || "";
   assert.ok(text.includes("未在 character_voice.md 中定义"), "CLI message surfaced");
   assert.ok(!text.includes("符合「") && !text.includes("偏离「"), "check result stays hidden");
+});
+
+// ===== 历史记录（localStorage 持久化）=====
+
+test("successful score appends a history entry that persists across remount and clears on demand", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  await mount();
+  await chooseCharacter("林晚");
+  await setScoreText("「你到底想说什么？」林晚把笔放下。");
+  await click(button("开始评分"));
+  let text = document.body.textContent || "";
+  assert.ok(text.includes("历史记录（1）"), "history section shows count");
+  assert.ok(text.includes("试评 林晚"), "score entry shown");
+  assert.ok(text.includes("88 分"), "score total shown");
+
+  // 卸载重挂：localStorage 持久化后历史仍在
+  await act(async () => root?.unmount());
+  document.body.replaceChildren();
+  calls.length = 0;
+  await mount();
+  text = document.body.textContent || "";
+  assert.ok(text.includes("历史记录（1）"), "history persisted across remount");
+
+  await click(button("清空历史"));
+  text = document.body.textContent || "";
+  assert.ok(text.includes("暂无记录"), "history cleared");
+  assert.equal(dom.localStorage.getItem("determinflow.humanware.history.demo-voice"), null, "storage key removed");
+});
+
+test("successful check appends a check history entry with mismatch count", async () => {
+  voiceBody = { status: "success", content: VOICE_WITH_NAMES };
+  await mount();
+  await chooseCheckCharacter("林晚");
+  await setCheckText("「难道我们就只能在这里等吗？」");
+  await click(button("检查对话"));
+  const text = document.body.textContent || "";
+  assert.ok(text.includes("检查 林晚"), "check entry shown");
+  assert.ok(text.includes("偏离（1 处）"), "mismatch count shown");
 });

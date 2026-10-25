@@ -12,6 +12,10 @@ import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw, Heart, MessageCircle, XCircle } from 'lucide-react';
 import HumanwareScoreCard, { type HumanwareScore } from './HumanwareScoreCard';
 import { CharacterSelect, ContentTextarea } from './CharacterVoiceInputs';
+import {
+  loadHumanwareHistory, appendHumanwareHistory, clearHumanwareHistory, formatHistoryTime,
+  type HumanwareHistoryEntry,
+} from '../lib/humanwareHistory';
 
 // 契约 §3.5：check-dialogue 成功输出（violations 可为空数组，suggestion 可为空串）
 interface DialogueCheckResult {
@@ -56,6 +60,9 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
   const [checkText, setCheckText] = useState('');
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<DialogueCheckResult | null>(null);
+
+  // 评分/检查历史（localStorage 持久化，按工作区隔离；存储不可用时静默为空）
+  const [history, setHistory] = useState<HumanwareHistoryEntry[]>([]);
 
   const characterNames = useMemo(() => {
     const names: string[] = [];
@@ -107,6 +114,7 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
   useEffect(() => {
     loadStatus();
     loadContent();
+    setHistory(loadHumanwareHistory(workspaceKey).filter(item => item.kind !== 'chapter'));
   }, [workspaceKey, loadStatus, loadContent]);
 
   const saveContent = async () => {
@@ -186,6 +194,10 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
       if (response.ok && data?.status === 'success') {
         setScoreResult(data as HumanwareScore);
         setScoredFor(scoreCharacter);
+        setHistory(appendHumanwareHistory(workspaceKey, {
+          kind: 'score', ts: Date.now(), character: scoreCharacter,
+          excerpt: scoreText.trim().slice(0, 30), totalScore: data.total_score, grade: data.grade,
+        }).filter(item => item.kind !== 'chapter'));
       } else {
         // 业务失败（409 角色未定义等）：FastAPI 错误包络为 {detail}（B17 实测），
         // CLI 直出的 {message} 形状作兜底
@@ -214,7 +226,7 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
       });
       const data = await response.json().catch(() => null);
       if (response.ok && data?.status === 'success') {
-        setCheckResult({
+        const normalized: DialogueCheckResult = {
           matches: data.matches === true,
           character: typeof data.character === 'string' && data.character ? data.character : checkCharacter,
           violations: Array.isArray(data.violations)
@@ -222,7 +234,13 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
                 typeof item?.rule === 'string' && typeof item?.detail === 'string')
             : [],
           suggestion: typeof data.suggestion === 'string' ? data.suggestion : ''
-        });
+        };
+        setCheckResult(normalized);
+        setHistory(appendHumanwareHistory(workspaceKey, {
+          kind: 'check', ts: Date.now(), character: normalized.character,
+          excerpt: checkText.trim().slice(0, 30),
+          matches: normalized.matches, violationCount: normalized.violations.length,
+        }).filter(item => item.kind !== 'chapter'));
       } else {
         // 业务失败（409 角色未定义等）：真实包络为 FastAPI {detail}（B17）
         setCheckResult(null);
@@ -468,6 +486,53 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
               </div>
             )}
           </div>
+        )}
+      </section>
+
+      {/* 历史记录（localStorage 持久化） */}
+      <section className={`${cardClass} p-5`} aria-label="人味工具历史记录">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-muted-foreground" />
+            <h3 className="text-sm font-semibold">历史记录（{history.length}）</h3>
+          </div>
+          {history.length > 0 && (
+            <button
+              onClick={() => { clearHumanwareHistory(workspaceKey); setHistory([]); }}
+              className={secondaryButtonClass}
+            >
+              清空历史
+            </button>
+          )}
+        </div>
+        <p className="mt-2 text-xs leading-6 text-muted-foreground">
+          试评与检查的结果按工作区保存在本机浏览器中（最近 20 条），刷新页面后仍可查看。
+        </p>
+        {history.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">暂无记录——完成一次试评或检查后自动留档。</p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {history.map((item) => (
+              <li key={item.ts} className="rounded-lg bg-muted/50 p-3">
+                {item.kind === 'score' && (
+                  <div className="text-sm">
+                    <span className="font-semibold">试评 {item.character}</span>
+                    <span className="ml-2 text-muted-foreground">{item.totalScore} 分 · {item.grade}</span>
+                    <div className="mt-1 text-xs text-muted-foreground">{formatHistoryTime(item.ts)} · {item.excerpt}…</div>
+                  </div>
+                )}
+                {item.kind === 'check' && (
+                  <div className="text-sm">
+                    <span className="font-semibold">检查 {item.character}</span>
+                    <span className={`ml-2 ${item.matches ? 'text-success' : 'text-warning'}`}>
+                      {item.matches ? '符合' : `偏离（${item.violationCount} 处）`}
+                    </span>
+                    <div className="mt-1 text-xs text-muted-foreground">{formatHistoryTime(item.ts)} · {item.excerpt}…</div>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
