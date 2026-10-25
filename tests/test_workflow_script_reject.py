@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from pathlib import Path
+
 import src.config as config
 from src.workflow.definition import (
     NodeExecutionState,
@@ -128,6 +130,18 @@ def test_executor_script_tree_is_terminated_without_killing_executor_group(
             if not process_is_alive(child_pid):
                 break
             await asyncio.sleep(0.01)
+        if process_is_alive(child_pid):
+            # 诊断:区分"杀树失败"与"PID 被复用导致存活误判"
+            for pid in (child_pid, process.pid):
+                try:
+                    cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+                    stat = Path(f"/proc/{pid}/stat").read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError as exc:
+                    print(f"diag pid={pid}: {exc}")
+                else:
+                    print(f"diag pid={pid}: cmdline={cmdline!r} stat={stat[:96]!r}")
         assert not process_is_alive(child_pid)
 
     asyncio.run(scenario())
