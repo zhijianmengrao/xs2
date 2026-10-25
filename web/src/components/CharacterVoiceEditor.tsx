@@ -8,8 +8,9 @@
  * 4. 实时保存编辑内容
  */
 
-import React, { useCallback, useState, useEffect } from 'react';
-import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw } from 'lucide-react';
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
+import { Users, Wand2, FileText, CheckCircle, AlertCircle, Save, RefreshCw, Heart } from 'lucide-react';
+import HumanwareScoreCard, { type HumanwareScore } from './HumanwareScoreCard';
 
 interface HumanwareStatus {
   voice_file_exists: boolean;
@@ -32,6 +33,23 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  // 试评（score-content）：角色名从当前编辑器内容的「## 角色名」小节解析；
+  // 评分按已保存的 character_voice.md 执行（编辑后需先保存）。
+  const [scoreCharacter, setScoreCharacter] = useState('');
+  const [scoreText, setScoreText] = useState('');
+  const [scoring, setScoring] = useState(false);
+  const [scoreResult, setScoreResult] = useState<HumanwareScore | null>(null);
+  const [scoredFor, setScoredFor] = useState('');
+
+  const characterNames = useMemo(() => {
+    const names: string[] = [];
+    for (const line of content.split('\n')) {
+      const matched = line.match(/^##\s+(.+?)\s*$/);
+      if (matched) names.push(matched[1]);
+    }
+    return names;
+  }, [content]);
 
   const showMessage = useCallback((type: 'success' | 'error' | 'info', text: string) => {
     setMessage({ type, text });
@@ -133,6 +151,35 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
       showMessage('error', '生成失败，请重试');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const runScore = async () => {
+    if (!scoreCharacter || !scoreText.trim()) return;
+    setScoring(true);
+    try {
+      const response = await fetch('/api/humanware/score-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace_id: workspaceKey,
+          character: scoreCharacter,
+          content: scoreText
+        })
+      });
+      const data = await response.json().catch(() => null);
+      if (response.ok && data?.status === 'success') {
+        setScoreResult(data as HumanwareScore);
+        setScoredFor(scoreCharacter);
+      } else {
+        // 业务失败（409 角色未定义等）透传 CLI 的 message
+        showMessage('error', data?.message || '评分失败，请重试');
+      }
+    } catch (error) {
+      console.error('评分失败:', error);
+      showMessage('error', '评分失败，请重试');
+    } finally {
+      setScoring(false);
     }
   };
 
@@ -247,6 +294,65 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
             <li>保存后，写作agent会自动遵守这些定义</li>
           </ul>
         </div>
+      </section>
+
+      {/* 试评（人味评分） */}
+      <section className={`${cardClass} p-5`} aria-label="人味评分试评">
+        <div className="flex items-center gap-2">
+          <Heart className="h-5 w-5 text-destructive" />
+          <h3 className="text-sm font-semibold">试评一段内容（人味评分）</h3>
+        </div>
+        <p className="mt-2 text-xs leading-6 text-muted-foreground">
+          选择角色并粘贴一段对话或内心独白进行试评。评分按<strong>已保存</strong>的
+          character_voice.md 执行——编辑器改动后请先保存再评分。
+        </p>
+
+        <div className="mt-4 space-y-3">
+          <select
+            value={scoreCharacter}
+            onChange={(e) => setScoreCharacter(e.target.value)}
+            aria-label="选择试评角色"
+            className="w-full max-w-xs rounded-xl border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+          >
+            <option value="">选择角色</option>
+            {characterNames.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+
+          {characterNames.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              当前编辑内容里还没有「## 角色名」小节——请先生成或编写角色声音定义。
+            </p>
+          )}
+
+          <textarea
+            value={scoreText}
+            onChange={(e) => setScoreText(e.target.value)}
+            className="w-full rounded-xl border border-border bg-background p-4 text-sm leading-6 focus:outline-none focus:ring-2 focus:ring-primary/20"
+            rows={6}
+            placeholder="粘贴待评分的对话或内心独白…"
+            aria-label="待评分内容"
+          />
+
+          <div>
+            <button
+              onClick={runScore}
+              disabled={!scoreCharacter || !scoreText.trim() || scoring}
+              className={primaryButtonClass}
+            >
+              <Heart className="h-4 w-4" />
+              {scoring ? '评分中...' : '开始评分'}
+            </button>
+          </div>
+        </div>
+
+        {scoreResult && (
+          <div className="mt-6">
+            <p className="mb-3 text-xs text-muted-foreground">{scoredFor} 的评分结果</p>
+            <HumanwareScoreCard score={scoreResult} />
+          </div>
+        )}
       </section>
 
       {/* 使用说明 */}

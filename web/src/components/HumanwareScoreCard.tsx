@@ -11,7 +11,9 @@
 import React from 'react';
 import { Heart, TrendingUp, AlertCircle, XCircle } from 'lucide-react';
 
-interface HumanwareScore {
+// 契约 docs/humanware-helper-contract.md §3.3：score-text 输出字段与
+// 本组件一一对应；导出供调用方（CharacterVoiceEditor）复用同一结构。
+export interface HumanwareScore {
   total_score: number;
   grade: string;
   summary: string;
