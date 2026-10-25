@@ -104,6 +104,14 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   双基线 **1741/96/0（Low-IL）、1826/11/0（High-IL 权威）**，总用例
   1837。desktop updater 分发地址决策选项分析见 HANDOVER_ROUND28 §6。
   详见 docs/HANDOVER_ROUND28.md。
+- **R29 updater 分发自托管轮（2026-10-25，方案 A 落地，用户选型）**：
+  endpoints/GITHUB_UPDATE_ENDPOINT 切本 fork GitHub Releases
+  （`2938a82`）；release manifest `--base-url` 改 `${{ github.repository }}`
+  （修 latest.json 安装器链接指向上游的潜伏错误）；上游 R2/Gitee 源因 fork
+  公钥验签必败保留为死通道（fail-closed，永不入选）；钉值测试同步。发版
+  流程：打 tag + release-notes → release job 自动产 NSIS/.sig/latest.json
+  → 桌面端更新可用。CI 四 job + Desktop NSIS 双构建全绿；双基线不变
+  （1741/96/0、1826/11/0）。详见 docs/HANDOVER_ROUND29.md。
 
 ## 技术栈与运行方式
 
