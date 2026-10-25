@@ -27,11 +27,23 @@ def default_config_dir() -> Path:
 
 
 def bundled_plugins_dir() -> Path:
-    """Locate an optional Full-edition Plugin snapshot."""
-    root = bundle_root()
-    if getattr(sys, "frozen", False):
-        return root / "bundled-plugins"
-    return root / "desktop" / "generated" / "bundled-plugins"
+    """Locate an optional Full-edition Plugin snapshot.
+
+    Frozen 布局下快照由 tauri resources 映射到安装根目录(Windows 为
+    <安装目录>\\bundled-plugins,macOS 为 Contents/Resources/bundled-plugins),
+    不在 PyInstaller 的 _internal 内——后者叠加插件深层资源会超过 MAX_PATH,
+    NSIS 落盘会静默损坏。从后端可执行文件向上搜索以兼容两种平台布局。
+    """
+    if not getattr(sys, "frozen", False):
+        return (
+            bundle_root() / "desktop" / "generated" / "bundled-plugins"
+        )
+    executable = Path(sys.executable).resolve()
+    for base in (executable.parent, *executable.parents[:4]):
+        candidate = base / "bundled-plugins"
+        if candidate.is_dir():
+            return candidate
+    return bundle_root() / "bundled-plugins"
 
 
 def seed_user_config(user_root: Path, defaults_dir: Path | None = None) -> list[Path]:

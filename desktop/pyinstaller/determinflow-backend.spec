@@ -9,7 +9,6 @@ project_root = Path(SPECPATH).parents[1]
 generated_config = project_root / "desktop" / "generated" / "default-config"
 web_dist = project_root / "web" / "dist"
 core_defaults = project_root / "src" / "core" / "defaults"
-bundled_plugins = project_root / "desktop" / "generated" / "bundled-plugins"
 
 for required_path in (generated_config, web_dist, core_defaults):
     if not required_path.exists():
@@ -20,8 +19,9 @@ datas = [
     (str(web_dist), "web/dist"),
     (str(core_defaults), "src/core/defaults"),
 ]
-if bundled_plugins.is_dir():
-    datas.append((str(bundled_plugins), "bundled-plugins"))
+# Full 版插件快照不经 PyInstaller 收集:_internal 叠加 checkouts/<id>/<rev> 与
+# 深层 vendor 资源后超过 MAX_PATH,NSIS 打包/落盘会静默损坏;改由 tauri.conf
+# resources 直映安装根目录 bundled-plugins/(见 tauri.conf.json 与 verify_bundle)。
 for distribution in (
     "anthropic",
     "fastapi",
