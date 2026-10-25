@@ -172,8 +172,9 @@ export default function CharacterVoiceEditor({ workspaceId }: CharacterVoiceEdit
         setScoreResult(data as HumanwareScore);
         setScoredFor(scoreCharacter);
       } else {
-        // 业务失败（409 角色未定义等）透传 CLI 的 message
-        showMessage('error', data?.message || '评分失败，请重试');
+        // 业务失败（409 角色未定义等）：FastAPI 错误包络为 {detail}（B17 实测），
+        // CLI 直出的 {message} 形状作兜底
+        showMessage('error', data?.detail || data?.message || '评分失败，请重试');
       }
     } catch (error) {
       console.error('评分失败:', error);

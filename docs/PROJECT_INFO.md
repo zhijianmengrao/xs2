@@ -66,6 +66,19 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   **1740/96/0（Low-IL）、1825/11/0（High-IL 权威）**。附带复核关闭 R24 §9 P3
   （e2e 宕机失败信息可读性足够，无需改动）。R23–R25 三个提交未推送。
   详见 docs/HANDOVER_ROUND25.md。
+- **R26 维护轮（2026-10-25，维护态第四轮，纯前端）**：R25 §7 P2 落地——
+  ①**score-chapter（契约 §3.4）接入「读者评估」页**：新组件
+  ChapterHumanwareScore（workspaceKey 归一化 + `story/<四位>/chapter.md`
+  padStart），成功渲染「共评分 N 段对话」+ HumanwareScoreCard，业务失败
+  404/409 透传 CLI 拒因；②修复 **B17**（R25 引入）：score-content 业务失败
+  的真实包络是 FastAPI `{detail}` 而非 CLI `{message}`，前端读错字段致 409
+  拒因被兜底文案吞掉（R25 单测 mock 形状与活体不符而假通过）——错误提取改
+  `detail` 优先并用真实形状重锚测试。后端零改动。验证：前端三连全绿
+  （lint 0 / **8 组 422 条 0 fail**（净增 7）/ build ✓）；真实浏览器 e2e
+  （8021 新 dist，demo-voice 第 1 章）评分卡 81/B/2 段对话渲染 + B17 活体
+  409 拒因透传，截图存档；活体 e2e 17 passed；双基线不变：
+  **1740/96/0（Low-IL）、1825/11/0（High-IL 权威）**。R23–R26 四个提交未推送。
+  详见 docs/HANDOVER_ROUND26.md。
 
 ## 技术栈与运行方式
 
@@ -138,6 +151,7 @@ xs2/
 - 2026-10-24 R23 双基线（维护态首轮：B14 修复 + 真实设备名常驻回归 + e2e 探测去重）：Low-IL → **1735 passed / 96 skipped / 0 failed**（105.49s）；High-IL → **1820 passed / 11 skipped / 0 failed**（122.78s，权威）。净增 **3** 条（`test_executor_runtime_dir.py` B14 回归 1 + `test_real_device_name_dirs.py` 2，后者 POSIX/不支持环境诚实 skip）。对账：Low-IL 1732+3=1735；High-IL 1817+3=1820。总用例 R21 口径 1828 → **1831**。
 - 2026-10-24 R24 双基线（维护态二轮：B15 e2e 宕机语义 + B16 supervisor 竞态兜底 + installation_state 真实证据）：Low-IL → **1740 passed / 96 skipped / 0 failed**（109.75s）；High-IL → **1825 passed / 11 skipped / 0 failed**（125.27s，权威）。净增 **5** 条（`test_humanware_e2e.py` B15 逻辑回归 2（服务不在跑时随模块诚实 skip）+ `test_executor_runtime_dir.py` B16 回归 2 + `test_real_device_name_dirs.py` 1）。对账：Low-IL 1735+5=1740；High-IL 1820+5=1825。总用例 R23 口径 1831 → **1836**。
 - 2026-10-25 R25 双基线（维护态三轮，纯前端接线，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**；High-IL → **1825 passed / 11 skipped / 0 failed**（权威）——与 R24 完全一致（后端用例集未变）。前端 `npm test` **8 组 415 条 0 fail**（净增 9：`CharacterVoiceEditor.test.ts` +5、`HumanwareScoreCard.test.ts` +4，`test:desktop` 100→109）；lint 0 problems；build ✓ 6.78s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]。另：真实浏览器 e2e 首次打通 UI→score-content→CLI→评分卡链路（详见 HANDOVER_ROUND25 §4.2）。
+- 2026-10-25 R26 双基线（维护态四轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（104.88s）；High-IL → **1825 passed / 11 skipped / 0 failed**（121.42s，权威）——与 R24/R25 完全一致。前端 `npm test` **8 组 422 条 0 fail**（净增 7：`ChapterHumanwareScore.test.ts`，`test:desktop` 109→116）；lint 0 problems；build ✓ 6.30s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→score-chapter→CLI→聚合评分卡（demo-voice 第 1 章 81/B/2 段对话）+ B17 活体 409 拒因透传（详见 HANDOVER_ROUND26 §4.2）。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个

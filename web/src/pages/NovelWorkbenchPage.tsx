@@ -45,6 +45,7 @@ import "./novel-workbench.css";
 import { readerRepairDecision, shouldAdvanceSerialChapter } from "../lib/novel-auto-flow";
 import { archiveLabel, archiveScalar } from "../lib/novel-archive";
 import CharacterVoiceEditor from "../components/CharacterVoiceEditor";
+import ChapterHumanwareScore from "../components/ChapterHumanwareScore";
 
 const PREFIX = "xs2-novel-flywheel-";
 const DEFAULT_WORKSPACE = "data/workspaces/books/welcome";
@@ -853,7 +854,7 @@ function ReviewView({ project, workspace, chapter, opening, onBack, onFlow, onRe
     <div className="flex flex-wrap gap-3"><button disabled={loading || opening || !content} onClick={onAssess} className="rounded-xl border border-primary/30 px-4 py-2.5 text-sm text-primary disabled:opacity-50">{opening ? "正在准备…" : `重新评估第 ${Number(chapter)} 章`}</button><button disabled={loading || opening || !content} onClick={onAudit} className="rounded-xl border border-border px-4 py-2.5 text-sm disabled:opacity-50">重新审核档案</button><p className="self-center text-xs text-muted-foreground">缺少有效报告时先重新评估，再规划返修。</p></div>
     <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
       <section className={`${cardClass} p-6`}><div className="flex items-center justify-between"><h2 className="font-semibold">正文预览</h2><span className="text-xs text-muted-foreground">{loading ? "正在读取" : content ? `${content.replace(/\s/g, "").length.toLocaleString()} 字符` : "暂无正文"}</span></div><div className="mt-5 max-h-[800px] overflow-auto pr-3"><NovelArchiveContent content={content || "还没有找到这一章的正文。可以回到创作流程生成。"} /></div></section>
-      <aside className="space-y-5"><NovelRepairPanel key={`${workspace}:${chapter}`} workspace={workspace} chapter={chapter} project={{title:project.title, mode:project.mode, values:{...project.values, chapter_number:chapter, prev_chapter:String(Number(chapter)-1).padStart(4,"0")}, selected_candidate_ids:project.selected}} readerSummary={String(report?.summary || "")} ready={!loading && !!content && !!report} onRepair={onRepair} onFlow={onRepairFlow} /><section className={`${cardClass} p-5`}><div className="flex items-center gap-2"><Headphones className="h-4 w-4 text-primary" /><h2 className="font-semibold">模拟读者评估</h2></div><NovelReaderReport report={report} /><button onClick={onFlow} className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground">返回创作流程</button></section></aside>
+      <aside className="space-y-5"><NovelRepairPanel key={`${workspace}:${chapter}`} workspace={workspace} chapter={chapter} project={{title:project.title, mode:project.mode, values:{...project.values, chapter_number:chapter, prev_chapter:String(Number(chapter)-1).padStart(4,"0")}, selected_candidate_ids:project.selected}} readerSummary={String(report?.summary || "")} ready={!loading && !!content && !!report} onRepair={onRepair} onFlow={onRepairFlow} /><section className={`${cardClass} p-5`}><div className="flex items-center gap-2"><Headphones className="h-4 w-4 text-primary" /><h2 className="font-semibold">模拟读者评估</h2></div><NovelReaderReport report={report} /><button onClick={onFlow} className="mt-5 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground">返回创作流程</button></section><ChapterHumanwareScore key={`${workspace}:${chapter}`} workspaceId={workspace} chapter={chapter} /></aside>
     </div>
   </div>;
 }

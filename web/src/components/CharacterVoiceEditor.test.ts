@@ -231,7 +231,9 @@ test("score flow posts score-content with normalized id and renders the score ca
 test("score 409 surfaces the CLI message and keeps the card hidden", async () => {
   voiceBody = { status: "success", content: VOICE_WITH_NAMES };
   scoreStatus = 409;
-  scoreBody = { status: "error", message: "角色 林晚 未在 character_voice.md 中定义", code: 409 };
+  // B17 回归锚：真实服务的业务失败是 FastAPI 错误包络 {"detail": <CLI message>}，
+  // 而非 CLI 直出的 {message}——mock 形状必须与活体一致（曾因形状不符假通过）。
+  scoreBody = { detail: "角色 林晚 未在 character_voice.md 中定义" };
   await mount();
   await chooseCharacter("林晚");
   await setScoreText("「测试」");
