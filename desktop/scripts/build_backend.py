@@ -31,9 +31,10 @@ def build_backend(repo_root: Path, *, flavor: str = "core") -> Path:
     if flavor == "full":
         stage_official_plugins(repo_root, bundled_plugins)
     else:
-        # Core 不带插件快照,但 tauri resources 映射要求源目录存在。
+        # Core 不带插件快照,但 tauri resources 映射要求源目录非空可匹配。
         shutil.rmtree(bundled_plugins, ignore_errors=True)
         bundled_plugins.mkdir(parents=True, exist_ok=True)
+        (bundled_plugins / ".empty").write_text("", encoding="utf-8")
     shutil.rmtree(backend_dir, ignore_errors=True)
     subprocess.run(
         [

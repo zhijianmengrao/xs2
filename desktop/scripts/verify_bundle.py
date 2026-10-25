@@ -339,7 +339,10 @@ def main() -> int:
             )
         if options.expected_flavor == "full":
             verify_bundled_plugins(generated_snapshot)
-        elif generated_snapshot.exists() and any(generated_snapshot.iterdir()):
+        elif any(
+            path for path in generated_snapshot.iterdir()
+            if path.name != ".empty"
+        ):
             raise RuntimeError("桌面 Core 构建意外包含 Full Plugin 快照")
 
     if options.desktop_executable:
