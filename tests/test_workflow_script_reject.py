@@ -122,8 +122,13 @@ def test_executor_script_tree_is_terminated_without_killing_executor_group(
         await _terminate_process_tree(process, grace_seconds=0.1)
 
         assert process.returncode is not None
-        with pytest.raises(ProcessLookupError):
-            os.kill(child_pid, 0)
+        # An orphan can briefly remain as a reaped-by-init zombie on Linux.
+        # Verify execution has stopped, rather than requiring immediate PID removal.
+        for _ in range(100):
+            if not process_is_alive(child_pid):
+                break
+            await asyncio.sleep(0.01)
+        assert not process_is_alive(child_pid)
 
     asyncio.run(scenario())
 

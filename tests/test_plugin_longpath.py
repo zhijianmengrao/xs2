@@ -69,8 +69,21 @@ def test_deep_dir_listing_uses_extended_path(tmp_path: Path) -> None:
     assert plugin_content_sha256(root)
 
 
+def _max_path_enforced(base: Path) -> bool:
+    """探测当前环境是否仍强制 MAX_PATH(CI runner 常已启用长路径)。"""
+    probe = base / ("l" * 250)
+    try:
+        probe.mkdir()
+    except OSError:
+        return True
+    probe.rmdir()
+    return False
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="MAX_PATH 仅 Windows")
 def test_plain_iterdir_fails_beyond_max_path(tmp_path: Path) -> None:
+    if not _max_path_enforced(tmp_path):
+        pytest.skip("此环境已启用 Windows 长路径(LongPathsEnabled),MAX_PATH 不生效")
     _root, leaf = _materialize_deep_tree(tmp_path, 300)
     with pytest.raises(OSError):
         list(leaf.iterdir())
