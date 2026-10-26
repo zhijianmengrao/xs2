@@ -157,6 +157,25 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   基线：Low-IL **1788/96/0**、High-IL **1873/11/0（权威）**、插件 94/0、前端
   447/0；活体 e2e 17 passed、B21 活体 422 探针 ✓、审计 [clean]。详见
   docs/HANDOVER_ROUND36.md（§2 记录 High-IL 插件资源刷新方法）。
+- **R37 维护轮（2026-10-26，R36 §6 候选落地）**：①修复 **B24**——novel 面
+  workspace 覆盖白名单（R33 §3.2）：核心解析器相对 override 收紧到
+  `BASE_DIR/data` 之内（越界回退默认路径），console 面 27 个解析点收编
+  `_console_root()` 白名单外一律 400 明确拒因；修复前实测
+  `data/workspaces/../../<name>` 逃逸到仓库根且被谎报为 0% 书；绝对路径
+  DATA_DIR/BASE_DIR 允许面与相对 `data/book/<uuid>` 钉值形态零破坏（插件
+  批处理面在用）。新增 9 条回归 + 5 文件夹具同步。②修复 **B25**（插件
+  `a101515`，0.1.15→0.1.16）：空书导出拒缩（R33 §3.3）——0 章时任务 failed
+  并透出中文拒因，不再写出 0 字节 manuscript.md；插件套件 98/0；High-IL
+  进程外 PluginStore.update + 重启后双相活体验证通过。③**stream_chunk_
+  timeout 收口**（R33 §3.1）：核实为「已暴露」——Agent 级模型参数动态渲染
+  可配、后端全 openai 系适配器已接线（钉测在库）、env var 全局兜底实证；
+  `.env.example` 补文档条目，零代码改动。④仓库根残留治理：conftest 探针
+  目录钉位 `data/system/test-probes` + 只读 rmtree（41 个 git-transport-
+  probe 残留根因），历史残留 50+ 目录清零；插件仓库 gitignore 补
+  `/pytest-of-*/`。基线：Low-IL **1797/96/0**（+9 B24 回归）、High-IL
+  **1882/11/0（权威）**、插件 98/0、前端 447/0（零改动）；活体 e2e 17
+  passed、B24 三形态 400 探针 ✓、B25 双相探针 ✓、审计 [clean]。详见
+  docs/HANDOVER_ROUND37.md。
 - **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
   评分/检查历史持久化（`web/src/lib/humanwareHistory.ts`，localStorage 按
   工作区隔离/20 条/受限降级 + 两组件接线 + 8 测试，活体验证含跨刷新）；
