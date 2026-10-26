@@ -385,6 +385,30 @@ def known_workspaces() -> list[Path]:
     return sorted({root.resolve() for root in roots if root.is_dir()}, key=str)
 
 
+def _quarantine_manifest(path: Path) -> None:
+    """Keep a truncation-damaged manifest instead of letting the next save
+    overwrite it: the user's actual progress may still be recoverable from it."""
+    if not path.is_file():
+        return
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        path.replace(path.with_name(f"{path.name}.corrupt-{stamp}"))
+    except OSError:
+        pass
+
+
+def read_manifest(path: Path) -> tuple[dict, bool]:
+    """Return (state, corrupted). A truncated manifest must not read as a new
+    empty book, otherwise the browser's autosave replaces real progress."""
+    if not path.is_file():
+        return {}, False
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, True
+    return (state, False) if isinstance(state, dict) else ({}, True)
+
+
 @router.get("/projects")
 async def list_projects():
     projects = []
@@ -393,15 +417,16 @@ async def list_projects():
             if root.is_relative_to((WORKFLOW_WORKSPACES_DIR / "reference-jobs").resolve()):
                 continue
             path = root / _manifest
-            if path.is_file():
-                try:
-                    state = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
+            state, corrupt = read_manifest(path)
+            if corrupt:
+                # Still listed (the browser only finds its current book here),
+                # flagged so the console can ask for a manual decision.
+                state = {"_corrupt": True, "title": root.name,
+                         "values": {"chapter_number": "1"}}
+            elif not state:
+                if not ((root / "story").is_dir() or root.name == "xs2-novel-workbench"):
                     continue
-            elif (root / "story").is_dir() or root.name == "xs2-novel-workbench":
                 state = {"title": root.name, "mode": "serial" if len(list((root / "story").glob("*/chapter.md"))) > 1 else "short"}
-            else:
-                continue
             projects.append({"workspace": str(root), "state": state,
                              "progress": progress(root, state, DATA_DIR / "workflows")})
     return {"projects": projects}
@@ -411,7 +436,7 @@ async def list_projects():
 async def get_novel_progress(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
     root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
-    state = read_json_file(root / _manifest, {})
+    state, _ = read_manifest(root / _manifest)
     return progress(root, state, DATA_DIR / "workflows")
 
 
@@ -1148,13 +1173,20 @@ async def save_project(payload: ProjectSave, request: Request):
     with _lock:
         manifest = safe_target(root, _manifest)
         incoming = dict(payload.state)
-        existing = read_json_file(manifest, {})
-        # Reject stale browser snapshots rather than silently replacing newer
-        # workflow progress, settings or intentional writing-library changes.
-        revision = existing.get("_revision", 0) if isinstance(existing, dict) else 0
-        if incoming.get("_revision", 0) != revision:
-            raise HTTPException(409, "作品已在后台或其他页面更新，请刷新作品后再保存")
-        incoming["_revision"] = revision + 1
+        existing, corrupt = read_manifest(manifest)
+        if corrupt:
+            # The revision guard cannot be evaluated against a truncated file.
+            # Quarantine it and accept the client's snapshot, which still holds
+            # the in-memory progress the user is looking at.
+            _quarantine_manifest(manifest)
+        else:
+            # Reject stale browser snapshots rather than silently replacing newer
+            # workflow progress, settings or intentional writing-library changes.
+            revision = existing.get("_revision", 0) if isinstance(existing, dict) else 0
+            if incoming.get("_revision", 0) != revision:
+                raise HTTPException(409, "作品已在后台或其他页面更新，请刷新作品后再保存")
+        incoming.pop("_corrupt", None)
+        incoming["_revision"] = incoming.get("_revision", 0) + 1
         atomic_json(manifest, incoming)
         roots = {str(item) for item in known_workspaces()}
         roots.add(str(root))
