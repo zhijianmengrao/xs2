@@ -149,9 +149,12 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   ④**B22 运行时部署缺口闭合**（本轮发现）：R35 的插件修复从未进入
   runtime-resources，且服务进程 Low-IL 令牌下插件 update 端点必崩 msys——处置：
   插件 bump 0.1.15（`6804876`）+ High-IL 进程外 `PluginStore.update` + 重启，
-  修复实测落位；⑤R35 观察项「纯 API 跑完进度显 0%」收口：refs 归属语义不变
-  （test_c16 有意钉死），展示层加诚实提示，r33-flow 现已 refs=9/100%（`6395e43`）。
-  基线：Low-IL **1783/96/0**、High-IL **1868/11/0（权威）**、插件 94/0、前端
+  修复实测落位；⑤R35 观察项「纯 API 跑完进度显 0%」收口（三层处置，归属语义
+  零变更）：诚实提示（`6395e43`）+ 新增 `POST /api/novel-console/progress/sync-history`
+  显式历史任务登记端点（按 workspace_override 反查完成态任务、只为空缺 stage 补
+  refs、幂等；R35 设想的「自动反查」与 test_c16 钉死的流程重置防护正面冲突，故
+  定为用户触发，`dd749eb`），r33-flow 活体幂等探针零改动 ✓。
+  基线：Low-IL **1788/96/0**、High-IL **1873/11/0（权威）**、插件 94/0、前端
   447/0；活体 e2e 17 passed、B21 活体 422 探针 ✓、审计 [clean]。详见
   docs/HANDOVER_ROUND36.md（§2 记录 High-IL 插件资源刷新方法）。
 - **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
