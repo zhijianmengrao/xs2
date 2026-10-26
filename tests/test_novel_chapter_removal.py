@@ -157,6 +157,7 @@ def test_route_exposes_preview_and_requires_matching_confirmation(book, support,
         _ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow, override=None: Path(override)),
         get_workflow_execution_policy=lambda _workflow: "public", is_workflow_owner_enabled=lambda _workflow: True)
     monkeypatch.setattr(novel_routes, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path)
     monkeypatch.setattr(novel_routes, "story_support", lambda required=False: support)
     query = {"workflow_id": "test", "workspace": str(root), "chapter": "0002"}
     with TestClient(app) as client:

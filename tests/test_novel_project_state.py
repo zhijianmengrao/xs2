@@ -23,7 +23,8 @@ class NovelProjectStateTests(unittest.TestCase):
             with patch.object(novel_routes, "_ensure_http_mutation_allowed"), \
                  patch.object(novel_routes, "_ensure_workflow_writable", return_value=manager), \
                  patch.object(novel_routes, "known_workspaces", return_value=[root]), \
-                 patch.object(novel_routes, "_index", root / "index.json"):
+                 patch.object(novel_routes, "_index", root / "index.json"), \
+                 patch.object(novel_routes, "WORKFLOW_WORKSPACES_DIR", root):
                 def save(state):
                     payload = novel_routes.ProjectSave(workflow_id="test", workspace=str(root), state=state)
                     return asyncio.run(novel_routes.save_project(payload, None))

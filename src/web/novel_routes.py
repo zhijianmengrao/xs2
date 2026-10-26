@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from src.config import DATA_DIR, WORKFLOW_WORKSPACES_DIR
+from src.config import BASE_DIR, DATA_DIR, WORKFLOW_WORKSPACES_DIR
 from .workflow_access import _ensure_http_mutation_allowed, _ensure_workflow_writable, _get_manager
 from .novel_assistant import NovelAssistantJobs
 from .path_guard import unsafe_windows_component, unsafe_windows_path, unsafe_windows_root
@@ -376,6 +376,32 @@ def atomic_json(target: Path, value: object) -> None:
         Path(name).unlink(missing_ok=True)
 
 
+def _console_root(ws_manager, workflow_id: str, workspace: str | None) -> Path:
+    """解析 console 面的工作区路径；白名单外的 workspace 覆盖一律 400（R37 B24）。
+
+    作品与参考任务只会落在 data/workspaces 之下。此前的「BASE_DIR 内任意相对
+    路径」语义会在仓库根静默创建目录（实测 data/workspaces/../../<name> →
+    仓库根 <name>/），只读端点还会把该位置谎报成一本 0% 的书。核心解析器对
+    越界值回退默认路径（兼容通用 API 的既有语义），console 面在此之上给出
+    明确的 400 拒因，而不是把默认工作区冒充用户请求的位置。
+    """
+    raw = (workspace or "").strip()
+    if raw:
+        allowed = WORKFLOW_WORKSPACES_DIR.resolve()
+        candidate = Path(raw)
+        resolved = candidate if candidate.is_absolute() else (BASE_DIR / candidate)
+        try:
+            resolved = resolved.resolve()
+        except OSError:
+            resolved = Path(os.path.abspath(resolved))
+        if resolved != allowed and not resolved.is_relative_to(allowed):
+            raise HTTPException(
+                400,
+                f"workspace 必须位于 {WORKFLOW_WORKSPACES_DIR} 之下：{raw}",
+            )
+    return ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+
+
 def known_workspaces() -> list[Path]:
     # Books are isolated below data/workspaces/books/<slug>; include nested
     # workspaces so the works switcher sees newly created books immediately.
@@ -435,7 +461,7 @@ async def list_projects():
 @router.get("/progress")
 async def get_novel_progress(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(manager._ws_manager, workflow_id, workspace)
     state, _ = read_manifest(root / _manifest)
     return progress(root, state, DATA_DIR / "workflows")
 
@@ -495,8 +521,7 @@ async def sync_progress_history(payload: ProgressSync, request: Request):
     （幂等），章内阶段只登记与当前章节匹配的任务，运行中/失败任务不登记。
     """
     manager = _get_manager(request)
-    root = manager._ws_manager.resolve_workflow_workspace(
-        payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(manager._ws_manager, payload.workflow_id, payload.workspace)
     workflows_dir = DATA_DIR / "workflows"
     with _lock:
         state, corrupt = read_manifest(root / _manifest)
@@ -566,7 +591,7 @@ async def import_url(payload: UrlImport, request: Request):
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
     if payload.source_mode not in {"auto", "short_full", "serial_chapters"}:
         raise HTTPException(400, "参考语料类型无效")
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     source_url = _validate_fanqie_url(payload.url)
     selected = payload.chapters[:200]
     pages: list[dict[str, object]] = []
@@ -627,7 +652,7 @@ async def get_mechanism_recommendations(request: Request, workspace: str = "", a
     if workspace:
         try:
             manager = _get_manager(request)
-            root = manager._ws_manager.resolve_workflow_workspace("xs2-novel-flywheel", override=workspace).resolve()
+            root = _console_root(manager._ws_manager, "xs2-novel-flywheel", workspace)
             active_context = root / "learning/active_context.md"
             if active_context.is_file():
                 content = active_context.read_text(encoding="utf-8")
@@ -671,7 +696,7 @@ async def get_writing_library_item(library_id: str, request: Request, workspace:
     if workspace:
         try:
             manager = _get_manager(request)
-            root = manager._ws_manager.resolve_workflow_workspace("xs2-novel-flywheel", override=workspace).resolve()
+            root = _console_root(manager._ws_manager, "xs2-novel-flywheel", workspace)
 
             # 读取本书的 active_context.md
             active_context_path = root / "learning/active_context.md"
@@ -709,7 +734,7 @@ async def get_writing_library_item(library_id: str, request: Request, workspace:
 @router.get("/library-usage")
 async def get_library_usage(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(manager._ws_manager, workflow_id, workspace)
     return {"items": {folder.name: usage(root, folder) for folder in _library_root.iterdir()
                       if folder.is_dir() and (folder / "manifest.json").is_file()} if _library_root.exists() else {}}
 
@@ -717,7 +742,7 @@ async def get_library_usage(request: Request, workflow_id: str, workspace: str):
 @router.get("/adopted-writing")
 async def get_adopted_writing(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(manager._ws_manager, workflow_id, workspace)
     try:
         return adopted_writing(root)
     except ValueError as error:
@@ -727,7 +752,7 @@ async def get_adopted_writing(request: Request, workflow_id: str, workspace: str
 @router.get("/reference-candidates")
 async def get_reference_candidates(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(manager._ws_manager, workflow_id, workspace)
     data = read_json_file(root / "learning/candidates.json", None)
     if not isinstance(data, dict):
         return {"candidates": [], "style_observations": [], "conflict_patterns": [], **with_reference_choices({})}
@@ -743,7 +768,7 @@ def _manuscript_response(target: Path, filename: str) -> FileResponse:
 
 
 def _manuscript_target(manager, workflow_id: str, workspace: str) -> Path:
-    root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(manager._ws_manager, workflow_id, workspace)
     target = safe_target(root, "export/manuscript.md")
     if not target.is_file():
         raise HTTPException(404, "本书尚未生成成品，请先完成导出步骤")
@@ -892,7 +917,7 @@ async def publish_writing_library(payload: LibraryPublish, request: Request):
     """把当前书工作区中已校验的蒸馏结果保存为可复用的库条目。"""
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     candidates_path = safe_target(root, "learning/candidates.json")
     if not candidates_path.is_file():
         raise HTTPException(400, "当前工作区还没有完成蒸馏，找不到 learning/candidates.json")
@@ -982,7 +1007,7 @@ async def attach_writing_library(payload: LibraryAttach, request: Request):
     """把库条目的候选复制到本书，仍由本书单独选择采用哪些规则。"""
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     folder = library_path(payload.library_id)
     candidates_path = folder / "candidates.json"
     if not candidates_path.is_file():
@@ -1055,7 +1080,7 @@ def _assistant_jobs(request: Request) -> NovelAssistantJobs:
 @router.get("/assistant/history")
 async def novel_assistant_history(workflow_id: str, workspace: str, request: Request):
     mgr = request.app.state.workflow_manager
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     return {"entries": _assistant_jobs(request).history(root)}
 
 
@@ -1064,7 +1089,7 @@ async def novel_assistant(payload: NovelAssistantRequest, request: Request):
     """Submit a durable analysis without tying model execution to a browser tab."""
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     data = payload.model_dump(mode="json")
     if payload.purpose == 'advisor':
         from src.core.model_manager import get_model_manager
@@ -1093,7 +1118,7 @@ class PlotApply(BaseModel):
 async def apply_plot_proposal(payload: PlotApply, request: Request):
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     with _lock:
         jobs = _assistant_jobs(request)
         entries = jobs.history(root)
@@ -1113,7 +1138,7 @@ async def apply_plot_proposal(payload: PlotApply, request: Request):
 @router.get('/continuation')
 async def continuation_check(request: Request, workflow_id: str, workspace: str, chapter: str):
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     try:
         return story_support(required=True).preflight(root, chapter)
     except ValueError as error:
@@ -1124,7 +1149,7 @@ async def continuation_check(request: Request, workflow_id: str, workspace: str,
 async def novel_chapter_context(request: Request, workflow_id: str, workspace: str,
                                 chapter: str, action: Literal['write', 'repair', 'assess', 'audit'] = 'write'):
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     try:
         return chapter_context(root, DATA_DIR / 'workflows', chapter, action)
     except ValueError as error:
@@ -1142,7 +1167,7 @@ class ChapterOpen(BaseModel):
 async def open_novel_chapter(payload: ChapterOpen, request: Request):
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     with _lock:
         try:
             result = chapter_context(root, DATA_DIR / 'workflows', payload.chapter, payload.action)
@@ -1155,7 +1180,7 @@ async def open_novel_chapter(payload: ChapterOpen, request: Request):
 @router.get('/archive-state')
 async def novel_archive_state(request: Request, workflow_id: str, workspace: str):
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     support = story_support()
     if not support:
         return {'message': '动态档案模块尚未加载', 'updated_chapter': '', 'items': []}
@@ -1178,7 +1203,7 @@ async def novel_archive_state(request: Request, workflow_id: str, workspace: str
 @router.get('/chapters/removal-preview')
 async def preview_chapter_removal(request: Request, workflow_id: str, workspace: str, chapter: str):
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     try:
         return chapter_removal_preview(root, DATA_DIR / 'workflows', chapter)
     except (ValueError, OSError) as error:
@@ -1198,7 +1223,7 @@ class ChapterRemoval(BaseModel):
 async def remove_novel_chapter(payload: ChapterRemoval, request: Request):
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     with _lock:
         try:
             return remove_chapter(root, DATA_DIR / 'workflows', payload.chapter, payload.operation,
@@ -1218,7 +1243,7 @@ class RepairApply(BaseModel):
 @router.get('/reader-report')
 async def chapter_reader_report(request: Request, workflow_id: str, workspace: str, chapter: str):
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     try:
         context = repair_context(root, chapter, DATA_DIR / 'workflows', require_idle=False)
     except (ValueError, json.JSONDecodeError) as error:
@@ -1230,7 +1255,7 @@ async def chapter_reader_report(request: Request, workflow_id: str, workspace: s
 async def apply_repair_plan(payload: RepairApply, request: Request):
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     jobs = _assistant_jobs(request)
     with _lock:
         entries = jobs.history(root)
@@ -1255,7 +1280,7 @@ async def save_project(payload: ProjectSave, request: Request):
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
     if len(json.dumps(payload.state)) > 500_000:
         raise HTTPException(413, "作品设置过大")
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     with _lock:
         manifest = safe_target(root, _manifest)
         incoming = dict(payload.state)
@@ -1285,7 +1310,7 @@ async def delete_project(workflow_id: str, workspace: str, request: Request):
     """删除作品登记并物理移除对应的独立作品工作区。"""
     _ensure_http_mutation_allowed(request, workflow_id)
     mgr = _ensure_workflow_writable(request, workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _console_root(mgr._ws_manager, workflow_id, workspace)
     books_root = (WORKFLOW_WORKSPACES_DIR / "books").resolve()
     workflow_root = WORKFLOW_WORKSPACES_DIR.resolve()
     if not root.is_relative_to(workflow_root) or root == workflow_root or root == books_root:
@@ -1335,7 +1360,7 @@ class TextWrite(BaseModel):
 async def write_text(payload: TextWrite, request: Request):
     _ensure_http_mutation_allowed(request, payload.workflow_id)
     mgr = _ensure_workflow_writable(request, payload.workflow_id)
-    root = mgr._ws_manager.resolve_workflow_workspace(payload.workflow_id, override=payload.workspace).resolve()
+    root = _console_root(mgr._ws_manager, payload.workflow_id, payload.workspace)
     target = safe_target(root, payload.path)
     # Only author-provided references and confirmed console plans are writable here.
     if not payload.path.replace("\\", "/").startswith(("references/", "meta/console-")):

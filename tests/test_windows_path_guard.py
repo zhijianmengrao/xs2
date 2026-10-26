@@ -121,6 +121,9 @@ def novel_client(tmp_path, monkeypatch):
     app.include_router(novel_routes.router)
     app.state.workflow_manager = manager
     monkeypatch.setattr(novel_routes, "_library_root", library)
+    # R37 B24：console 面的 workspace 白名单锚在 WORKFLOW_WORKSPACES_DIR 上，
+    # 单测里的临时书目录必须落在被补丁的根之下。
+    monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path)
     with TestClient(app) as client:
         yield client, book
 
@@ -221,12 +224,13 @@ def _r18_app(workspace_root: Path):
     return app, manager
 
 
-def test_r18_cjk_workflow_id_returns_400_not_500(tmp_path):
+def test_r18_cjk_workflow_id_returns_400_not_500(tmp_path, monkeypatch):
     """B6 端到端：清洗后为空的 id（纯中文）必须是 4xx，不得是 500。
 
     修复前实测：`PUT /api/novel-console/text` 与 `GET /api/workflows/workspace-files`
     对 `workflow_id="中文书"` 返回 **500 Internal Server Error**（裸 ValueError 逃逸）。
     """
+    monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path / "ws")
     app, _ = _r18_app(tmp_path / "ws")
     with TestClient(app) as client:
         for path, kwargs in (
@@ -243,7 +247,7 @@ def test_r18_cjk_workflow_id_returns_400_not_500(tmp_path):
             assert "detail" in response.json(), response.text
 
 
-def test_r18_phantom_override_returns_400_on_readonly_endpoint(tmp_path):
+def test_r18_phantom_override_returns_400_on_readonly_endpoint(tmp_path, monkeypatch):
     """B7 端到端：只读端点不得对幻影根返回 200 + 空列表（谎报工作区存在且为空）。
 
     修复前实测：`GET /api/workflows/workspace-files?workspace=.../books/NUL` → **200**
@@ -251,6 +255,7 @@ def test_r18_phantom_override_returns_400_on_readonly_endpoint(tmp_path):
     """
     if not IS_NT:
         pytest.skip("幻影目录仅在 Windows 文件系统语义下成立")
+    monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path / "ws")
     app, _ = _r18_app(tmp_path / "ws")
     phantom = tmp_path / "ws" / "books" / "NUL"
     with TestClient(app) as client:
@@ -260,8 +265,9 @@ def test_r18_phantom_override_returns_400_on_readonly_endpoint(tmp_path):
     assert not (tmp_path / "ws" / "books").exists()
 
 
-def test_r18_normal_ids_still_work_through_manager(tmp_path):
+def test_r18_normal_ids_still_work_through_manager(tmp_path, monkeypatch):
     """守卫不误伤：真实 WorkspaceManager 下常规 id 与常规 override 照常可用。"""
+    monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path / "ws")
     app, manager = _r18_app(tmp_path / "ws")
     book = tmp_path / "ws" / "books" / "welcome"
     book.mkdir(parents=True)

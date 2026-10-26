@@ -43,6 +43,9 @@ def library_client(tmp_path, monkeypatch):
     app = FastAPI(); app.include_router(novel_routes.router)
     app.state.workflow_manager = manager
     monkeypatch.setattr(novel_routes, "_library_root", library)
+    # R37 B24：console 面 workspace 白名单锚在 WORKFLOW_WORKSPACES_DIR 上，
+    # publish/delete 等端点带 workspace，临时书目录必须落在被补丁的根之下。
+    monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path)
     with TestClient(app) as client:
         yield client, library, book, tasks, manager
 

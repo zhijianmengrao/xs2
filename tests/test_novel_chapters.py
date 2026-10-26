@@ -104,6 +104,7 @@ def test_chapter_open_route_validates_and_does_not_create_or_overwrite_prose(tmp
         get_workflow_execution_policy=lambda _workflow:"public",is_workflow_owner_enabled=lambda _workflow:True)
     app=FastAPI();app.include_router(novel_routes.router);app.state.workflow_manager=manager
     monkeypatch.setattr(novel_routes,"DATA_DIR",tmp_path)
+    monkeypatch.setattr(novel_routes,"WORKFLOW_WORKSPACES_DIR",tmp_path)
     with TestClient(app) as client:
         payload={"workflow_id":"test","workspace":str(root),"chapter":"0002","action":"write"}
         result=client.post("/api/novel-console/chapters/context",json=payload)

@@ -105,6 +105,19 @@ def resolve_workflow_workspace_path(
             resolved,
         )
         return default_path
+    # R37 B24：相对 override 只允许落在运行数据目录（BASE_DIR/data）之内。
+    # 一切合法相对形态（data/workspaces/...、data/book/...、data/plugins/...）
+    # 都以 data/ 开头；放行其余位置会在仓库根静默创建目录（实测
+    # data/workspaces/../../<name> → 仓库根 <name>），只读端点还会把该位置
+    # 谎报成一本 0% 的书。
+    data_boundary = (config.BASE_DIR / "data").resolve()
+    if not resolved.is_relative_to(data_boundary):
+        logger.warning(
+            "相对路径 override 落在运行数据目录 data/ 之外: %s 解析为 %s，回退到默认路径",
+            override_path,
+            resolved,
+        )
+        return default_path
     return _ensure_resolvable_root(resolved, config.BASE_DIR.resolve())
 
 
