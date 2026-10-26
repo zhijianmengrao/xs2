@@ -77,3 +77,7 @@ tmp*/
 # Tauri updater 签名密钥（R22 完结后生成；私钥绝不入库，公钥如需替换 tauri.conf.json 时从本地取）
 /determinflow-updater.key
 /determinflow-updater.key.pub
+
+# 本地服务运行日志（历轮重启服务的重定向输出，勿入库）
+/xs2_r*_service.log
+/xs2_r*_service_err.log
