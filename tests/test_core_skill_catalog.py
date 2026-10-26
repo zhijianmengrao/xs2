@@ -75,19 +75,28 @@ def test_fresh_runtime_provision_loads_exact_core_catalog(tmp_path: Path) -> Non
 
 
 def test_skills_config_matches_versioned_core_catalog() -> None:
+    """core 六技能条目逐字钉死；社区插件安装后由扩展宿主合法追加条目
+    （ExtensionManager 把插件 skills 资源同步进本文件的 skills/skill_configs），
+    因此配置不再钉死为「仅 core」，但追加条目必须是同步器产出的结构。"""
     config = json.loads(
         (REPO_ROOT / "config" / "skills_config.json").read_text(encoding="utf-8")
     )
 
-    assert set(config["skill_configs"]) == CORE_SKILL_IDS
-    assert set(config["skills"]) == CORE_SKILL_IDS
+    assert CORE_SKILL_IDS <= set(config["skill_configs"])
+    assert CORE_SKILL_IDS <= set(config["skills"])
+    for skill_id, entry in config["skill_configs"].items():
+        if skill_id in CORE_SKILL_IDS:
+            assert entry == {
+                "enabled": True,
+                "priority": 50,
+                "auto_inject": True,
+                "scope_override": "all",
+            }
+        else:
+            assert isinstance(entry, dict) and isinstance(entry.get("enabled"), bool), (
+                f"非 core 条目 {skill_id} 不是扩展宿主同步产出的结构: {entry!r}"
+            )
     for skill_id in CORE_SKILL_IDS:
-        assert config["skill_configs"][skill_id] == {
-            "enabled": True,
-            "priority": 50,
-            "auto_inject": True,
-            "scope_override": "all",
-        }
         assert config["skills"][skill_id] == {
             "group_ids": ["default"],
         }
