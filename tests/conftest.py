@@ -13,15 +13,50 @@ os.environ.setdefault("DETERMINFLOW_WORKFLOW_EXECUTOR_COUNT", "1")
 
 import pathlib
 import re
+import stat
 import sys
 import tempfile
 
 import pytest
 
 
+def _probe_dir_root() -> pathlib.Path:
+    """测试探针目录的固定落点（data/system 下，R37 治理）。
+
+    ``tempfile.mkdtemp()`` 不带 ``dir=`` 时按 ``TEMP → TMP → CWD`` 回落；本机
+    %TEMP% 受 ACL 限制时落点即进程工作目录（PROJECT_INFO 注意事项 8），仓库根
+    曾积累 41 个 ``git-transport-probe-*`` 残留。显式 ``dir=`` 钉住位置，与
+    executor-runtimes（R21）同款治理。
+    """
+    root = pathlib.Path(__file__).resolve().parents[1] / "data" / "system" / "test-probes"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _rmtree_force(path: pathlib.Path) -> None:
+    """删除探针目录；git clone 产物的 pack 文件是只读的，必须先解只读。
+
+    此前 ``rmtree(ignore_errors=True)`` 遇只读文件静默跳过，正是 41 个探针
+    目录残留的直接原因。兼容 3.11（onerror）与 3.12+（onexc）。
+    """
+    import shutil
+
+    def _chmod_and_retry(func, target, _exc):
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except OSError:
+            pass
+
+    try:
+        shutil.rmtree(path, onexc=_chmod_and_retry)
+    except TypeError:  # Python 3.11 无 onexc
+        shutil.rmtree(path, onerror=_chmod_and_retry)
+
+
 def _can_create_symlink() -> bool:
     """Probe the actual OS capability without changing production behavior."""
-    root = pathlib.Path(tempfile.mkdtemp(prefix="symlink-probe-"))
+    root = pathlib.Path(tempfile.mkdtemp(prefix="symlink-probe-", dir=_probe_dir_root()))
     link = root / "link"
     target = root / "target"
     target.mkdir()
@@ -84,7 +119,7 @@ def _git_transport_blocked_probe() -> bool:
     import shutil
     import subprocess
 
-    workdir = pathlib.Path(tempfile.mkdtemp(prefix="git-transport-probe-"))
+    workdir = pathlib.Path(tempfile.mkdtemp(prefix="git-transport-probe-", dir=_probe_dir_root()))
     blocked = False
     try:
         def run(*args: str) -> "subprocess.CompletedProcess[str]":
@@ -109,7 +144,7 @@ def _git_transport_blocked_probe() -> bool:
     except OSError:
         blocked = False
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        _rmtree_force(workdir)
     _git_transport_blocked = blocked
     return blocked
 
