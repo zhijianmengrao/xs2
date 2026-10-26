@@ -139,6 +139,21 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   版本线说明：1.0.0 低于上游 1.1.1 属 fork 自有起点，上游客户端需全新
   安装；大陆直连下载慢（33MB 实测 ~30KB/s），痛点成真时按 R28 §6 选项 B
   迁移。详见 docs/HANDOVER_ROUND31.md。
+- **R36 收编轮（2026-10-26）**：R34/R35 两轮未提交工作全部落地并补齐文档（此前
+  无交接文档）——①**B20**（R34）：清单损坏不再静默重置整书（损坏判定 + `_corrupt`
+  标记 + 保存前隔离备份 + 38 条 round34 回归，`553c249`）；②**B21**（R35）：未知
+  参数键由谎报 404 改 422 结构化拒因（`aa0e7ec`）；③**B23**（本轮）：钉值测试
+  `test_skills_config_matches_versioned_core_catalog` 与产品行为矛盾——社区插件
+  安装后扩展宿主合法写入 skills_config.json（extensions.json 启用的 5 个社区插件
+  共 24 条目），改为 core 逐字钉死 + 非 core 校验结构（`f59fe30`），基线归零；
+  ④**B22 运行时部署缺口闭合**（本轮发现）：R35 的插件修复从未进入
+  runtime-resources，且服务进程 Low-IL 令牌下插件 update 端点必崩 msys——处置：
+  插件 bump 0.1.15（`6804876`）+ High-IL 进程外 `PluginStore.update` + 重启，
+  修复实测落位；⑤R35 观察项「纯 API 跑完进度显 0%」收口：refs 归属语义不变
+  （test_c16 有意钉死），展示层加诚实提示，r33-flow 现已 refs=9/100%（`6395e43`）。
+  基线：Low-IL **1783/96/0**、High-IL **1868/11/0（权威）**、插件 94/0、前端
+  447/0；活体 e2e 17 passed、B21 活体 422 探针 ✓、审计 [clean]。详见
+  docs/HANDOVER_ROUND36.md（§2 记录 High-IL 插件资源刷新方法）。
 - **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
   评分/检查历史持久化（`web/src/lib/humanwareHistory.ts`，localStorage 按
   工作区隔离/20 条/受限降级 + 两组件接线 + 8 测试，活体验证含跨刷新）；
