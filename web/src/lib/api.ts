@@ -734,6 +734,13 @@ export async function getNovelProgress(workflowId: string, workspace: string) {
   return request<NovelProgress>(`/novel-console/progress?${query}`);
 }
 
+export async function syncNovelProgressHistory(workflowId: string, workspace: string) {
+  return request<{ synced: Array<{ stage: string; workflow_id: string; task_id: string }>; revision: number }>(
+    "/novel-console/progress/sync-history",
+    { method: "POST", body: JSON.stringify({ workflow_id: workflowId, workspace }) }
+  );
+}
+
 export async function stopTask(workflowId: string, taskId: string) {
   return request<{ success: boolean; message: string; task_id?: string }>(
     `/workflows/${workflowId}/tasks/${taskId}/stop`,

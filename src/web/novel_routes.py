@@ -30,7 +30,7 @@ from .path_guard import unsafe_windows_component, unsafe_windows_path, unsafe_wi
 from .novel_library import adopted_writing, enrich_candidates, fingerprint, profile_from_workspace, usage
 from .novel_mechanism_recommender import generate_recommendations_file
 from .novel_reference_choices import with_reference_choices
-from .novel_progress import progress
+from .novel_progress import STAGES, progress
 from .novel_repair import repair_context, prepare_repair, ensure_idle, preserve_legacy_report
 from .novel_chapters import chapter_context, chapter_removal_preview, remove_chapter
 from .novel_story_support import story_support
@@ -438,6 +438,92 @@ async def get_novel_progress(request: Request, workflow_id: str, workspace: str)
     root = manager._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
     state, _ = read_manifest(root / _manifest)
     return progress(root, state, DATA_DIR / "workflows")
+
+
+_CHAPTER_SCOPED_STAGES = {"mvp", "polish", "reader-sim", "post-hoc"}
+
+
+def _task_covers_workspace(task_workspace: object, root: Path) -> bool:
+    # 任务文件里的 workspace_override 有两种历史形态：绝对路径与相对仓库根
+    # （如 "data/workspaces/books/<id>"），统一解析后比较。
+    if not isinstance(task_workspace, str) or not task_workspace.strip():
+        return False
+    candidate = Path(task_workspace)
+    if not candidate.is_absolute():
+        candidate = DATA_DIR.parent / candidate
+    try:
+        return candidate.resolve() == root
+    except OSError:
+        return False
+
+
+def _latest_completed_ref(workflows_dir: Path, stage: str, root: Path, chapter: str | None) -> dict | None:
+    task_dir = workflows_dir / f"xs2-novel-flywheel-{stage}" / "tasks"
+    if not task_dir.is_dir():
+        return None
+    best = None
+    best_at = ""
+    for path in task_dir.glob("*.json"):
+        task = read_json_file(path, {})
+        if not isinstance(task, dict) or task.get("status") != "completed":
+            continue
+        if not _task_covers_workspace(task.get("workspace_override"), root):
+            continue
+        if chapter is not None:
+            task_chapter = (task.get("parameter_values") or {}).get("chapter_number")
+            if task_chapter is None or str(task_chapter).zfill(4) != chapter:
+                continue
+        completed_at = str(task.get("completed_at") or "")
+        if completed_at >= best_at:
+            best_at = completed_at
+            best = {"workflow_id": f"xs2-novel-flywheel-{stage}", "task_id": path.stem}
+    return best
+
+
+class ProgressSync(BaseModel):
+    workflow_id: str
+    workspace: str
+
+
+@router.post("/progress/sync-history")
+async def sync_progress_history(payload: ProgressSync, request: Request):
+    """把工作区里已完成的历史任务显式登记进本作流程（refs）。
+
+    进度只统计 manifest refs 指向的任务（novel_progress，test_c16 钉死）；
+    经 API 直接驱动的任务不写 refs，用户此前只能手改 JSON。本端点按
+    workspace_override 反查完成态任务填补空缺 stage：已有 refs 一律不动
+    （幂等），章内阶段只登记与当前章节匹配的任务，运行中/失败任务不登记。
+    """
+    manager = _get_manager(request)
+    root = manager._ws_manager.resolve_workflow_workspace(
+        payload.workflow_id, override=payload.workspace).resolve()
+    workflows_dir = DATA_DIR / "workflows"
+    with _lock:
+        state, corrupt = read_manifest(root / _manifest)
+        if corrupt:
+            raise HTTPException(409, "作品设置文件损坏，请先在作品设置页重新保存完成修复后再登记")
+        if not state:
+            raise HTTPException(404, "作品尚未保存，没有可登记的流程记录")
+        raw_refs = state.get("refs")
+        refs = dict(raw_refs) if isinstance(raw_refs, dict) else {}
+        raw_chapter = str((state.get("values") or {}).get("chapter_number", "1"))
+        chapter = raw_chapter.zfill(4) if raw_chapter.isdigit() and len(raw_chapter) <= 4 else "0001"
+        synced = []
+        for stage, _label in STAGES:
+            if refs.get(stage):
+                continue
+            found = _latest_completed_ref(
+                workflows_dir, stage, root,
+                chapter if stage in _CHAPTER_SCOPED_STAGES else None)
+            if found:
+                refs[stage] = found
+                synced.append({"stage": stage, **found})
+        if not synced:
+            return {"synced": [], "revision": state.get("_revision", 0)}
+        state["refs"] = refs
+        state["_revision"] = int(state.get("_revision", 0) or 0) + 1
+        atomic_json(root / _manifest, state)
+        return {"synced": synced, "revision": state["_revision"]}
 
 
 class UrlInspect(BaseModel):

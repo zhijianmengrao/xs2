@@ -378,3 +378,76 @@ def test_c20_delete_project_refuses_when_running(client, book, flows, tmp_path):
                                      "workspace": str(book)})
     assert response.status_code in (403, 409), response.text
     assert book.exists()
+
+
+# ---------------------------------- R36 显式登记历史任务（/progress/sync-history）
+def _sync(client, book):
+    return client.post("/api/novel-console/progress/sync-history",
+                       json={"workflow_id": "xs2-novel-flywheel-mvp",
+                             "workspace": str(book)})
+
+
+def test_s1_sync_registers_completed_tasks_into_refs_and_progress(client, book, flows):
+    write_body(book, "0001")
+    (book / "meta").mkdir(parents=True, exist_ok=True)
+    (book / "meta/world_foundation.md").write_text("世界观" * 50, encoding="utf-8")
+    task_json(flows, book, "build", "", "build-9")
+    task_json(flows, book, "mvp", "0001", "mvp-9")
+    response = _sync(client, book)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert {item["stage"] for item in data["synced"]} == {"build", "mvp"}
+    assert data["revision"] == 2
+    saved = json.loads((book / ".novel-project.json").read_text(encoding="utf-8"))
+    assert saved["refs"]["build"]["task_id"] == "build-9"
+    # 登记后进度按同一套归属语义真实联动（build 无章产物也完成，mvp 需正文存在）。
+    view = client.get("/api/novel-console/progress",
+                      params={"workflow_id": "xs2-novel-flywheel-mvp",
+                              "workspace": str(book)}).json()
+    stages = {item["id"]: item["completed"] for item in view["stages"]}
+    assert stages["build"] is True and stages["mvp"] is True
+    assert view["percent"] > 0
+
+
+def test_s2_sync_is_idempotent_and_keeps_existing_refs(client, book, flows):
+    save(book / ".novel-project.json",
+         {"values": {"chapter_number": "1"}, "_revision": 3,
+          "refs": {"build": {"workflow_id": "xs2-novel-flywheel-build",
+                             "task_id": "pinned"}}})
+    task_json(flows, book, "build", "", "newer-build")
+    task_json(flows, book, "character", "", "char-9")
+    first = _sync(client, book).json()
+    assert first["synced"][0]["stage"] == "character"
+    saved = json.loads((book / ".novel-project.json").read_text(encoding="utf-8"))
+    assert saved["refs"]["build"]["task_id"] == "pinned", "已有 refs 不得被反查改写"
+    second = _sync(client, book).json()
+    assert second["synced"] == [] and second["revision"] == first["revision"]
+
+
+def test_s3_sync_skips_other_chapter_and_unfinished_tasks(client, book, flows):
+    write_body(book, "0001")
+    task_json(flows, book, "mvp", "0002", "mvp-other-chapter")
+    task_json(flows, book, "polish", "0001", "polish-running", status="running")
+    task_json(flows, book, "polish", "0001", "polish-failed", status="failed")
+    data = _sync(client, book).json()
+    assert data["synced"] == []
+    saved = json.loads((book / ".novel-project.json").read_text(encoding="utf-8"))
+    assert "refs" not in saved and saved["_revision"] == 1
+
+
+def test_s4_sync_accepts_relative_workspace_override(client, book, flows):
+    import os
+    write_body(book, "0001")
+    task_json(flows, book, "build", "", "rel-build",
+              workspace_override=os.path.relpath(str(book), str(flows.parent)))
+    data = _sync(client, book).json()
+    assert [item["stage"] for item in data["synced"]] == ["build"]
+
+
+def test_s5_sync_requires_clean_saved_manifest(client, book):
+    _corrupt(book)
+    assert _sync(client, book).status_code == 409
+    (book / ".novel-project.json").unlink()
+    response = _sync(client, book)
+    assert response.status_code == 404
+    assert "尚未保存" in response.json()["detail"]
