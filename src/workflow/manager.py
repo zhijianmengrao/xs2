@@ -554,7 +554,19 @@ class WorkflowManager(
                     workflow_id,
                     unknown_parameter_keys,
                 )
-                return None
+                # 2026-10-26 B21：此处曾 return None，被路由层报成 404
+                # 「工作流不存在」——工作流明明存在，是调用方传了定义里没有的
+                # 参数键（常见误用：传变量的显示名而非 key）。改为结构化错误，
+                # 让 HTTP 层回 422 并列出未知键。
+                known_hint = ", ".join(sorted(known_parameter_keys))
+                return {
+                    "success": False,
+                    "error": "unknown_parameters",
+                    "message": (
+                        "任务参数包含工作流未定义的变量: "
+                        f"{', '.join(unknown_parameter_keys)}。可用变量: {known_hint}"
+                    ),
+                }
             task_parameter_values.update(parameter_values)
 
         try:

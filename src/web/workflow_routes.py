@@ -150,6 +150,17 @@ def _raise_task_freeze_error(result: dict) -> None:
     )
 
 
+def _raise_unknown_parameter_error(result: dict) -> None:
+    # 2026-10-26 B21：parameter_values 用错键（传变量显示名而非 key）时，
+    # manager 曾返回 None → 被报成 404「工作流不存在」。改为 422 并列出未知键。
+    if result.get("error") != "unknown_parameters":
+        return
+    raise HTTPException(
+        status_code=422,
+        detail={"code": "unknown_parameters", "message": result.get("message")},
+    )
+
+
 def _load_session_file(session_id: str) -> dict | None:
     """从持久化文件读取 session，避免跨进程时只能看到当前内存态。"""
     if not session_id:
@@ -367,6 +378,7 @@ async def create_task(workflow_id: str, request: Request,
     _raise_runtime_draining(result)
     _raise_task_override_error(result)
     _raise_task_freeze_error(result)
+    _raise_unknown_parameter_error(result)
     return result
 
 
