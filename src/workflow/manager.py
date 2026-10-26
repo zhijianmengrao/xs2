@@ -578,12 +578,19 @@ class WorkflowManager(
                 exc.code,
             )
             return exc.to_result()
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "冻结 Workflow Task 运行身份失败: workflow=%s",
                 workflow_id,
             )
-            return None
+            # 2026-10-26 B19：此前吞掉诊断信息返回 None，被路由层误报为
+            # 404「工作流不存在」（典型场景：定义引用了不存在的 Script Library
+            # 脚本）。返回结构化错误让 HTTP 层透出真实原因。
+            return {
+                "success": False,
+                "error": "task_freeze_failed",
+                "message": f"冻结任务运行身份失败: {exc}",
+            }
 
         # 解析 disabled_node_ids：scheme_id / selected_node_ids / disabled_node_ids 三选一
         final_disabled: list[str] = []

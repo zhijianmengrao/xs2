@@ -139,6 +139,17 @@ def _raise_task_override_error(result: dict) -> None:
     )
 
 
+def _raise_task_freeze_error(result: dict) -> None:
+    # 2026-10-26 B19：任务冻结失败（如定义引用不存在的 Script Library 脚本）
+    # 此前被误报为 404「工作流不存在」；改为 409 透出真实原因。
+    if result.get("error") != "task_freeze_failed":
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={"code": "task_freeze_failed", "message": result.get("message")},
+    )
+
+
 def _load_session_file(session_id: str) -> dict | None:
     """从持久化文件读取 session，避免跨进程时只能看到当前内存态。"""
     if not session_id:
@@ -355,6 +366,7 @@ async def create_task(workflow_id: str, request: Request,
         raise HTTPException(status_code=404, detail="工作流不存在")
     _raise_runtime_draining(result)
     _raise_task_override_error(result)
+    _raise_task_freeze_error(result)
     return result
 
 

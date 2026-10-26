@@ -841,3 +841,38 @@ def test_attached_task_guard_failure_persists_no_task_or_workspace(
     tasks_dir = workflows_dir / workflow_id / "tasks"
     assert not tasks_dir.exists()
     assert not (workspace_root / workflow_id).exists()
+
+
+def test_create_task_reports_missing_library_script_as_freeze_failure(
+    tmp_path,
+    monkeypatch,
+):
+    """B19 回归：library 引用悬空时 create_task 必须返回结构化 freeze 错误。
+
+    此前 freeze 异常被吞成 None，HTTP 层把 None 误报成 404「工作流不存在」，
+    完全掩盖真实原因（Script Library 脚本不存在）。
+    """
+    workflows_dir = tmp_path / "workflows"
+    workflow_id = "wf-dangling-library-ref"
+    node = WorkflowNode(
+        id="missing_ref",
+        node_type="script",
+        node_params={
+            "script_source": "library",
+            "script_type": "python",
+            "script_group": "group-does-not-exist",
+            "script_name": "script-does-not-exist",
+        },
+    )
+    definition = WorkflowDef(workflow_id=workflow_id, nodes=[node])
+    _write_workflow(workflows_dir, definition)
+    monkeypatch.setattr(workflow_manager_module, "WORKFLOWS_DIR", workflows_dir)
+    monkeypatch.setattr(config, "WORKFLOWS_DIR", workflows_dir)
+
+    manager = WorkflowManager(_ScriptOnlySessionManager())
+    result = manager.create_task(workflow_id)
+
+    assert result is not None, "悬空 library 引用必须返回结构化错误而非 None"
+    assert result["success"] is False
+    assert result["error"] == "task_freeze_failed"
+    assert "script-does-not-exist" in result["message"]
