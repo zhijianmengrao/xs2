@@ -100,6 +100,9 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     book.mkdir(parents=True)
     monkeypatch.setattr(novel_routes, "DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path / "workspaces")
+    # B27：PUT /projects 会把工作区写进 _index（真实 data/novel-console/workspaces.json），
+    # 不 patch 会把 pytest 临时书路径漏进运行数据索引。
+    monkeypatch.setattr(novel_routes, "_index", tmp_path / "data" / "novel-console" / "workspaces.json")
     app = FastAPI()
     app.include_router(novel_routes.router)
     app.state.workflow_manager = SimpleNamespace(

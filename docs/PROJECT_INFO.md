@@ -176,6 +176,27 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   **1882/11/0（权威）**、插件 98/0、前端 447/0（零改动）；活体 e2e 17
   passed、B24 三形态 400 探针 ✓、B25 双相探针 ✓、审计 [clean]。详见
   docs/HANDOVER_ROUND37.md。
+- **R38 维护轮（2026-10-27，R37 §8 候选落地）**：①修复 **B26**——console 读端点
+  「查询即建目录 + 谎报 0% 书」（B24 家族残留面）：`resolve_workflow_workspace`
+  新增 `create=True` 可选参数（任务执行/建书面语义零变化），`_console_root` 透传，
+  13 个 GET 读端点 + sync-history + DELETE 翻转为 `create=False`，GET progress 用
+  新增的 `_console_existing_root`（不存在即 **404**）；10 个写端点保持默认。
+  修复前实测 `GET progress` 对不存在的书返回 200 并静默建目录——R37 §8.3 的
+  `nope_missing` 残留即该机制产物（已一并删除）。新增 6 条回归（9→15），
+  7 处测试桩补 `create` 形参。②修复 **B27**（本轮 P0 引入、本轮修）：B26 新用例走
+  `PUT /projects` 成功分支，夹具只 patch `DATA_DIR` 未 patch 模块级常量 `_index`，
+  把 9 条 pytest 临时路径写进真实 `data/novel-console/workspaces.json`；补
+  `_index` patch + 清理污染（教训：写路径用例须审计每个 import 期求值的路径常量）。
+  ③**纯 API 全流程实跑收官**（R36 §6 遗留项 5）：新建 r38-flow 书，9 阶段
+  build→export 全部 completed，任务时间合计 129.9 分钟（build 2 次、character 3 次
+  重试）；终态完整复现 0% 观察项（`percent=0, chapter_count=1, can_download=true`）；
+  **真实浏览器走查**登记按钮：0% 诚实提示逐字吻合 → 点击 →「本篇已导出 ·
+  已完成 9/9」+ 按钮消失，截图存档；活体幂等二次/三次调用均 `synced: []`。
+  ④`stream_chunk_timeout` 实证升级：默认 120s 在 AMD 免费档必然踩雷（build
+  `agent_society` 1400+ chunk 后静默 120s），`.env` 设 600s 后跑通，但 600s 仍被打穿
+  一次（character `agent_deep`）——供应商分钟级流式停摆，属质量面非代码缺陷。
+  ⑤`nope_missing` 残留清理。基线：Low-IL **1803/96/0**、High-IL **1888/11/0（权威）**、
+  插件 98/0、前端 447/0（零改动）、审计 [clean]。详见 docs/HANDOVER_ROUND38.md。
 - **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
   评分/检查历史持久化（`web/src/lib/humanwareHistory.ts`，localStorage 按
   工作区隔离/20 条/受限降级 + 两组件接线 + 8 测试，活体验证含跨刷新）；
@@ -265,6 +286,7 @@ xs2/
 - 2026-10-25 R26 双基线（维护态四轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（104.88s）；High-IL → **1825 passed / 11 skipped / 0 failed**（121.42s，权威）——与 R24/R25 完全一致。前端 `npm test` **8 组 422 条 0 fail**（净增 7：`ChapterHumanwareScore.test.ts`，`test:desktop` 109→116）；lint 0 problems；build ✓ 6.30s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→score-chapter→CLI→聚合评分卡（demo-voice 第 1 章 81/B/2 段对话）+ B17 活体 409 拒因透传（详见 HANDOVER_ROUND26 §4.2）。
 - 2026-10-25 R27 双基线（维护态五轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（105.55s）；High-IL → **1825 passed / 11 skipped / 0 failed**（124.83s，权威）——不变。前端 `npm test` **8 组 434 条 0 fail**（净增 12：`CharacterVoiceEditor.test.ts` +5、`http-client.test.ts` 新文件 5、`roundtableStream.test.ts` +2；`test:desktop` 116→121、`test:conversation` 135→137）；lint 0 problems；build ✓ 6.34s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→check-dialogue→CLI→violations/suggestion（demo-voice 林晚偏离/符合两态）+ 读者评估页 alert 人因化活体验证（详见 HANDOVER_ROUND27 §4.2）。
 - 2026-10-25 R28 双基线（维护者任务执行轮：删除归档 + 首次推送 + CI 核对 + B18）：Low-IL → **1741 passed / 96 skipped / 0 failed**（102.25s）；High-IL → **1826 passed / 11 skipped / 0 failed**（118.84s，权威）。净增 **1** 条（B18 回归锚 `test_script_survives_non_utf8_stdout`）。总用例 1836→**1837**。**推送闭环**：`origin/main..main`=0；CI（`d3d75d5`，run 40149647827）**四 job 全绿**（backend/windows-backend/frontend/container-config，windows-backend 测试本体 1808 passed / 28 skipped 含 e2e 诚实 skip）；Desktop Windows NSIS（`a249e17`，run 40148872233）success。B18 细节与 CI 首败取证见 HANDOVER_ROUND28 §3。
+- 2026-10-27 R38 双基线（维护轮：B26 console 读端点建目录/404 化 + B27 测试索引污染 + 纯 API 全流程实跑 + sync-history UI 走查）：Low-IL → **1803 passed / 96 skipped / 0 failed**（98.64s）；High-IL → **1888 passed / 11 skipped / 0 failed**（118.04s，权威）。净增 **6** 条（`test_workspace_override_whitelist.py` 9→15：create=False 不建目录 1、GET progress 幻影 404 两形态 2、sync-history 幻影 404 1、DELETE 幻影不建目录 1、建书后 progress 仍 200 1）。对账：Low-IL 1797+6=1803；High-IL 1882+6=1888。总用例 R37 口径 1893 → **1899**。前端零改动 `npm test` 8 组 447 条 0 fail、lint 0、build ✓ 5.94s；插件 98/0；审计 [clean]。**全流程实跑**：r38-flow 9/9 阶段 completed（129.9 任务分钟，build 2 次 / character 3 次重试）；终态复现 0% 观察项后经 UI 登记按钮转 100%。详见 HANDOVER_ROUND38.md。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个
