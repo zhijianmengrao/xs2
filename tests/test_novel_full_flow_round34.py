@@ -24,9 +24,10 @@ class FakeWorkspaces:
     def __init__(self, root):
         self.root = root
 
-    def resolve_workflow_workspace(self, workflow_id, override=None):
+    def resolve_workflow_workspace(self, workflow_id, override=None, create=True):
         target = self.root if override else self.root / "default-ws"
-        target.mkdir(parents=True, exist_ok=True)
+        if create:
+            target.mkdir(parents=True, exist_ok=True)
         return target
 
 

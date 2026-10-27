@@ -376,7 +376,8 @@ def atomic_json(target: Path, value: object) -> None:
         Path(name).unlink(missing_ok=True)
 
 
-def _console_root(ws_manager, workflow_id: str, workspace: str | None) -> Path:
+def _console_root(ws_manager, workflow_id: str, workspace: str | None,
+                  create: bool = True) -> Path:
     """解析 console 面的工作区路径；白名单外的 workspace 覆盖一律 400（R37 B24）。
 
     作品与参考任务只会落在 data/workspaces 之下。此前的「BASE_DIR 内任意相对
@@ -384,6 +385,9 @@ def _console_root(ws_manager, workflow_id: str, workspace: str | None) -> Path:
     仓库根 <name>/），只读端点还会把该位置谎报成一本 0% 的书。核心解析器对
     越界值回退默认路径（兼容通用 API 的既有语义），console 面在此之上给出
     明确的 400 拒因，而不是把默认工作区冒充用户请求的位置。
+
+    create（R38 B26）：读端点传 create=False——解析不再创建目录，避免对
+    不存在的书「查询即建目录」；写端点保持默认 True（任务执行/建书面语义）。
     """
     raw = (workspace or "").strip()
     if raw:
@@ -399,7 +403,21 @@ def _console_root(ws_manager, workflow_id: str, workspace: str | None) -> Path:
                 400,
                 f"workspace 必须位于 {WORKFLOW_WORKSPACES_DIR} 之下：{raw}",
             )
-    return ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    return ws_manager.resolve_workflow_workspace(
+        workflow_id, override=workspace, create=create).resolve()
+
+
+def _console_existing_root(ws_manager, workflow_id: str,
+                           workspace: str | None) -> Path:
+    """B26：读端点专用——不创建目录，工作区不存在即 404。
+
+    此前读端点复用任务执行面的「解析即 mkdir」语义：GET progress 对不存在的
+    书会静默创建空目录并谎报 0%（R37 §8.3 的 nope_missing 残留即该机制产物）。
+    """
+    root = _console_root(ws_manager, workflow_id, workspace, create=False)
+    if not root.exists():
+        raise HTTPException(404, f"作品工作区不存在：{workspace or root}")
+    return root
 
 
 def known_workspaces() -> list[Path]:
@@ -461,7 +479,7 @@ async def list_projects():
 @router.get("/progress")
 async def get_novel_progress(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = _console_root(manager._ws_manager, workflow_id, workspace)
+    root = _console_existing_root(manager._ws_manager, workflow_id, workspace)
     state, _ = read_manifest(root / _manifest)
     return progress(root, state, DATA_DIR / "workflows")
 
@@ -521,7 +539,8 @@ async def sync_progress_history(payload: ProgressSync, request: Request):
     （幂等），章内阶段只登记与当前章节匹配的任务，运行中/失败任务不登记。
     """
     manager = _get_manager(request)
-    root = _console_root(manager._ws_manager, payload.workflow_id, payload.workspace)
+    root = _console_root(manager._ws_manager, payload.workflow_id, payload.workspace,
+                         create=False)
     workflows_dir = DATA_DIR / "workflows"
     with _lock:
         state, corrupt = read_manifest(root / _manifest)
@@ -652,7 +671,7 @@ async def get_mechanism_recommendations(request: Request, workspace: str = "", a
     if workspace:
         try:
             manager = _get_manager(request)
-            root = _console_root(manager._ws_manager, "xs2-novel-flywheel", workspace)
+            root = _console_root(manager._ws_manager, "xs2-novel-flywheel", workspace, create=False)
             active_context = root / "learning/active_context.md"
             if active_context.is_file():
                 content = active_context.read_text(encoding="utf-8")
@@ -696,7 +715,7 @@ async def get_writing_library_item(library_id: str, request: Request, workspace:
     if workspace:
         try:
             manager = _get_manager(request)
-            root = _console_root(manager._ws_manager, "xs2-novel-flywheel", workspace)
+            root = _console_root(manager._ws_manager, "xs2-novel-flywheel", workspace, create=False)
 
             # 读取本书的 active_context.md
             active_context_path = root / "learning/active_context.md"
@@ -734,7 +753,7 @@ async def get_writing_library_item(library_id: str, request: Request, workspace:
 @router.get("/library-usage")
 async def get_library_usage(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = _console_root(manager._ws_manager, workflow_id, workspace)
+    root = _console_root(manager._ws_manager, workflow_id, workspace, create=False)
     return {"items": {folder.name: usage(root, folder) for folder in _library_root.iterdir()
                       if folder.is_dir() and (folder / "manifest.json").is_file()} if _library_root.exists() else {}}
 
@@ -742,7 +761,7 @@ async def get_library_usage(request: Request, workflow_id: str, workspace: str):
 @router.get("/adopted-writing")
 async def get_adopted_writing(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = _console_root(manager._ws_manager, workflow_id, workspace)
+    root = _console_root(manager._ws_manager, workflow_id, workspace, create=False)
     try:
         return adopted_writing(root)
     except ValueError as error:
@@ -752,7 +771,7 @@ async def get_adopted_writing(request: Request, workflow_id: str, workspace: str
 @router.get("/reference-candidates")
 async def get_reference_candidates(request: Request, workflow_id: str, workspace: str):
     manager = _get_manager(request)
-    root = _console_root(manager._ws_manager, workflow_id, workspace)
+    root = _console_root(manager._ws_manager, workflow_id, workspace, create=False)
     data = read_json_file(root / "learning/candidates.json", None)
     if not isinstance(data, dict):
         return {"candidates": [], "style_observations": [], "conflict_patterns": [], **with_reference_choices({})}
@@ -768,7 +787,7 @@ def _manuscript_response(target: Path, filename: str) -> FileResponse:
 
 
 def _manuscript_target(manager, workflow_id: str, workspace: str) -> Path:
-    root = _console_root(manager._ws_manager, workflow_id, workspace)
+    root = _console_root(manager._ws_manager, workflow_id, workspace, create=False)
     target = safe_target(root, "export/manuscript.md")
     if not target.is_file():
         raise HTTPException(404, "本书尚未生成成品，请先完成导出步骤")
@@ -1080,7 +1099,7 @@ def _assistant_jobs(request: Request) -> NovelAssistantJobs:
 @router.get("/assistant/history")
 async def novel_assistant_history(workflow_id: str, workspace: str, request: Request):
     mgr = request.app.state.workflow_manager
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     return {"entries": _assistant_jobs(request).history(root)}
 
 
@@ -1138,7 +1157,7 @@ async def apply_plot_proposal(payload: PlotApply, request: Request):
 @router.get('/continuation')
 async def continuation_check(request: Request, workflow_id: str, workspace: str, chapter: str):
     mgr = _get_manager(request)
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     try:
         return story_support(required=True).preflight(root, chapter)
     except ValueError as error:
@@ -1149,7 +1168,7 @@ async def continuation_check(request: Request, workflow_id: str, workspace: str,
 async def novel_chapter_context(request: Request, workflow_id: str, workspace: str,
                                 chapter: str, action: Literal['write', 'repair', 'assess', 'audit'] = 'write'):
     mgr = _get_manager(request)
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     try:
         return chapter_context(root, DATA_DIR / 'workflows', chapter, action)
     except ValueError as error:
@@ -1180,7 +1199,7 @@ async def open_novel_chapter(payload: ChapterOpen, request: Request):
 @router.get('/archive-state')
 async def novel_archive_state(request: Request, workflow_id: str, workspace: str):
     mgr = _get_manager(request)
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     support = story_support()
     if not support:
         return {'message': '动态档案模块尚未加载', 'updated_chapter': '', 'items': []}
@@ -1203,7 +1222,7 @@ async def novel_archive_state(request: Request, workflow_id: str, workspace: str
 @router.get('/chapters/removal-preview')
 async def preview_chapter_removal(request: Request, workflow_id: str, workspace: str, chapter: str):
     mgr = _get_manager(request)
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     try:
         return chapter_removal_preview(root, DATA_DIR / 'workflows', chapter)
     except (ValueError, OSError) as error:
@@ -1243,7 +1262,7 @@ class RepairApply(BaseModel):
 @router.get('/reader-report')
 async def chapter_reader_report(request: Request, workflow_id: str, workspace: str, chapter: str):
     mgr = _get_manager(request)
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     try:
         context = repair_context(root, chapter, DATA_DIR / 'workflows', require_idle=False)
     except (ValueError, json.JSONDecodeError) as error:
@@ -1310,7 +1329,7 @@ async def delete_project(workflow_id: str, workspace: str, request: Request):
     """删除作品登记并物理移除对应的独立作品工作区。"""
     _ensure_http_mutation_allowed(request, workflow_id)
     mgr = _ensure_workflow_writable(request, workflow_id)
-    root = _console_root(mgr._ws_manager, workflow_id, workspace)
+    root = _console_root(mgr._ws_manager, workflow_id, workspace, create=False)
     books_root = (WORKFLOW_WORKSPACES_DIR / "books").resolve()
     workflow_root = WORKFLOW_WORKSPACES_DIR.resolve()
     if not root.is_relative_to(workflow_root) or root == workflow_root or root == books_root:

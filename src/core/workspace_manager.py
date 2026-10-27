@@ -340,14 +340,16 @@ class WorkspaceManager:
         return self.base_dir / workflow_id
 
     def resolve_workflow_workspace(self, workflow_id: str,
-                                   override: str | None = None) -> Path:
+                                   override: str | None = None,
+                                   create: bool = True) -> Path:
         """解析工作流 workspace 路径，支持覆盖。
 
         规则：
         - 若提供 override 绝对路径 → 仅允许项目根目录或运行数据目录内
         - 若提供 override 相对路径 → 相对于项目根目录（config.BASE_DIR）解析
         - 未提供 override → 使用默认路径 base_dir/{workflow_id}/
-        - 自动创建目录（exist_ok=True）
+        - create=True（默认，任务执行/建书面语义）时自动创建目录（exist_ok=True）；
+          读端点传 create=False，避免对不存在的工作区「查询即建目录」（R38 B26）
 
         Returns:
             解析后的 workspace 绝对路径
@@ -357,7 +359,8 @@ class WorkspaceManager:
             override=override,
             base_dir=self.base_dir,
         )
-        ws_path.mkdir(parents=True, exist_ok=True)
+        if create:
+            ws_path.mkdir(parents=True, exist_ok=True)
         if override and override.strip():
             logger.info("Workflow workspace (override): %s", ws_path)
         return ws_path

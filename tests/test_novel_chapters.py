@@ -100,7 +100,7 @@ def test_active_chapter_work_blocks_production_switch(tmp_path):
 
 def test_chapter_open_route_validates_and_does_not_create_or_overwrite_prose(tmp_path, monkeypatch):
     root=tmp_path/"book";root.mkdir()
-    manager=SimpleNamespace(_ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow,override=None:Path(override)),
+    manager=SimpleNamespace(_ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow,override=None,create=True:Path(override)),
         get_workflow_execution_policy=lambda _workflow:"public",is_workflow_owner_enabled=lambda _workflow:True)
     app=FastAPI();app.include_router(novel_routes.router);app.state.workflow_manager=manager
     monkeypatch.setattr(novel_routes,"DATA_DIR",tmp_path)

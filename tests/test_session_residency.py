@@ -847,7 +847,7 @@ def test_run_artifact_save_failures_do_not_relabel_successful_task(
             (),
             {
                 "resolve_workflow_workspace": staticmethod(
-                    lambda _workflow_id, override=None: tmp_path
+                    lambda _workflow_id, override=None, create=True: tmp_path
                 )
             },
         )()

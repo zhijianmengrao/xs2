@@ -112,7 +112,7 @@ def novel_client(tmp_path, monkeypatch):
         # 与 test_novel_library_deletion 一致：override 非空时按 override 解析，
         # 这样测试才能把「幻影目录」作为工作区根传入。
         _ws_manager=SimpleNamespace(
-            resolve_workflow_workspace=lambda _workflow, override=None:
+            resolve_workflow_workspace=lambda _workflow, override=None, create=True:
             Path(override) if override else book),
         get_workflow_execution_policy=lambda _workflow: "public",
         is_workflow_owner_enabled=lambda _workflow: True,

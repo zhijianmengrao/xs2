@@ -154,7 +154,7 @@ def test_route_exposes_preview_and_requires_matching_confirmation(book, support,
     app = FastAPI()
     app.include_router(novel_routes.router)
     app.state.workflow_manager = SimpleNamespace(
-        _ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow, override=None: Path(override)),
+        _ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow, override=None, create=True: Path(override)),
         get_workflow_execution_policy=lambda _workflow: "public", is_workflow_owner_enabled=lambda _workflow: True)
     monkeypatch.setattr(novel_routes, "DATA_DIR", tmp_path)
     monkeypatch.setattr(novel_routes, "WORKFLOW_WORKSPACES_DIR", tmp_path)

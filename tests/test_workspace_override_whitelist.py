@@ -88,9 +88,10 @@ class _FakeWorkspaces:
     def __init__(self, root: Path):
         self.root = root
 
-    def resolve_workflow_workspace(self, workflow_id, override=None):
+    def resolve_workflow_workspace(self, workflow_id, override=None, create=True):
         target = Path(override) if override else self.root / "default-ws"
-        target.mkdir(parents=True, exist_ok=True)
+        if create:
+            target.mkdir(parents=True, exist_ok=True)
         return target
 
 
@@ -144,3 +145,74 @@ def test_console_save_project_rejects_escaping_override(tmp_path, monkeypatch):
         "state": {"title": "x", "mode": "serial", "_revision": 0}})
     assert response.status_code == 400, response.text
     assert not (tmp_path / "sneaky").exists()
+
+
+# ------------------------------------------------- R38 B26：读端点不再创建目录
+
+def test_resolve_workflow_workspace_create_false_does_not_mkdir(roots):
+    """核心层：create=False 只解析不创建，供读端点使用。"""
+    project_root, workspaces, manager = roots
+    resolved = manager.resolve_workflow_workspace(
+        "wf-read", override="data/workspaces/books/phantom", create=False)
+    assert resolved == (project_root / "data/workspaces/books/phantom").resolve()
+    assert not resolved.exists()
+    # 默认语义（任务执行/建书面）仍然创建
+    assert manager.resolve_workflow_workspace("wf-task", override=str(
+        project_root / "data/workspaces/books/real")).is_dir()
+
+
+def test_console_get_progress_phantom_workspace_404_without_mkdir(tmp_path, monkeypatch):
+    """修复前实测：GET progress 对不存在的书返回 0% 且创建空目录（nope_missing
+    残留的根因）；修复后诚实 404，零目录副作用。"""
+    client = _client(tmp_path, monkeypatch)
+    phantom = tmp_path / "workspaces" / "books" / "phantom-b26"
+    response = client.get("/api/novel-console/progress", params={
+        "workflow_id": "xs2-novel-flywheel", "workspace": str(phantom)})
+    assert response.status_code == 404, response.text
+    assert "不存在" in response.json()["detail"]
+    assert not phantom.exists()
+
+
+def test_console_get_progress_missing_book_relative_form_404_without_mkdir(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    phantom = str(tmp_path / "workspaces" / "books" / "phantom-rel")
+    response = client.get("/api/novel-console/progress", params={
+        "workflow_id": "xs2-novel-flywheel", "workspace": phantom})
+    assert response.status_code == 404, response.text
+    assert not (tmp_path / "workspaces" / "books" / "phantom-rel").exists()
+
+
+def test_console_sync_history_phantom_workspace_404_without_mkdir(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    phantom = tmp_path / "workspaces" / "books" / "phantom-sync"
+    response = client.post("/api/novel-console/progress/sync-history", json={
+        "workflow_id": "xs2-novel-flywheel", "workspace": str(phantom)})
+    assert response.status_code == 404, response.text
+    assert "作品尚未保存" in response.json()["detail"]
+    assert not phantom.exists()
+
+
+def test_console_delete_project_phantom_workspace_no_mkdir(tmp_path, monkeypatch):
+    """DELETE 对不存在的书保持既有 200 成功契约，但不再先建后删。"""
+    client = _client(tmp_path, monkeypatch)
+    phantom = tmp_path / "workspaces" / "books" / "phantom-del"
+    response = client.delete("/api/novel-console/projects", params={
+        "workflow_id": "xs2-novel-flywheel", "workspace": str(phantom)})
+    assert response.status_code == 200, response.text
+    assert not phantom.exists()
+
+
+def test_console_created_book_progress_still_200(tmp_path, monkeypatch):
+    """写路径语义不变：PUT 建书后 GET progress 正常返回（不因 404 化而破坏）。"""
+    client = _client(tmp_path, monkeypatch)
+    book = str(tmp_path / "workspaces" / "books" / "b2")
+    saved = client.put("/api/novel-console/projects", json={
+        "workflow_id": "xs2-novel-flywheel", "workspace": book,
+        "state": {"title": "x", "mode": "short",
+                  "values": {"chapter_number": "1"}, "_revision": 0}})
+    assert saved.status_code == 200, saved.text
+    assert (tmp_path / "workspaces" / "books" / "b2").is_dir()
+    progress = client.get("/api/novel-console/progress", params={
+        "workflow_id": "xs2-novel-flywheel", "workspace": book})
+    assert progress.status_code == 200, progress.text
+    assert progress.json()["percent"] == 0

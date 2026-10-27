@@ -35,7 +35,7 @@ def library_client(tmp_path, monkeypatch):
     library.mkdir(); book.mkdir()
     tasks = {}
     manager = SimpleNamespace(
-        _ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow, override=None: Path(override) if override else book),
+        _ws_manager=SimpleNamespace(resolve_workflow_workspace=lambda _workflow, override=None, create=True: Path(override) if override else book),
         get_workflow_execution_policy=lambda _workflow: "public",
         is_workflow_owner_enabled=lambda _workflow: True,
         get_task=lambda _workflow, task_id: tasks.get(task_id),
