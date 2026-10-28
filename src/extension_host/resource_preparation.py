@@ -486,7 +486,7 @@ def _copy_bundle_root(
         target_dir = target_root / effective_id
         shutil.copytree(
             source_dir,
-            target_dir,
+            extended_path(target_dir),
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
         )
         if filename == "SKILL.md":
@@ -599,7 +599,7 @@ def prepare_plugin_resources(
                         target_dir = target / effective_id
                         shutil.copytree(
                             source_dir,
-                            target_dir,
+                            extended_path(target_dir),
                             ignore=shutil.ignore_patterns(
                                 "__pycache__",
                                 "*.pyc",
@@ -635,7 +635,7 @@ def prepare_plugin_resources(
                         )
                         shutil.copytree(
                             source_group,
-                            target / effective_group,
+                            extended_path(target / effective_group),
                             ignore=shutil.ignore_patterns(
                                 "__pycache__",
                                 "*.pyc",
@@ -664,10 +664,10 @@ def prepare_plugin_resources(
                     target = staging / "passthrough" / resource_type / str(index)
                     source_path = extended_path(owned_path.path)
                     if owned_path.path.is_dir():
-                        shutil.copytree(source_path, target)
+                        shutil.copytree(source_path, extended_path(target))
                     else:
                         target.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(source_path, target)
+                        shutil.copy2(source_path, extended_path(target))
                 prepared.setdefault(resource_type, []).append(
                     OwnedPath(manifest.extension_id, target, revision)
                 )

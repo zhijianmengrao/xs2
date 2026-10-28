@@ -496,3 +496,37 @@ def test_preflight_applies_install_prefix_override_before_bundle_validation(
             plugin,
             resource_prefix="installed-prefix",
         )
+
+
+# ------------------------------------------------ R39 B29：preflight 暂存钉位
+
+def test_preflight_scratch_root_is_pinned_under_data_system() -> None:
+    """暂存根钉位 data/system/preflight（与 executor-runtimes/test-probes
+    同款治理）；修复前 TemporaryDirectory 不带 dir=，CWD 回落使深 CWD 下的
+    staging 复制深层 vendor 树跨过 MAX_PATH（WinError 206）。"""
+    from src import config
+    from src.extension_host.plugin_preflight import _preflight_scratch_root
+
+    root = _preflight_scratch_root()
+    assert root == config.BASE_DIR / "data" / "system" / "preflight"
+    assert root.is_dir()
+
+
+def test_preflight_succeeds_from_deep_cwd_without_local_scratch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """深 CWD 下 preflight 照常通过，且不在 CWD 留任何暂存目录。"""
+    plugin = tmp_path / "plugin"
+    _write_manifest(plugin, {"script_libraries": "resources/scripts"})
+    script_dir = plugin / "resources/scripts/tools/validate"
+    script_dir.mkdir(parents=True)
+    (script_dir / "validate.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    deep = tmp_path / "deep" / "nested" / "working-directory"
+    deep.mkdir(parents=True)
+    monkeypatch.chdir(deep)
+
+    validate_plugin_checkout("demo-plugin", plugin)
+
+    assert list(deep.glob("determinflow-plugin-preflight-*")) == []

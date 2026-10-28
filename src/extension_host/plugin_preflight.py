@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from src import config
 from src.extension_api.models import EXTENSION_API_VERSION, ExtensionManifest
 from src.extension_api.registrar import (
     ExtensionContributions,
@@ -410,11 +411,29 @@ def _validate_script_resources(
             )
 
 
+def _preflight_scratch_root() -> Path:
+    """preflight 暂存目录钉位（R39 B29）。
+
+    ``TemporaryDirectory`` 不带 ``dir=`` 时按 TEMP→TMP→CWD 回落（平台注意
+    事项 8：本机 %TEMP% ACL 受限时落点即进程 CWD）；而 ``config.DATA_DIR``
+    可被 ``DETERMINFLOW_DATA_DIR`` 覆盖为相对路径（.env.example 的 ``./data``），
+    相对解析随进程 CWD 漂移——插件套件里暂存树会落进被测插件检出内部而被
+    验证扫描排除。故以 ``BASE_DIR``（无环境覆盖，与代码位置锚定）为根，
+    与 executor-runtimes（R21）、test-probes（R37）同款治理。
+    """
+    root = config.BASE_DIR / "data" / "system" / "preflight"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _validate_declared_resources(
     manifest: ExtensionManifest,
     contributions: ExtensionContributions,
 ) -> None:
-    with tempfile.TemporaryDirectory(prefix="determinflow-plugin-preflight-") as temp:
+    with tempfile.TemporaryDirectory(
+        prefix="determinflow-plugin-preflight-",
+        dir=str(_preflight_scratch_root()),
+    ) as temp:
         scratch_root = Path(temp)
         source_scratch = scratch_root / "source-validation"
         _validate_json_resources(contributions, source_scratch)
