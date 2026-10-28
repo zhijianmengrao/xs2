@@ -197,6 +197,27 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   一次（character `agent_deep`）——供应商分钟级流式停摆，属质量面非代码缺陷。
   ⑤`nope_missing` 残留清理。基线：Low-IL **1803/96/0**、High-IL **1888/11/0（权威）**、
   插件 98/0、前端 447/0（零改动）、审计 [clean]。详见 docs/HANDOVER_ROUND38.md。
+- **R39 维护轮（2026-10-28，R38 §7 候选落地 + B26 家族全面收口）**：①修复
+  **B28**——B26 的 workflow 面残留：`GET workspace-files`、
+  `GET workspace-files/content`、`GET tasks/{id}/workspace-file` 与
+  `get_task_result`/`read_task_artifact`（agent 工具面）共 5 处解析翻转
+  `create=False`，幻影工作区统一 404「作品工作区不存在」；活体根因=资料蒸馏页
+  每次打开以新 `job-<时间戳>` 工作区触发建目录，真实数据残留 4 个
+  `reference-jobs/job-*` 空目录 + 5 条索引死条目（本轮清理，索引 64→59，
+  备份 `data/system/workspaces.json.r39-bak`）。新增 6 条回归（白名单文件
+  15→21）。②修复 **B29**——preflight 暂存目录从 CWD 回落钉位
+  `BASE_DIR/data/system/preflight`（锚 BASE_DIR 而非可被 .env 覆盖为相对
+  路径的 DATA_DIR）+ `resource_preparation` 四处 copytree/copy2 的 dst 补
+  `extended_path`（longpath 教义缺口）；`.env.example` 相对路径覆盖注释化；
+  新增 2 条回归。③**B27 家族机械化**：conftest autouse 守卫逐用例对真实
+  运行索引做 pytest 临时路径集合差比对，污染即归因报错。④修复 **B30**
+  （插件仓 `1504a88`）：资源卫生扫描测试容忍 PermissionError——pytest
+  capture 的 TemporaryFile 在本机 %TEMP% 受限时回落 CWD 与扫描碰撞；插件
+  套件从插件子目录跑恢复 98/0（此前仅仓库根口径能过）。基线：Low-IL
+  **1811/96/0**、High-IL **1896/11/0（权威）**（对账 1803+8、1888+8）、
+  插件 **98/0（双 CWD 口径）**、前端 447/0（零改动）、审计 [clean]、
+  索引零污染；8021 服务重启加载全部 R39 代码，4/4 执行器 ready、活体
+  探针复验通过。详见 docs/HANDOVER_ROUND39.md。
 - **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
   评分/检查历史持久化（`web/src/lib/humanwareHistory.ts`，localStorage 按
   工作区隔离/20 条/受限降级 + 两组件接线 + 8 测试，活体验证含跨刷新）；
