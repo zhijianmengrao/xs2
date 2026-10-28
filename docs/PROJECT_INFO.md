@@ -81,8 +81,9 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   -r requirements.lock` 15.0s（正确忽略 win32-only 的 `colorama`/`pywin32`）、
   `exporting layers` 3.9s；冒烟四断言全过（`ready=4/4 degraded=False`、
   `/assets/index-C5eX4JWL.js`、`HEALTHCHECK=healthy`、entrypoint 裁剪证据、
-  布局契约成立）。注意 GHA 层缓存首跑为空（日志有 `importing cache manifest`
-  但无一层命中），因此「增量 1–3 分钟」需从第二次推送起才成立。
+  布局契约成立）。**二次推送（run 40648992383）实测缓存生效**：18 层全部
+  `CACHED`（含 `npm ci` 与 `pip install`），耗时降到 **56 秒**，冒烟断言不变。
+  因此「增量 1–3 分钟」成立且偏保守；「每推必验」的成本可接受。
   **两条本轮实测出的纪律**：①镜像布局必须在
   启动前对镜像本体探测——`ModelManager` 会在缺失时从模板生成
   `models_config.json`，跑起来之后探测，「不烘焙凭据」这条断言会恒假红；
