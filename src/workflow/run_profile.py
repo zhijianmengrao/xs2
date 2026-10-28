@@ -6,7 +6,8 @@ trigger/status/error/时间戳），但只散落在 run JSON 里——R38 全流
 失败率而非只看总耗时」的聚合收敛为纯函数，供三处消费：
 
 - ``scripts/provider_failure_profile.py``：历史 run 挖矿（离线，只读）
-- ``workflow_routes`` 的任务 run-profile 端点（在线，任务最新一次运行）
+- ``workflow_routes`` 的任务 run-profile 端点（在线，任务最新一次运行，
+  R41 起 ``?run_id=`` 可查任意历史 run）
 - 单测（合成 run 数据，含旧版无 attempt_history 的兼容路径）
 
 错误分类是关键词启发式（timeout / http_5xx / connection / stream_stall /

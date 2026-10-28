@@ -240,12 +240,61 @@ def test_run_profile_endpoint_honest_404s(tmp_path, monkeypatch,
     assert resp.json()["detail"] == detail
 
 
+def test_run_profile_endpoint_explicit_run_id_queries_history(tmp_path, monkeypatch):
+    """R41：?run_id= 查任意历史 run，不再局限于任务 JSON 记录的最新 run。"""
+    _seed_run_tree(tmp_path, task_payload=_TASK, run_body={
+        "run_id": "run-abc", "status": "completed",
+        "node_executions": [_node("build", [_attempt(1, "completed")])],
+    })
+    (tmp_path / "wf-x" / "runs" / "run-old.json").write_text(json.dumps({
+        "run_id": "run-old", "status": "failed",
+        "started_at": "2026-10-27T09:00:00+08:00",
+        "completed_at": "2026-10-27T09:10:00+08:00",
+        "node_executions": [_node("character", [
+            _attempt(1, "failed", error="HTTP 530 from provider",
+                     started="2026-10-27T09:00:00+08:00"),
+            _attempt(2, "completed", trigger="automatic_retry",
+                     started="2026-10-27T09:05:00+08:00"),
+        ])],
+    }, ensure_ascii=False), encoding="utf-8")
+    client = _client(tmp_path, monkeypatch)
+
+    latest = client.get("/api/workflows/wf-x/tasks/task-1/run-profile")
+    assert latest.status_code == 200
+    assert latest.json()["run_id"] == "run-abc"
+
+    historical = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?run_id=run-old")
+    assert historical.status_code == 200
+    body = historical.json()
+    assert body["run_id"] == "run-old"
+    assert body["status"] == "failed"
+    assert body["totals"]["attempts"] == 2
+    assert body["totals"]["error_classes"] == {"http_5xx": 1}
+    assert body["stages"][0]["node_id"] == "character"
+
+
+def test_run_profile_endpoint_run_id_validation(tmp_path, monkeypatch):
+    """非法 run_id 拒 400（单规则 ^[\\w][\\w\\-]*$，穿越无从构造）；
+    缺失 run 拒 404 且语义不变。"""
+    _seed_run_tree(tmp_path, task_payload=_TASK, run_body={"run_id": "run-abc"})
+    client = _client(tmp_path, monkeypatch)
+    for bad in ("..%5C..%5Cevil", "..%2F..%2Fdata", "%2e%2e%2fescape", "a/b"):
+        resp = client.get(f"/api/workflows/wf-x/tasks/task-1/run-profile?run_id={bad}")
+        assert resp.status_code == 400, f"{bad} 应拒 400，实得 {resp.status_code}"
+    missing = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?run_id=run-ghost")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "运行记录不存在"
+
+
 def test_run_profile_endpoint_creates_nothing(tmp_path, monkeypatch):
     """B26/B28 家族纪律：GET 画像端点对幻影任务/幻影 run 不得建目录。"""
     before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
     client = _client(tmp_path, monkeypatch)
     for url in ("/api/workflows/wf-x/tasks/task-1/run-profile",
-                "/api/workflows/phantom-wf/tasks/phantom-task/run-profile"):
+                "/api/workflows/phantom-wf/tasks/phantom-task/run-profile",
+                "/api/workflows/wf-x/tasks/task-1/run-profile?run_id=run-ghost"):
         assert client.get(url).status_code in (404, 500)
     after = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
     assert after == before, "run-profile 端点查询即建目录（B26/B28 同族复发）"

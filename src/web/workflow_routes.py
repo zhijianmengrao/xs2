@@ -660,13 +660,22 @@ async def get_task_token_usage(workflow_id: str, task_id: str, request: Request)
     }
 
 
-@router.get("/{workflow_id}/tasks/{task_id}/run-profile")
-async def get_task_run_profile(workflow_id: str, task_id: str, request: Request):
-    """获取任务最新一次运行的每阶段尝试/失败画像（R38 §7.4 落地，R40）。
+# run_id 是查询串入参（R41 扩展），进路径拼接前须过单规则校验：与
+# _SCRIPT_NAME_RE 同款字符集（无点无斜杠），路径穿越无从构造。
+_RUN_ID_RE = re.compile(r"^[\w][\w\-]*$")
 
-    与 token-usage 同款只读文件模式：任务 JSON 取 run_id → runs/{run_id}.json
-    → run_profile.build_run_profile 纯函数聚合。不建目录、不写状态——本端点
-    是 GET，读端点「查询即建目录」属 B26/B28 同族缺陷（有静态钉测守卫）。
+
+@router.get("/{workflow_id}/tasks/{task_id}/run-profile")
+async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
+                               run_id: str | None = None):
+    """获取任务一次运行的每阶段尝试/失败画像（R38 §7.4 落地，R40）。
+
+    缺省取任务最新一次运行；``?run_id=run-xxx``（R41）查询任意历史 run
+    （前端画像可视化按 run 切换）。与 token-usage 同款只读文件模式：
+    任务 JSON → runs/{run_id}.json → run_profile.build_run_profile 纯函数
+    聚合。不建目录、不写状态——本端点是 GET，读端点「查询即建目录」属
+    B26/B28 同族缺陷（有静态钉测守卫）。非法 run_id 拒 400，run 文件缺失
+    拒 404（任务不存在 / 尚无运行记录语义不变）。
 
     Returns:
         {run_id, workflow_id, status, started_at, completed_at, wall_seconds,
@@ -686,10 +695,15 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request)
     except (json.JSONDecodeError, IOError):
         raise HTTPException(status_code=500, detail="任务文件损坏")
 
-    run_id = task_data.get("run_id")
-    if not run_id:
-        raise HTTPException(status_code=404, detail="任务尚无运行记录")
-    run_file = WORKFLOWS_DIR / workflow_id / "runs" / f"{run_id}.json"
+    if run_id:
+        if not _RUN_ID_RE.match(run_id):
+            raise HTTPException(status_code=400, detail="run_id 包含非法字符")
+        target_run_id = run_id
+    else:
+        target_run_id = task_data.get("run_id")
+        if not target_run_id:
+            raise HTTPException(status_code=404, detail="任务尚无运行记录")
+    run_file = WORKFLOWS_DIR / workflow_id / "runs" / f"{target_run_id}.json"
     if not run_file.is_file():
         raise HTTPException(status_code=404, detail="运行记录不存在")
     try:
@@ -701,7 +715,7 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request)
 
     return build_run_profile(
         run_data.get("node_executions", []),
-        run_id=str(run_id),
+        run_id=str(target_run_id),
         workflow_id=workflow_id,
         status=str(run_data.get("status", "")),
         started_at=run_data.get("started_at"),
