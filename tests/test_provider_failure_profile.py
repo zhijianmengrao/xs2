@@ -136,3 +136,52 @@ def test_collect_is_strictly_read_only(mining, tmp_path):
     after = {str(p.relative_to(tmp_path)): p.stat().st_mtime_ns
              for p in sorted(tmp_path.rglob("*"))}
     assert after == before, "挖矿脚本改动了 run 数据（只读纪律破坏）"
+
+
+# ------------------------------------------------------- R42 失败率闸门
+def _rows(attempts, failed, workflow="wf-a"):
+    return [{"workflow": workflow, "runs": 1, "attempts": attempts,
+             "failed": failed,
+             "failure_rate": round(failed / attempts, 4) if attempts else None,
+             "failing_stages": [], "error_classes": {}}]
+
+
+def test_gate_triggers_only_strictly_above_threshold(mining):
+    """阈值语义必须是「严格大于才失败」，卡在阈值上算通过（否则回落一档就红）。"""
+    assert mining.evaluate_gate(_rows(100, 5), 5.0)["triggered"] is False
+    assert mining.evaluate_gate(_rows(100, 6), 5.0)["triggered"] is True
+    assert mining.evaluate_gate(_rows(100, 0), 0.0)["triggered"] is False
+
+
+def test_gate_compares_unrounded_ratio(mining):
+    """1/3 = 33.333…%，阈值 33.33 必须判超出——先 round(4) 再比会舍成 33.33 判平。"""
+    verdict = mining.evaluate_gate(_rows(3, 1), 33.33)
+    assert verdict["triggered"] is True
+    assert verdict["failure_rate"] == 0.3333, "展示字段仍是 4 位舍入"
+
+
+def test_gate_uses_pooled_rate_not_per_workflow_average(mining):
+    """总口径：40/200 (20%) 与 0/1 混合应为 19.9%，而非各行平均 10%。"""
+    rows = _rows(200, 40, "big") + _rows(1, 0, "tiny")
+    verdict = mining.evaluate_gate(rows, 15.0)
+    assert verdict["attempts"] == 201
+    assert verdict["failed"] == 40
+    assert verdict["failure_rate"] == 0.199
+    assert verdict["triggered"] is True, "19.9% > 15%，逐 workflow 平均会误判通过"
+
+
+def test_gate_honest_on_empty_sample(mining):
+    """无 run 样本时不得把「无数据」当成 0% 或 100%——诚实放行并说明原因。"""
+    verdict = mining.evaluate_gate([], 5.0)
+    assert verdict["failure_rate"] is None
+    assert verdict["triggered"] is False
+    assert "无 run 样本" in verdict["reason"]
+    # 空 workflow 行（有行无尝试）同样放行
+    assert mining.evaluate_gate(_rows(0, 0), 5.0)["triggered"] is False
+
+
+def test_gate_reason_states_both_numbers(mining):
+    """结论文案要同时给出实测值与阈值，否则 CI 红日志里看不出为什么红。"""
+    reason = mining.evaluate_gate(_rows(50, 5), 5.0)["reason"]
+    assert "10.00%" in reason and "5.0%" in reason
+    assert "超出" in reason
