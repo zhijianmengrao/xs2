@@ -331,5 +331,50 @@ fail_once: first=503 second=200 (second has DONE=True)
 - **未重导快照**（两条判据都绿）。
 - **未重启 8021 服务**（改动不涉运行时装配）。
 - **未拿到 macOS `core candidate` 的 success 记录**（被并发策略 cancelled；full 已 success）。
-- **未在推送后核对本轮改动的 CI 结果**：本轮改动提交推送后需看 backend job 的
-  e2e step（现在是 6 个场景）与 frontend job（新增 4 条前端测试）。
+
+（CI 核对已完成，见 §12；推送后首跑两 job 红过，已修并转绿。）
+
+## 12. 推送与 CI 核对（本篇补记，2026-10-29）
+
+`fc1fb10` 推送后 CI run **40729213785** 首跑**两 job 红**：
+`frontend` 的 `npm run build` 与 `container-build`（Docker 内也跑
+`npm run build`）同因失败——
+
+```
+src/components/workflow/RunProfilePanel.test.ts(475,20): error TS2550:
+Property 'at' does not exist on type ...
+```
+
+`calls.at(-1)` 在 web 的 tsconfig（target=ES2020）下不合法。**一个 `.at()` 打掉
+两个 job。** 本地 `tsc --noEmit -p tsconfig.json` **抓不到**：它走的是另一份配置，
+CI 用的是 `tsc -b`（项目引用）。以后前端改动必须以 `npm run build` 为准。
+
+（这条坑 PROJECT_INFO 平台注意事项里早就记过，本轮还是踩了——「知道」不等于
+「验证覆盖到」。）
+
+修复提交 `3cbf2c9`（改用 `calls[calls.length - 1]`，并就地注释说明不能用 `.at`），
+推送后 CI run **40729764428**：
+
+| job | 结论 |
+|---|---|
+| `backend` | **success**（pytest 第 6 步 + e2e 第 9 步） |
+| `windows-backend` | **success** |
+| `frontend` | **success** |
+| `container-build` | **success** |
+| `container-config` | **success** |
+
+**e2e step 在 GHA 上真跑了 6 个场景**，日志与本机逐字一致：
+
+```
+[e2e] PASS happy_path: 4 次模型请求，3 节点 completed，上游产出已传下游
+[e2e] PASS failure_propagates: 任务 failed，broken=failed
+[e2e] PASS turn_terminates: 任务 completed，2 次模型请求
+[e2e] PASS transient_error_is_retried: 任务 completed，3 次请求（含 1 次注入 503），重试救回
+[e2e] PASS permanent_error_is_not_retried: 任务 failed，1 次请求（401 未重试）
+[e2e] PASS stream_stall_fails_fast: 任务 failed，1 次请求（部分流后未重试）
+[e2e] 6/6 场景通过
+```
+
+**故障注入在 Linux runner 上也是真生效的**：`transient_error_is_retried` 的
+「含 1 次注入 503」与 `permanent_error_is_not_retried` 的「1 次请求」都是桩真的
+返回了 503/401 —— 不是本机才有的行为。
