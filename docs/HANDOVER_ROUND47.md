@@ -331,3 +331,32 @@ R43 就在守的纪律（`comparable=False` 不伪装 0%），本轮在分档层
 - **未真正编译 Rust**：见 §5-1。
 - **未重启 8021 服务**：改动面不含后端运行时代码。
 - **未跑 `docker build`**：本机仍无 docker/wsl（R43/R44/R45/R46 复核仍不可用）。
+
+## 10. 推送后 CI 核对（2026-10-28 补记）
+
+提交 `81b3fbf` 推送后，§5-1 与 §9 列的两处「本机无法验证」全部关闭：
+
+| workflow | job | 结论 |
+|---|---|---|
+| CI | backend / windows-backend / frontend / container-config / container-build | **五个全 success** |
+| Desktop Windows | Build core NSIS installer | **success** |
+| Desktop Windows | Build full NSIS installer | **success** |
+| Desktop Windows | build-macos / Publish GitHub Release | skipped（tag-only，预期） |
+
+**两件关键事实**：
+
+1. **`backend.rs` 的端口协议重写在真实 Windows runner 上编译并通过冒烟**
+   （core 与 full 两条 NSIS job 都 success，含 `smoke_installer.ps1`）。
+   §5-1「若新协议有问题，最可能的红点是冒烟脚本读不到 `config/backend-port`」
+   ——该红点未出现，说明 `config/backend-port` 的读写两端在冻结可执行文件里
+   都对上了。本机 `cargo check` 因 `ring` 的 C 编译失败而不可用这件事，
+   从此不再是该改动的未验证项。
+2. **真实快照闸门 step 在 GHA runner 上判出了与本地逐数字相同的结论**：
+   CI 日志原文 `[live-gate] 失败率 3.74% 未超出阈值 13.7%（187 次尝试，余量
+   10.0 个百分点）`。§9 担心的「`${{ github.workspace }}` 展开与 yml 解析
+   未验证」也一并关闭。
+
+仍未验证的只剩：`--port 0` 的 **macOS** 面（`desktop-macos.yml` 是 tag-only，
+本次 push 未触发）；以及本机 docker 相关（`container-build` 在 CI 上跑，本机
+仍无 docker）。
+

@@ -43,6 +43,13 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   （failed 之和 / attempts 之和，不是逐 workflow 平均），结论文案写 stderr
   使 stdout 的表格与 `--json` 保持纯净。R42 基线 **2.9%**（23 runs / 243
   尝试 / 7 失败），建议阈值 5。
+  **R48 起追加快照保鲜**：先重导真实快照
+  （`python scripts/export_run_samples.py --dest tests/fixtures/live_snapshot
+  --limit 2`），再用 `python scripts/check_live_snapshot_gate.py --check-stale`
+  判保鲜（退出码 0 尚新 / 5 过期 / 3 判不到）。**这一步不进 CI**：CI 检出里
+  没有 `data/workflows`，接进去只会永远「判不到」。快照不重导不会报错（旧数据
+  自身自洽），只是闸门判的判据逐渐失真——`--check-stale` 是唯一能让这件事显形
+  的手段。
 - **插件仓推送后必须刷新本仓锁（R42 起）**：凡向 `xs2-plugins` 推送，随后
   在 xs2 跑 `python desktop/scripts/refresh_official_plugin_lock.py` 并提交
   `desktop/official-plugins.lock.json`。该锁决定 Full 版实际捆绑哪个插件

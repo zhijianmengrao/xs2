@@ -14,11 +14,23 @@ R46 的 CI 闸门 step 判的是 ``tests/fixtures/run_samples`` ——**固定**
 3. **退出码沿用闸门语义**：0=通过，1=超阈，3=无样本。与
    ``provider_failure_profile.py`` 同一套，CI 日志里两种失败可分。
 
+R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自动更新，旧数据自身
+仍自洽（元数据与内容一致、失败率没恶化），于是闸门看着在工作，判的却是越来越
+旧的数字。``--check-stale``（R48）补这一半：拿快照的 ``exported_at`` 与真实
+``data/workflows`` 里最新一次 run 的时间比，滞后超过容忍天数即报过期（退出码 5）。
+
+**``--check-stale`` 刻意不接进 CI**：CI 检出里没有 ``data/workflows``，接进去
+只会永远「无法判定」，那是又一个永远绿的防护。它是轮次收官动作，不是 CI 步骤。
+
 用法（仓库根执行）::
 
     python scripts/check_live_snapshot_gate.py
     python scripts/check_live_snapshot_gate.py --margin 5   # 收紧余量
     python scripts/check_live_snapshot_gate.py --data-dir tests/fixtures/live_snapshot
+
+    # 快照保鲜（轮次收官跑；真实数据落后快照超过 7 天即报过期）
+    python scripts/check_live_snapshot_gate.py --check-stale
+    python scripts/check_live_snapshot_gate.py --check-stale --max-lag-days 3
 """
 
 from __future__ import annotations
@@ -52,6 +64,7 @@ EXIT_OK = 0
 EXIT_GATE_TRIGGERED = 1
 EXIT_NO_SAMPLE = 3
 EXIT_META_DRIFT = 4
+EXIT_STALE = 5
 
 
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
@@ -116,6 +129,87 @@ def evaluate(data_dir: Path, margin: float) -> tuple[int, str]:
         f"（{rec_attempts} 次尝试，余量 {margin:.1f} 个百分点）")
 
 
+def _parse_ts(value: object) -> "datetime | None":
+    """解析 ISO 时间串；无时区按 UTC 处理，解析不了给 None（不猜）。"""
+    from datetime import datetime, timezone
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def latest_real_run_time(workflows_dir: Path) -> "datetime | None":
+    """真实 run 记录里最晚的时间戳（started_at 与 completed_at 取最大）。
+
+    两者都要看：只读 ``completed_at`` 会漏掉正在进行中的新 run，而那个 run
+    恰恰是「快照已经没覆盖到」的证据。B31 修复前 ``completed_at`` 恒空，
+    历史数据里大量为 None，只读它等于对旧数据失明。
+    """
+    latest = None
+    if not workflows_dir.is_dir():
+        return None
+    for wf_dir in sorted(workflows_dir.iterdir()):
+        runs_dir = wf_dir / "runs"
+        if not wf_dir.is_dir() or not runs_dir.is_dir():
+            continue
+        for run_file in runs_dir.glob("run-*.json"):
+            try:
+                run = json.loads(run_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for key in ("started_at", "completed_at"):
+                stamp = _parse_ts(run.get(key))
+                if stamp is not None and (latest is None or stamp > latest):
+                    latest = stamp
+    return latest
+
+
+def check_stale(data_dir: Path, source_dir: Path,
+                max_lag_days: float) -> tuple[int, str]:
+    """快照保鲜判定：真实数据比快照新出多少天。返回 (退出码, 说明)。
+
+    三种「判不到」都单列，不挤进通过：元数据缺/坏（3）、真实数据缺（3）、
+    真实数据全无可用时间戳（3）。过期是 5，与超阈（1）分开——「判了且不合格」
+    与「样本过期了」需要不同处置。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判新鲜度：{meta_path}"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+
+    exported = _parse_ts(meta.get("exported_at"))
+    if exported is None:
+        return EXIT_NO_SAMPLE, (
+            f"快照元数据缺 exported_at 或无法解析（{meta.get('exported_at')!r}），"
+            "无法判新鲜度；重导一次即可补上")
+
+    latest = latest_real_run_time(source_dir)
+    if latest is None:
+        return EXIT_NO_SAMPLE, (
+            f"真实数据里没有可用时间戳（{source_dir}），无法判新鲜度。"
+            "本机无 run 记录时这是预期结果，不是故障")
+
+    lag_days = (latest - exported).total_seconds() / 86400.0
+    if lag_days > max_lag_days:
+        return EXIT_STALE, (
+            f"快照已过期：导出时间 {exported.isoformat()}，真实数据最新 "
+            f"{latest.isoformat()}，滞后 {lag_days:.1f} 天 > 容忍 {max_lag_days:.1f}"
+            " 天。重导：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+    return EXIT_OK, (
+        f"快照尚新：导出 {exported.isoformat()}，真实数据最新 {latest.isoformat()}，"
+        f"滞后 {lag_days:.1f} 天 ≤ 容忍 {max_lag_days:.1f} 天")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -123,9 +217,29 @@ def main() -> int:
                              "缺省读 DETERMINFLOW_DATA_DIR，再缺省用入库快照路径")
     parser.add_argument("--margin", type=float, default=10.0,
                         help="阈值相对实测失败率的余量（百分比点，默认 10）")
+    parser.add_argument("--check-stale", action="store_true",
+                        help="改判快照新鲜度：真实数据比快照新多少天（不判失败率）")
+    parser.add_argument("--source", type=Path, default=None,
+                        help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
+                             "仅 --check-stale 使用")
+    parser.add_argument("--max-lag-days", type=float, default=7.0,
+                        help="快照允许落后真实数据的天数（默认 7）")
     options = parser.parse_args()
     if options.margin < 0:
         parser.error("--margin 不能为负")
+    if options.max_lag_days < 0:
+        parser.error("--max-lag-days 不能为负")
+
+    if options.check_stale:
+        source = options.source
+        if source is None:
+            from src.config import WORKFLOWS_DIR
+
+            source = WORKFLOWS_DIR
+        code, message = check_stale(
+            options.data_dir or _default_data_dir(), Path(source), options.max_lag_days)
+        print(f"[live-gate] {message}", file=sys.stderr)
+        return code
 
     code, message = evaluate(options.data_dir or _default_data_dir(), options.margin)
     print(f"[live-gate] {message}", file=sys.stderr)

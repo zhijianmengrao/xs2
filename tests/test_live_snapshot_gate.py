@@ -188,3 +188,85 @@ def test_snapshot_is_small_enough_to_commit() -> None:
     assert total < 400_000, (
         f"快照总量 {total} 字节；真实 run 单个可达 290KB，裁剪后应远小于此"
     )
+
+
+# ------------------------------------------------- 快照保鲜（R48）
+def _write_snapshot(root: Path, exported_at: object, *, with_key: bool = True) -> None:
+    (root / "workflows" / "wf" / "runs").mkdir(parents=True, exist_ok=True)
+    (root / "workflows" / "wf" / "runs" / "run-a.json").write_text(
+        json.dumps({"run_id": "run-a", "status": "completed",
+                    "node_executions": []}), encoding="utf-8")
+    meta: dict = {"totals": {"attempts": 0, "failed": 0}}
+    if with_key:
+        meta["exported_at"] = exported_at
+    (root / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _write_real_run(root: Path, started_at: str) -> None:
+    (root / "wf" / "runs").mkdir(parents=True, exist_ok=True)
+    (root / "wf" / "runs" / "run-real.json").write_text(
+        json.dumps({"run_id": "run-real", "status": "running",
+                    "started_at": started_at, "completed_at": None}),
+        encoding="utf-8")
+
+
+def test_stale_check_flags_snapshot_older_than_real_data(tmp_path: Path) -> None:
+    """快照滞后超容忍 → 退出码 5，与「失败率超阈」的 1 分开。"""
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot(snap, "2026-01-01T00:00:00+00:00")
+    _write_real_run(real, "2026-02-01T00:00:00+00:00")
+
+    code, message = live_gate.check_stale(snap, real, max_lag_days=7.0)
+    assert code == live_gate.EXIT_STALE, message
+    assert "过期" in message
+    # 过期与超阈必须是不同退出码，否则 CI 日志里两种失效混成一类
+    assert live_gate.EXIT_STALE != live_gate.EXIT_GATE_TRIGGERED
+
+
+def test_stale_check_passes_when_snapshot_is_current(tmp_path: Path) -> None:
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot(snap, "2026-02-01T00:00:00+00:00")
+    _write_real_run(real, "2026-02-02T00:00:00+00:00")
+
+    code, message = live_gate.check_stale(snap, real, max_lag_days=7.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_stale_check_reads_in_flight_runs_not_just_completed(tmp_path: Path) -> None:
+    """只看 completed_at 会对「正在进行中的新 run」失明，也会对 B31 前的旧数据失明。"""
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot(snap, "2026-01-01T00:00:00+00:00")
+    # completed_at 为 None，只有 started_at 能证明数据比快照新
+    _write_real_run(real, "2026-03-01T00:00:00+00:00")
+
+    code, message = live_gate.check_stale(snap, real, max_lag_days=7.0)
+    assert code == live_gate.EXIT_STALE, message
+
+
+def test_stale_check_reports_no_sample_when_real_data_absent(tmp_path: Path) -> None:
+    """CI 检出里没有 data/workflows —— 必须报「判不到」，不能假绿。"""
+    snap = tmp_path / "snap"
+    _write_snapshot(snap, "2026-01-01T00:00:00+00:00")
+
+    code, message = live_gate.check_stale(snap, tmp_path / "missing", max_lag_days=7.0)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+    assert code != live_gate.EXIT_OK
+
+
+def test_stale_check_requires_exported_at(tmp_path: Path) -> None:
+    """元数据没有 exported_at 时不能默认「够新」，只能报判不到。"""
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot(snap, None, with_key=False)
+    _write_real_run(real, "2026-02-01T00:00:00+00:00")
+
+    code, message = live_gate.check_stale(snap, real, max_lag_days=7.0)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+    assert "exported_at" in message
+
+
+def test_stale_check_is_not_wired_into_ci() -> None:
+    """CI 检出没有真实数据，接进去只会变成永远绿的防护（R47 §2.3 的教训）。"""
+    for step in _backend_steps():
+        assert "--check-stale" not in str(step.get("run", "")), (
+            "快照保鲜是轮次收官动作，不该作为 CI step：CI 里没有 data/workflows"
+        )
