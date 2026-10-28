@@ -197,6 +197,24 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   一次（character `agent_deep`）——供应商分钟级流式停摆，属质量面非代码缺陷。
   ⑤`nope_missing` 残留清理。基线：Low-IL **1803/96/0**、High-IL **1888/11/0（权威）**、
   插件 98/0、前端 447/0（零改动）、审计 [clean]。详见 docs/HANDOVER_ROUND38.md。
+- **R40 维护轮（2026-10-28，R39 §6 三候选全落地）**：①契约 §6.1 常驻回归
+  基线 R25 起首次专项复跑，四层全绿零未解释差异（L1 24 / L2 活体 17/0
+  双轮 / L3 106+1skip / L4 插件 98/0 双 CWD / 审计 [clean]×2）。②
+  **B26/B28 同族机械化终局**：`test_read_endpoints_static_guard.py` 以纯
+  AST 扫描全部 14 个路由模块（119 GET 处理器、9 resolver 调用点），断言
+  GET 处理链可达的 `resolve_workflow_workspace` 必显式 `create=False`
+  （含 `_console_root` 参数化传播），防空转下限防改名空转，双变异咬合
+  验证零误报。③**供应商失败率画像**（R38 §7.4 落地）：`run_profile.py`
+  纯函数聚合 + 只读端点 `GET …/tasks/{id}/run-profile` + 挖矿脚本
+  `provider_failure_profile.py`；历史数据复现 R38 §2.0 的 agent_deep
+  629.7s timeout；r38-flow 两次 export 实跑产出画像（30s 内完成）。
+  ④修复 **B31**——run 记录 `completed_at` 恒空（两条执行路径只给 task
+  盖章），`_finalize_run_artifacts` 终态盖章（retry_waiting 不盖），
+  画像 wall_seconds 从此可算。基线：Low-IL **1826/96/0**、High-IL
+  **1911/11/0（权威）**（对账 1811+15、1896+15）、前端 447/0（零改动）、
+  索引 59 条零变化；8021 重启两次均 4/4 ready。运维注意：ZCode 后台
+  shell 启动的服务会被连带回收，须 PowerShell Start-Process 脱离启动。
+  详见 docs/HANDOVER_ROUND40.md。
 - **R39 维护轮（2026-10-28，R38 §7 候选落地 + B26 家族全面收口）**：①修复
   **B28**——B26 的 workflow 面残留：`GET workspace-files`、
   `GET workspace-files/content`、`GET tasks/{id}/workspace-file` 与
@@ -308,6 +326,7 @@ xs2/
 - 2026-10-25 R27 双基线（维护态五轮，纯前端，后端零改动）：Low-IL → **1740 passed / 96 skipped / 0 failed**（105.55s）；High-IL → **1825 passed / 11 skipped / 0 failed**（124.83s，权威）——不变。前端 `npm test` **8 组 434 条 0 fail**（净增 12：`CharacterVoiceEditor.test.ts` +5、`http-client.test.ts` 新文件 5、`roundtableStream.test.ts` +2；`test:desktop` 116→121、`test:conversation` 135→137）；lint 0 problems；build ✓ 6.34s；活体 e2e 17 passed（新 dist 重启后）；存储名审计 [clean]；真实浏览器 e2e 打通 UI→check-dialogue→CLI→violations/suggestion（demo-voice 林晚偏离/符合两态）+ 读者评估页 alert 人因化活体验证（详见 HANDOVER_ROUND27 §4.2）。
 - 2026-10-25 R28 双基线（维护者任务执行轮：删除归档 + 首次推送 + CI 核对 + B18）：Low-IL → **1741 passed / 96 skipped / 0 failed**（102.25s）；High-IL → **1826 passed / 11 skipped / 0 failed**（118.84s，权威）。净增 **1** 条（B18 回归锚 `test_script_survives_non_utf8_stdout`）。总用例 1836→**1837**。**推送闭环**：`origin/main..main`=0；CI（`d3d75d5`，run 40149647827）**四 job 全绿**（backend/windows-backend/frontend/container-config，windows-backend 测试本体 1808 passed / 28 skipped 含 e2e 诚实 skip）；Desktop Windows NSIS（`a249e17`，run 40148872233）success。B18 细节与 CI 首败取证见 HANDOVER_ROUND28 §3。
 - 2026-10-27 R38 双基线（维护轮：B26 console 读端点建目录/404 化 + B27 测试索引污染 + 纯 API 全流程实跑 + sync-history UI 走查）：Low-IL → **1803 passed / 96 skipped / 0 failed**（98.64s）；High-IL → **1888 passed / 11 skipped / 0 failed**（118.04s，权威）。净增 **6** 条（`test_workspace_override_whitelist.py` 9→15：create=False 不建目录 1、GET progress 幻影 404 两形态 2、sync-history 幻影 404 1、DELETE 幻影不建目录 1、建书后 progress 仍 200 1）。对账：Low-IL 1797+6=1803；High-IL 1882+6=1888。总用例 R37 口径 1893 → **1899**。前端零改动 `npm test` 8 组 447 条 0 fail、lint 0、build ✓ 5.94s；插件 98/0；审计 [clean]。**全流程实跑**：r38-flow 9/9 阶段 completed（129.9 任务分钟，build 2 次 / character 3 次重试）；终态复现 0% 观察项后经 UI 登记按钮转 100%。详见 HANDOVER_ROUND38.md。
+- 2026-10-28 R40 双基线（维护轮：契约 §6.1 基线 R25 起首次专项复跑 + B26/B28 同族静态防复发钉测 + 供应商失败率画像 + B31 run 记录 completed_at 恒空修复）：Low-IL → **1826 passed / 96 skipped / 0 failed**（98.41s）；High-IL → **1911 passed / 11 skipped / 0 failed**（131.38s，权威）。净增 **15** 条（`test_read_endpoints_static_guard.py` 3：GET 链 create≠False 主断言 + 防空转下限 + task_queries 跨模块钉，双变异咬合验证；`test_run_profile.py` 12：聚合五态/分类六桶/B31 引擎盖章/端点 200+404 三态+零建目录）。对账：Low-IL 1811+15=1826；High-IL 1896+15=1911。总用例 R39 口径 1907 → **1922**。§6.1 四层复跑全绿零未解释差异（L1 24 / L2 17/0 双轮 / L3 106+1skip / L4 插件 98/0 双 CWD / 审计 [clean]×2）；前端零改动 447/0、lint 0、build ✓ 5.59s；索引 59 条零变化。**画像实跑**：r38-flow 两次 export 30s 内 completed（run-dfe789fd wall 0.071s，B31 盖章生效）；历史挖矿复现 R38 §2.0 的 agent_deep 629.7s timeout。8021 重启两次均 4/4 ready、degraded=false。详见 HANDOVER_ROUND40.md。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个
