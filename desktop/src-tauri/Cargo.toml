@@ -9,9 +9,9 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-futures-util = "0.3"
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
-semver = "1"
+# futures-util / reqwest / semver 曾服务于已移除的 R2+Gitee 多源并发探测
+# （join3 + semver 比对 + 自建 HTTP 请求）。v1.0.2 单源化后全仓零引用（R42
+# 逐文件核实），移除后 tauri-plugin-updater 自身仍会引入所需传递依赖。
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }

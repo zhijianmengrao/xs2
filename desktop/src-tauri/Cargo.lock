@@ -741,10 +741,7 @@ dependencies = [
 name = "determinflow-desktop"
 version = "1.0.2"
 dependencies = [
- "futures-util",
  "libc",
- "reqwest",
- "semver",
  "serde",
  "serde_json",
  "tauri",
