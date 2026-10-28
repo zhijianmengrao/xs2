@@ -69,3 +69,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config -q
+
+  # 真实构建面（R44）：container-config 只校验 compose 语法，Dockerfile 的多阶段
+  # 构建（web: npm ci + npm run build、backend: pip install -r requirements.lock、
+  # gunicorn 启动）此前在 CI 上零覆盖（HANDOVER_ROUND43 §2.2 缺口 1）。本 job 真构建
+  # 镜像并起容器验行为：status 契约（process 模式 4/4 Executor ready）、内置前端产物、
+  # 镜像自带 HEALTHCHECK healthy、entrypoint 先裁剪再 exec、镜像不含 tests/ 与凭据。
+  container-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image with layer cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: determinflow-core:ci
+          cache-from: type=gha,scope=container-build
+          cache-to: type=gha,mode=max,scope=container-build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # 冒烟脚本只用标准库，无需 pip install；退出码 2 明确表示 runner 缺 docker，
+      # 与「镜像有问题」的退出码 1 分开。
+      - name: Smoke the running image
+        run: python scripts/smoke_container.py --image determinflow-core:ci --skip-build --timeout 300 --logs-dir container-logs
+      - name: Upload container logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-build-logs
+          path: container-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
