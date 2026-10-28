@@ -34,6 +34,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 
+def _existing_workspace_root(mgr, workflow_id: str, workspace: str | None) -> Path:
+    """读端点专用解析：只解析不创建，工作区不存在时诚实 404。
+
+    与 R38 B26 的 console 面 `_console_existing_root` 同语义；修复前 GET
+    workspace-files 系列对幻影工作区「查询即建目录」（如资料蒸馏页每次
+    打开都会留下 job-* 空目录）。
+    """
+    root = mgr._ws_manager.resolve_workflow_workspace(
+        workflow_id, override=workspace, create=False)
+    if not root.exists():
+        raise HTTPException(status_code=404, detail="作品工作区不存在")
+    return root
+
+
 @router.get("/workspace-files")
 async def list_workspace_files(
     request: Request,
@@ -44,7 +58,7 @@ async def list_workspace_files(
 ):
     """列出小说工作区中的可读文件，供作品控制台恢复历史内容。"""
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace)
+    root = _existing_workspace_root(mgr, workflow_id, workspace)
     from src.core.workspace_guard import WorkspaceGuard
 
     guard = WorkspaceGuard()
@@ -91,7 +105,7 @@ async def read_workspace_file(
 ):
     """读取工作区内的 UTF-8 文本，供作品历史和审核页面展示。"""
     mgr = _get_manager(request)
-    root = mgr._ws_manager.resolve_workflow_workspace(workflow_id, override=workspace).resolve()
+    root = _existing_workspace_root(mgr, workflow_id, workspace).resolve()
     from src.core.workspace_guard import WorkspaceGuard
 
     guard = WorkspaceGuard()
@@ -473,10 +487,8 @@ async def get_task_workspace_file(
     task = mgr._load_task(workflow_id, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    workspace = mgr._ws_manager.resolve_workflow_workspace(
-        workflow_id,
-        override=task.workspace_override,
-    ).resolve()
+    workspace = _existing_workspace_root(
+        mgr, workflow_id, task.workspace_override).resolve()
     from src.core.workspace_guard import WorkspaceGuard
 
     guard = WorkspaceGuard()

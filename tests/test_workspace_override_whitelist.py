@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -219,3 +220,120 @@ def test_console_created_book_progress_still_200(tmp_path, monkeypatch):
         "workflow_id": "xs2-novel-flywheel", "workspace": book})
     assert progress.status_code == 200, progress.text
     assert progress.json()["percent"] == 0
+
+
+# --------------------------------- R39 B28：workflow 面读端点不再「查询即建目录」
+
+def _workflow_client(workspaces: WorkspaceManager,
+                     task: SimpleNamespace | None = None) -> TestClient:
+    """workflow_routes 测试客户端：真实解析器 + stub 任务存储。
+
+    B27 纪律审计：本节用例全部只读（无 PUT/POST/任务落盘），workflow_routes
+    的模块级路径常量（SESSIONS_DIR/WORKFLOWS_DIR）不被触达，_load_task 为
+    stub，不会写真实 data/ 下任何文件。
+    """
+    from src.web import workflow_routes
+
+    app = FastAPI()
+    app.include_router(workflow_routes.router)
+    app.state.workflow_manager = SimpleNamespace(
+        _ws_manager=workspaces,
+        _load_task=lambda workflow_id, task_id: task,
+    )
+    with TestClient(app) as test_client:
+        return test_client
+
+
+def test_workspace_files_phantom_404_without_mkdir(roots):
+    """修复前实测：GET workspace-files 对幻影工作区 200+空列表 且静默建目录
+    （真实数据里 4 个 reference-jobs/job-* 残留的根因——资料蒸馏页每次打开
+    都会以新 job-<时间戳> 工作区调本端点）；修复后诚实 404、零目录副作用。"""
+    _, _, manager = roots
+    phantom = str(manager.base_dir / "books" / "phantom-wf28")
+    with _workflow_client(manager) as client:
+        response = client.get("/api/workflows/workspace-files", params={
+            "workflow_id": "xs2-novel-flywheel-build", "workspace": phantom})
+    assert response.status_code == 404, response.text
+    assert "作品工作区不存在" in response.json()["detail"]
+    assert not Path(phantom).exists()
+
+
+def test_workspace_files_phantom_relative_form_404_without_mkdir(roots):
+    project_root, _, manager = roots
+    with _workflow_client(manager) as client:
+        response = client.get("/api/workflows/workspace-files", params={
+            "workflow_id": "xs2-novel-flywheel-build",
+            "workspace": "data/workspaces/books/phantom-wf28-rel"})
+    assert response.status_code == 404, response.text
+    assert not (project_root / "data/workspaces/books/phantom-wf28-rel").exists()
+
+
+def test_workspace_files_existing_book_still_lists(roots):
+    """翻转不破坏恢复历史内容：真实存在的书照常 200 列文件。"""
+    _, _, manager = roots
+    book = manager.base_dir / "books" / "b3-wf28"
+    (book / "outline").mkdir(parents=True)
+    (book / "outline" / "near_term_outline.md").write_text("大纲", encoding="utf-8")
+    with _workflow_client(manager) as client:
+        response = client.get("/api/workflows/workspace-files", params={
+            "workflow_id": "xs2-novel-flywheel-build", "workspace": str(book)})
+    assert response.status_code == 200, response.text
+    paths = [item["path"] for item in response.json()["files"]]
+    assert "outline/near_term_outline.md" in paths
+
+
+def test_workspace_file_content_phantom_404_without_mkdir(roots):
+    _, _, manager = roots
+    phantom = str(manager.base_dir / "books" / "phantom-wf28-c")
+    with _workflow_client(manager) as client:
+        response = client.get("/api/workflows/workspace-files/content", params={
+            "workflow_id": "xs2-novel-flywheel-build", "workspace": phantom,
+            "path": "outline/near_term_outline.md"})
+    assert response.status_code == 404, response.text
+    assert "作品工作区不存在" in response.json()["detail"]
+    assert not Path(phantom).exists()
+
+
+def test_task_workspace_file_deleted_workspace_not_recreated(roots):
+    """任务在册但工作区已被外部删除：读产物端点不再重建书目录。"""
+    _, _, manager = roots
+    book = manager.base_dir / "books" / "b4-wf28"
+    book.mkdir(parents=True)
+    task = SimpleNamespace(workspace_override=str(book))
+    with _workflow_client(manager, task=task) as client:
+        shutil.rmtree(book)
+        response = client.get(
+            "/api/workflows/xs2-novel-flywheel-mvp/tasks/t1/workspace-file",
+            params={"path": "story/0001/chapter.md"})
+    assert response.status_code == 404, response.text
+    assert not book.exists()
+
+
+def test_get_task_result_and_artifact_read_do_not_recreate_workspace(roots):
+    """核心层收口：get_task_result / read_task_artifact 的解析翻转 create=False，
+    工作区缺失时产物如实报不存在，且不再作为读副作用重建目录。"""
+    from src.workflow.task_queries import TaskQueryMixin
+
+    _, _, manager = roots
+    phantom = manager.base_dir / "books" / "phantom-wf28-r"
+    queries = TaskQueryMixin.__new__(TaskQueryMixin)
+    queries._ws_manager = manager
+    queries._load_task = lambda workflow_id, task_id: SimpleNamespace(
+        name="t", status="completed", workspace_override=str(phantom),
+        started_at=None, completed_at=None, updated_at=None,
+        snapshot_definition={"nodes": [{"id": "n1"}]},
+        disabled_node_ids=set(),
+        node_states={"n1": SimpleNamespace(
+            status="completed", summary="", error=None,
+            outputs={"_output_file": "story/0001/chapter.md"},
+            attempt_count=1, token_usage={})})
+    result = queries.get_task_result("wf-wf28", "t1")
+    assert result is not None and result["status"] == "completed"
+    assert result["progress"] == {"completed": 1, "total": 1}
+    assert len(result["artifacts"]) == 1
+    assert result["artifacts"][0]["exists"] is False
+    assert result["artifacts"][0]["relative_path"].replace("\\", "/") == "story/0001/chapter.md"
+    artifact = queries.read_task_artifact("wf-wf28", "t1", "t1:n1:output_file")
+    assert artifact is not None and artifact["success"] is False
+    assert artifact["error"] == "artifact_missing"
+    assert not phantom.exists()

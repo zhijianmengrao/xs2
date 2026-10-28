@@ -288,6 +288,7 @@ class TaskQueryMixin:
         workspace = self._ws_manager.resolve_workflow_workspace(
             workflow_id,
             override=task.workspace_override,
+            create=False,
         ).resolve()
         artifacts: list[dict] = []
         artifact_paths: set[Path] = set()
@@ -398,6 +399,7 @@ class TaskQueryMixin:
         workspace = self._ws_manager.resolve_workflow_workspace(
             workflow_id,
             override=task.workspace_override,
+            create=False,
         ).resolve()
         artifact_path = (workspace / artifact["relative_path"]).resolve()
         try:
