@@ -724,6 +724,52 @@ export interface WorkflowState {
   completed_at?: string | null;
 }
 
+/** 单次运行画像的逐尝试明细（后端 run_profile.build_run_profile 输出，R41） */
+export interface RunProfileAttemptDetail {
+  attempt_number?: number | null;
+  trigger?: string;
+  status?: string;
+  error?: string;
+  error_class?: string;
+  duration_seconds?: number | null;
+}
+
+/** 运行画像的单阶段（节点）聚合 */
+export interface RunProfileStage {
+  node_id: string;
+  attempts: number;
+  completed: number;
+  failed: number;
+  failure_rate?: number | null;
+  automatic_retry_count?: number;
+  output_repair_count?: number;
+  first_started_at?: string | null;
+  duration_seconds?: number | null;
+  error_classes?: Record<string, number>;
+  attempts_detail?: RunProfileAttemptDetail[];
+}
+
+/** 任务一次运行的每阶段尝试/失败画像（GET .../run-profile，R40/R41） */
+export interface RunProfile {
+  run_id: string;
+  workflow_id: string;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  wall_seconds?: number | null;
+  totals?: {
+    stages: number;
+    attempts: number;
+    completed: number;
+    failed: number;
+    failure_rate?: number | null;
+    stages_with_multiple_attempts?: string[];
+    stages_with_failures?: string[];
+    error_classes?: Record<string, number>;
+  };
+  stages?: RunProfileStage[];
+}
+
 /** 工作流参数变量定义（与后端 WorkflowVariable 对齐，参照 bk-sops） */
 export interface WorkflowVariableOption {
   name: string;   // 展示名

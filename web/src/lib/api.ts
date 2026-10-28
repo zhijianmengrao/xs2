@@ -476,6 +476,12 @@ export async function getTask(workflowId: string, taskId: string) {
   return request<import("../types").TaskDetailResponse>(`/workflows/${workflowId}/tasks/${taskId}`);
 }
 
+/** 任务运行画像：缺省最新 run，`runId` 指定历史 run（R41 ?run_id=） */
+export async function getTaskRunProfile(workflowId: string, taskId: string, runId?: string) {
+  const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+  return request<import("../types").RunProfile>(`/workflows/${workflowId}/tasks/${taskId}/run-profile${qs}`);
+}
+
 export type NovelAssistantEntry = {
   id: string;
   question: string;

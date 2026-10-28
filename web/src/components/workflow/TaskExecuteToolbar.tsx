@@ -4,9 +4,10 @@
  * 显示任务信息、状态、停止按钮、返回按钮。
  */
 import { useState, useEffect, useCallback } from "react";
-import { ArrowLeft, Square, Loader, Clock } from "lucide-react";
+import { ArrowLeft, Square, Loader, Clock, BarChart3 } from "lucide-react";
 import { getTask, stopTask } from "../../lib/api";
 import type { TaskDetailResponse } from "../../types";
+import RunProfilePanel from "./RunProfilePanel";
 
 interface TaskExecuteToolbarProps {
   workflowId: string;
@@ -20,6 +21,7 @@ interface TaskExecuteToolbarProps {
 export default function TaskExecuteToolbar({ workflowId, taskId, onBack, liveStatus, liveCompletedAt }: TaskExecuteToolbarProps) {
   const [taskData, setTaskData] = useState<TaskDetailResponse | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const fetchTask = useCallback(async () => {
     try {
@@ -133,8 +135,18 @@ export default function TaskExecuteToolbar({ workflowId, taskId, onBack, liveSta
         {isRunning ? "点击节点可查看消息流和推理链路" : isFinished ? "点击节点可查看执行消息" : ""}
       </div>
 
-      {/* Right: Stop button */}
+      {/* Right: profile + Stop button */}
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setProfileOpen(true)}
+          aria-label="查看运行画像"
+          aria-haspopup="dialog"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors cursor-pointer min-h-[44px]"
+        >
+          <BarChart3 size={14} aria-hidden="true" />
+          运行画像
+        </button>
         {isRunning && (
           <button
             type="button"
@@ -152,6 +164,13 @@ export default function TaskExecuteToolbar({ workflowId, taskId, onBack, liveSta
           </button>
         )}
       </div>
+
+      <RunProfilePanel
+        workflowId={workflowId}
+        taskId={taskId}
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      />
     </div>
   );
 }
