@@ -9,7 +9,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "commit": "1504a8816c9e1084391b897568cd30287115ef1f",
+    "commit": "74b7ddcd772a2bf57c7c8aa7cfa1cc0facf84c34",
     "id": "xs2-official",
     "ref": "main",
     "url": "https://github.com/zhijianmengrao/xs2-plugins.git"
