@@ -237,3 +237,72 @@ R42 §8-1 留的难题是「CI 无数据 → 空转」，本轮把「空转」�
   只读工具，Dockerfile 只影响镜像构建），服务进程不受影响，故未做活体走查。
 - **未跑 `docker build`**：本机无 docker/wsl（R43/R44 复核仍不可用），真实构建证据
   交给 CI 的 `container-build`。
+
+## 10. 补记：推送与 CI 全量核对（当轮执行）
+
+推送 `f73433d..0f64d43`，`origin/main` 已同步。CI 结果如下。
+
+### 10.1 xs2 `CI` run 40659252471（`0f64d43`）五 job 全绿
+
+| job | 结果 | 数据 |
+|---|---|---|
+| `frontend` | success | **463 passed / 0 fail**，`vite build` ✓ 9.75s |
+| `container-config` | success | `docker compose config -q` |
+| `backend`（ubuntu-24.04） | success | **1907 passed / 64 skipped**（65.38s） |
+| `container-build` | success | **95s**，构建 + 冒烟四断言全过 |
+| `windows-backend` | success | **1942 passed / 29 skipped**（238.36s） |
+
+**四口径总数均为 1971**：ubuntu 1907+64、windows 1942+29、本机 Low-IL 1875+96、
+High-IL 1960+11——与 §4 双基线逐项对齐，零未解释差异。
+
+`Desktop Windows` run **40659252443**（同 sha）success：`Build core NSIS installer`
+694s、`Build full NSIS installer` 633s；`build-macos` 与 `Publish GitHub Release`
+按设计 skip（非 tag 推送）。
+
+### 10.2 `container-build` 是本轮唯一能验证 A 项的地方——它验过了
+
+本机无法导入 gunicorn（缺 `fcntl`/`pwd`/`AF_UNIX`，§2.1），所以 **worker class 是否
+换对，只有这个 job 能回答**。日志取证：
+
+1. **依赖真装上**：`Collecting uvicorn-worker==0.4.0 (from -r requirements.lock (line 77))`
+   → `Successfully installed ... uvicorn-worker-0.4.0`。锁文件新增那一行真的进了镜像。
+2. **新 worker class 真能起**：容器起来后
+   `status 契约成立: mode=process ready=4/4 degraded=False`——若 `--worker-class` 指错，
+   gunicorn 会在 `load_class` 阶段就 `RuntimeError`，服务起不来，这条必红。
+3. **冒烟四断言全过**：
+   - `status 契约成立: mode=process ready=4/4 degraded=False`
+   - `内置前端产物可用: /assets/index-C5eX4JWL.js`
+   - `镜像 HEALTHCHECK=healthy`
+   - `entrypoint 先裁剪再 exec 已验证`
+   - `镜像布局契约成立（不含 tests 与预先烘焙的凭据）`
+4. **缓存情况**：`CACHED` 6 层。`requirements.lock` 与 `Dockerfile` 都变了，pip 层如预期
+   重建（`pip install` 段完整可见），前端 `npm ci`/`npm run build` 层命中缓存。
+
+### 10.3 弃用告警确认消失（A 项的直接验收判据）
+
+R44 §5-2 记录的现象是「CI 日志每跑一次都刷 `uvicorn.workers` 弃用告警」。
+本轮日志里 `deprecat` 共 16 处，逐条归类后**全部与 worker 无关**：
+
+| 来源 | 条数 | 归属 |
+|---|---|---|
+| `node` `[DEP0040] punycode` / `[DEP0169] url.parse()` | 9 | 前端构建阶段（node 运行时） |
+| `Use node --trace-deprecation ...` 提示行 | 6 | 同上 |
+| GHA `Node.js 20 is deprecated`（checkout/setup-python/buildx 等 action） | 1 | runner 侧 |
+
+**零条 `uvicorn.workers`。** A 项目标达成。
+
+pytest 侧的 `1 warning` 是 `fastapi.testclient` 报的 starlette 提示
+（`Using httpx with starlette.testclient is deprecated; install httpx2 instead`），
+属既有依赖面，与本轮改动无关，未处理（不在本轮范围内）。
+
+### 10.4 win-29 与本机 High-11 的 18 条差额（沿用 R44 结论，复核未变）
+
+humanware e2e **17**（CI 无 8021 服务，诚实 skip）+ `test_plugin_longpath` **1**
+（runner 已启用 `LongPathsEnabled`）。其余 11 条与 High-IL 完全一致
+（macOS 签名 6 + icns 1 + Unix 进程组/进程树 2 + POSIX fcntl 2）。
+
+### 10.5 本轮仍未做的事
+
+- 闸门仍未挂进 `ci.yml`（§2.4）：退出码 3 已就位，接线需先决定 run 记录怎么进 CI。
+- 本机仍无 docker/wsl，真实构建证据依旧只来自 CI。
+- `config/skills_config.json` 未入库（运行时合法写入，B23/R36 定性）。
