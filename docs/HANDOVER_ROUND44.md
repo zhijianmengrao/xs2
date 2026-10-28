@@ -251,3 +251,86 @@ buildx 构建 → docker run -d（固定 4 个 Executor、WEB_PORT=8020）
 4. **循环节点与重试语义区分**（R41 §9-3，需后端 Core 配合）。
 5. **孤儿脚本清理**（§5-4）：`sync_gitee_release.py` + 对应测试。
 6. **CI 起服务跑 e2e**（R43 §2.3 选项 B）：仍需先解决「CI 无模型凭据」设计。
+
+## 9. 补记：推送与 CI 全量核对（用户授权后当轮执行）
+
+本轮提交与 R43 的 `1bb2880` 一并推送（`a6e4927..2b5bba6`，`origin/main` 已同步，
+积压清零），触发 CI 首跑。结果如下。
+
+### 9.1 CI 五 job 全绿
+
+`CI` run **40641422351**（`2b5bba6`）：
+
+| job | 结果 | 数据 |
+|---|---|---|
+| `backend`（ubuntu-24.04） | success | **1901 passed / 64 skipped**（76.44s） |
+| `windows-backend` | success | **1936 passed / 29 skipped**（186.83s） |
+| `frontend` | success | **463 passed / 0 fail**，`vite build` ✓ 5.81s |
+| `container-config` | success | `docker compose config -q` |
+| **`container-build`** | **success（首次真跑）** | **1m56s**，构建 + 冒烟四断言全过 |
+
+`Desktop Windows` run **40641422247**（同 sha）success。
+
+四口径总数**均为 1965**：ubuntu 1901+64、windows 1936+29、本机 Low-IL 1869+96、
+High-IL 1954+11 —— 与 §4 双基线逐项对齐，无未解释差异。
+
+`windows-backend` 29 条 skip 与本机 High-IL 11 条的 18 条差额已逐条核对：
+humanware e2e **17**（CI 无 8021 服务，诚实 skip）+ `test_plugin_longpath` **1**
+（runner 已启用 `LongPathsEnabled`，`MAX_PATH` 用例按设计 skip）。其余 11 条与
+High-IL 完全一致（macOS 签名 6 + icns 1 + Unix 进程组/进程树 2 + POSIX fcntl 2）。
+
+### 9.2 `container-build` 首次真构建的实测细节（§5-1 的风险已解除）
+
+§5-1 记录的「首次真跑可能红」**没有发生**。日志取证：
+
+1. **真构建，零缓存命中**：`npm ci` 实装 497 包 8.6s；`pip install -r
+   requirements.lock` 15.0s，且正确忽略 win32-only 的 `colorama`/`pywin32`
+   （`Ignoring ... markers 'sys_platform == "win32"' don't match`）；`exporting
+   layers` 3.9s。全文无一处 `CACHED`。
+2. **冒烟四断言全过**（`--skip-build` 复用刚构建的 tag）：
+   - `status 契约成立: mode=process ready=4/4 degraded=False`
+   - `内置前端产物可用: /assets/index-C5eX4JWL.js`
+   - `镜像 HEALTHCHECK=healthy`
+   - `entrypoint 先裁剪再 exec 已验证`
+   - `镜像布局契约成立（不含 tests 与预先烘焙的凭据）`
+3. **失败上传步骤按预期 skipped**（job 成功时不触发）。
+
+**一处与 §2.1 预估不符需修正认知**：GHA 层缓存**首跑为空**——日志有
+`importing cache manifest from gha:...` 但无任何一层命中，所以首次是完整的
+冷构建（含 apt、npm、pip 全量），耗时 1m56s 而非预估的 8–12 分钟。「增量 1–3
+分钟」这条只从**第二次推送**起才成立。
+
+### 9.3 顺带闭合 R43 缺口 3：macOS 签名流水线（§8-2）
+
+`desktop-macos.yml` 的 workflow runs 接口返回 `total_count=0`，起初像「从未
+跑过」。实际原因是它是 **`workflow_call` 型可复用工作流**（触发条件仅
+`workflow_dispatch` / `workflow_call` / 碰 `desktop/**` 的 PR），结果并入调用方
+run 而不单独计数——零记录是正常表现，不是故障。
+
+真实证据在 `desktop-windows.yml` 的 `build-macos` job（`if: github.ref_type ==
+'tag'`，`uses: ./.github/workflows/desktop-macos.yml`）。v1.0.2 tag run
+**40202145251** 中：
+
+| job | 结果 | 耗时 |
+|---|---|---|
+| `build-macos / Build Apple Silicon core candidate` | success | 7m05s |
+| `build-macos / Build Apple Silicon full candidate` | success | 6m32s |
+| `Build core NSIS installer` | success | 11m39s |
+| `Build full NSIS installer` | success | 9m21s |
+| `Publish GitHub Release` | success | 13s |
+
+两个矩阵都真跑了 `verify_bundle.py --verify-macos-signatures
+--verify-dmg-container --forbid-updater-artifacts`、装载 DMG 后
+`codesign --verify --deep --strict`、以及安装副本里的 backend 冒烟。
+
+**结论：R43 缺口 3「macOS 签名流水线未核对」不成立——它在最近一次发版上是
+真机跑通的真签名产物。** 该缺口可从风险清单移除（PROJECT_INFO 已同步）。
+
+### 9.4 本轮仍未做的事
+
+- 真实 `docker build` 只跑到 CI，本机依旧无 docker/wsl（§5-1 不变，但已不再是
+  未验证项——CI 已提供权威证据）。
+- `uvicorn.workers` 弃用告警（§5-2）未处理，仍在 CI 日志中可见。
+- 孤儿脚本（§5-4）未删。
+- 失败率时间序列本轮仍无新 run（纯核对轮）。
+

@@ -57,17 +57,33 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   CI 的 ubuntu `backend` job 一直在真实 Linux 上跑全量（R43 实测
   **1870 passed / 64 skipped**），POSIX 语义已被覆盖；64 条 skip 的构成是
   Windows 文件系统语义 40 + humanware e2e（服务未运行）17 + macOS 签名 7。
-  **剩余缺口**：①容器镜像构建面——**R44 已补齐**（`container-build` job 真
-  `docker build` + 起容器验行为，见下条）；②真机服务 e2e（17 条需 8021 在跑）；
-  ③macOS 桌面签名（`desktop-macos.yml` 历轮未核对结果）。细节见
-  HANDOVER_ROUND43 §2 / HANDOVER_ROUND44 §2。
-- **容器构建面（R44 起）**：`container-config` 仍只做 compose 语法快校验；
-  另有 `container-build` job 用 buildx（GHA 层缓存）真构建镜像并运行
+  **剩余缺口**：①容器镜像构建面——**R44 已补齐并由 CI run 40641422351 首次
+  真跑验证**（`container-build` job 真 `docker build` + 起容器验行为，见下条）；
+  ②真机服务 e2e（17 条需 8021 在跑）；③macOS 桌面签名——**已核对，缺口不成立**
+  （见下条）。细节见 HANDOVER_ROUND43 §2 / HANDOVER_ROUND44 §2。
+- **macOS 桌面签名面（R44 核对闭合）**：`desktop-macos.yml` 的 run 列表显示
+  `total_count=0` **不代表流水线没跑过**——它是 `workflow_call` 型可复用工作流，
+  结果并入调用方 run 而不单独计数。真实证据在 `desktop-windows.yml` 的
+  `build-macos` job（`if: github.ref_type == 'tag'`）：v1.0.2 tag run
+  **40202145251** 中 core / full 两个矩阵**都 success**（各约 6–7 分钟），
+  含 `verify_bundle.py --verify-macos-signatures --verify-dmg-container`、
+  装载 DMG 后 `codesign --verify --deep --strict` 与安装副本 backend 冒烟。
+  结论：macOS 签名/打包链在最近一次发版上是真跑通的真机产物，不是未验证面。
+- **容器构建面（R44 起，已由 CI run 40641422351 首次真跑验证）**：`container-config`
+  仍只做 compose 语法快校验；另有 `container-build` job 用 buildx（GHA 层缓存）
+  真构建镜像并运行
   `scripts/smoke_container.py` 做行为断言——status 契约（process 模式 4/4
   Executor ready、未降级）、内置前端产物（`/` 返回 `/assets/*.js` 而非
   `/src/main.tsx`）、镜像自带 `HEALTHCHECK` 报 healthy、entrypoint 先跑
   session 裁剪再 exec、镜像不含 `tests/`/`pytest.ini` 与预先烘焙的
-  `config/models_config.json`。**两条本轮实测出的纪律**：①镜像布局必须在
+  `config/models_config.json`。**首次真实构建实测（2026-10-28，run 40641422351，
+  job 1m56s）**：全程零 `CACHED`——`npm ci` 实装 497 包 8.6s、`pip install
+  -r requirements.lock` 15.0s（正确忽略 win32-only 的 `colorama`/`pywin32`）、
+  `exporting layers` 3.9s；冒烟四断言全过（`ready=4/4 degraded=False`、
+  `/assets/index-C5eX4JWL.js`、`HEALTHCHECK=healthy`、entrypoint 裁剪证据、
+  布局契约成立）。注意 GHA 层缓存首跑为空（日志有 `importing cache manifest`
+  但无一层命中），因此「增量 1–3 分钟」需从第二次推送起才成立。
+  **两条本轮实测出的纪律**：①镜像布局必须在
   启动前对镜像本体探测——`ModelManager` 会在缺失时从模板生成
   `models_config.json`，跑起来之后探测，「不烘焙凭据」这条断言会恒假红；
   ②docker 缺失时脚本退出码 **2**（环境问题），与镜像缺陷的 **1** 分开，
@@ -374,6 +390,21 @@ xs2/
 - 2026-10-28 R42 双基线（维护轮：首次推送 CI 全量核对收口 + 失败率硬闸门 + 死通道依赖收尾）：Low-IL → **1838 passed / 96 skipped / 0 failed**（102.02s）；High-IL → **1923 passed / 11 skipped / 0 failed**（135.83s，权威）。净增 **5** 条（`test_provider_failure_profile.py` 5→10：严格大于边界/未舍入比较/TOTAL 口径 vs 逐行平均/空样本诚实/结论文案含双数）。对账：Low-IL 1833+5=1838；High-IL 1918+5=1923。总用例 R41 口径 1929 → **1934**。前端零改动 457/0、lint 0、build ✓ 5.88s；插件 98/0 双 CWD；审计 [clean]；索引 59 条零污染。**推送 + CI 核对首次真实触发，暴露并修掉四条从未在本地发现的红**：① xs2 ubuntu `backend` 红于 `test_c19_write_text_rejects_unsafe_paths[references/NUL]`——根因不是产品缺陷，`unsafe_windows_path` 在 POSIX 按设计返回 None，测试把平台专属断言混进跨平台 parametrize，拆档加 `skipif(os.name != "nt")`；② 插件仓 CI **连红 3 次**，`bishu-novel`/`public-api` 两个已删除插件 job 仍在（checkout 即败）且 Core 仓用 `github.repository_owner` 拼出 fork 不存在的 `DeterminFlow`，删 job + 改 `vars.CORE_REPOSITORY || 'alikon-art/DeterminFlow'`，顺带 source-url 改 `${{ github.repository }}`；③ xs2 `Desktop Windows` 红于官方插件构建锁脱钩（locked=1b42dec vs latest=1504a88）——**锁决定 Full 包实际捆绑哪个插件快照，旧锁意味着打的是 0.1.13 而非 0.1.16**，刷新后插件仓 HEAD 再前进又跟一次。**新纪律：推送插件仓后必须刷新本仓锁**。**闸门**：`--fail-if-above <PCT>` 判据为 TOTAL 口径、严格大于、未舍入比较、空样本诚实放行、结论写 stderr（stdout 保持纯 JSON）；真实数据实测 0.1→exit 1（2.88%）、5→exit 0。**死通道**：核实 R2/Gitee 在 v1.0.2 已彻底移除，但发现 3 个孤儿依赖（futures-util/reqwest/semver）零引用，移除并首次装 Rust 1.99.1 + MSVC 验证 `cargo check` **exit 0**；过程中定位两个环境前提——项目路径含空格使 cc-rs 的 `-Fo` 未引号致 ring C 编译失败（须 `CARGO_TARGET_DIR` 指无空格路径）、build.rs 需 generated/bundled-plugins 与 runtime/backend 存在。失败率时间序列第 2 点：2.9% → **2.9%**（与 R41 逐行一致，本轮无新 run）。**CI 最终全绿**：xs2 `CI`（四 job）+ `Desktop Windows`（含 NSIS 与插件锁校验）均 success，插件仓 `CI` **首次绿**（此前连红 4 次）。过程中二次暴露一条只在 CI 可见的缺陷：插件套件 `test_actual_upstream_files_and_runtime_functions` 的 vendor sha256 钉值在 Linux 上必错——`UPSTREAM.json` 记的是 CRLF 原始字节哈希，而仓库 blob 被 `core.autocrlf=true` 存成 LF，本机检出转回 CRLF 故**假绿**；修法是 `.gitattributes` 标 `-text` + `git add --renormalize` 按真实 CRLF 字节入库（模拟 Linux 检出 14/14 匹配）。**新纪律二：带 sha256 provenance 的第三方快照入库必须配 `-text`**。详见 HANDOVER_ROUND42.md。
 - 2026-10-28 R43 双基线（维护轮：画像跨 run 对比视图 + POSIX 真跑调研收口）：Low-IL → **1852 passed / 96 skipped / 0 failed**（96.40s）；High-IL → **1937 passed / 11 skipped / 0 failed**（129.80s，权威）。净增 **14** 条（`test_run_profile.py` 14→28：重复节点汇总/改善为负/单侧阶段不可比/空 run 诚实/未舍入差值/`pick_previous_run` 三参数 + mtime 回落/端点 compare 块/无 compare 键/最早 run 为 null/坏兄弟跳过/compare 零建目录）。对账：Low-IL 1838+14=1852；High-IL 1923+14=1937。总用例 R42 口径 1934 → **1948**。前端 **463 passed / 0 fail**（457 → +6：`runProfileView.test.ts` 5→7、`RunProfilePanel.test.ts` 5→9），lint 0、build ✓ 5.62s；插件 98/0 双 CWD；审计 [clean]；索引 59 条零污染。**对比视图**：`?compare=true` 返回与上一次 run 的逐阶段差值，口径=按 node_id 汇总同 run 内重复执行、差值恒 current−previous（正=退步）、未舍入比值、单侧无尝试则 `comparable=false` 且差值 null、缺省不带参数则完全不扫 `runs/`；前端抽屉加复选框 + 汇总对比卡 + 每卡对比行，切换开关时保持当前查看的 run 不跳回最新。**活体**：8021 重启新 PID 26252；真实数据 `run-cef95ebf` vs `run-04ea8e0b` → 总差值 −25%、`script_extract` −100% 修复确认、`agent_belief` 等不可比；最早 run 加 compare → null；穿越 400、幻影 404。**修掉一处活体暴露的文案缺陷**：「尝试 0（上次 1）」被读成尝试数为 0，改为差值 0 显示「持平」。截图 `data/system/test-probes/r43-run-profile-compare.png`。**POSIX 调研（用户指定只调研不实施）推翻了历轮表述**：CI ubuntu `backend` 一直在真实 Linux 跑全量（**1870 passed / 64 skipped**，64 = Windows 文件系统语义 40 + e2e 17 + macOS 7），POSIX 语义已被覆盖；真正的剩余缺口是①**容器镜像从未被构建验证**（`container-config` 只跑 `compose config -q`，`Dockerfile` 多阶段构建零覆盖，本机无 docker/wsl）②真机 e2e 17 条③macOS 签名流水线未核对。失败率时间序列第 3 点：2.9% → **2.9%**（本轮无新 run，与 R41/R42 逐行一致）。详见 HANDOVER_ROUND43.md。
 - 2026-10-28 R44 双基线（维护轮：容器构建面补齐 + 大陆下载加速调研）：Low-IL → **1869 passed / 96 skipped / 0 failed**（98.98s）；High-IL → **1954 passed / 11 skipped / 0 failed**（131.71s，权威）。净增 **17** 条（`test_container_build_contract.py` 新增：CI 真构建断言 3 + 判据自身可用 10（含反例）+ 判据与 Dockerfile/entrypoint/compose 不脱钩 4）。对账：Low-IL 1852+17=1869；High-IL 1937+17=1954。总用例 R43 口径 1948 → **1965**。前端零改动 **463 passed / 0 fail**、lint 0、build ✓ 5.59s；插件 98/0 双 CWD；审计 [clean]。**容器构建面**：`ci.yml` 新增 `container-build` job（ubuntu-24.04，30min 超时）——buildx + GHA 层缓存真 `docker build`（`load: true`，tag `determinflow-core:ci`）后跑 `scripts/smoke_container.py` 做行为断言：status 契约（process 模式 configured/member/ready/reachable 全 4、未降级）、内置前端产物（`/` 返回 `/assets/*.js` 且不含 `/src/main.tsx`）、镜像自带 `HEALTHCHECK` 报 healthy、entrypoint 先跑 session 裁剪再 exec、镜像不含 `tests/`/`pytest.ini`/预先烘焙的 `config/models_config.json`；失败时上传 `container-logs` artifact。与 `container-config`（compose 语法快校验）并存而非合并，测试钉死两者都在。**本地无 docker（复核仍不可用）**，改用两条替代取证：①临时目录模拟镜像环境（只放 `config/*` 不含 `models_config.json` + 空 `data/`/`logs/`）起真服务，实测 `/api/system/status` 200、**ready 4/4**、`degraded=false`，`evaluate_status` 零违规；`GET /` 200 产物 `/assets/index-Di62suE6.js`，`GET /docs` 200；②判据双向校准——真实 8021 与 `web/dist/index.html` 上零违规，开发态 `web/index.html` 上正确报出两条违规。**活体暴露并改掉一处设计缺陷**：最初在运行中的容器里 `docker exec test -e` 探测布局，但 `ModelManager` 会在启动时从模板**生成** `config/models_config.json`，「不烘焙凭据」断言恒假红；改为对镜像本体跑一次性 `--rm` 容器、在 teardown 之后探测，并用顺序断言钉死。**大陆下载加速调研（用户指定只调研不实施）**：结论=**当前不实施，触发条件未成立**——更新源已是单源 GitHub（`tauri.conf.json` endpoints 与 `updater.rs` 的 `GITHUB_UPDATE_ENDPOINT`），`updater.rs` 注释钉死「check() 阶段不验签，多源会让上游更高版本号穿透成误报」；`publish_r2_release.py` + `if: vars.R2_DISTRIBUTION_ENABLED == 'true'` 发布步骤已就位，缺的只是仓库 vars/secrets + 域名（约 ¥50+/年，1–2h）。若痛点成真走 R28 §6 选项 B，实施清单含「**必须同时改两处端点**」否则回到多源穿透问题。顺带发现 `scripts/sync_gitee_release.py` 与 `tests/test_gitee_sync_script.py` 属零接线的孤儿残留（本轮只记录未删）。**如实记录的未验证面**：真实 `docker build` 本地从未执行（本机无 docker/wsl），CI 首跑即首次真构建；事前已核对 `web/package*.json` 依赖完全同步（`npm ci` 不会因锁不同步失败）、`requirements.lock` 无排除 Python 3.12 的包。另记录 `uvicorn.workers.UvicornWorker` 在 uvicorn 0.50.2 会发弃用告警（既有 Dockerfile 选择，本轮未改）。失败率时间序列本轮未跑（未产生新 run，纯维护轮）。详见 HANDOVER_ROUND44.md。
+- 2026-10-28 R44 CI 核对（推送闭环：R43 `1bb2880` + R44 `2b5bba6` 首次一起进 CI）：
+  xs2 `CI` run **40641422351**（`2b5bba6`）**五 job 全绿**——`backend` 1901 passed /
+  64 skipped（76.44s）、`windows-backend` 1936 / 29（186.83s）、`frontend` 463 / 0、
+  `container-config`（`compose config -q`）、**`container-build`（首次真构建 + 冒烟，1m56s）**。
+  四口径总数均为 **1965**（ubuntu 1901+64、windows 1936+29、本机 Low-IL 1869+96、
+  High-IL 1954+11），与本机双基线逐项对齐。win-29 与本机 High-11 的 18 条差额构成
+  已逐条核对：humanware e2e **17**（CI 无 8021 服务，诚实 skip）+ `test_plugin_longpath`
+  **1**（CI runner 已启用 `LongPathsEnabled`，`MAX_PATH` 用例按设计 skip）。剩余 11 条
+  与本机 High-IL 完全一致（macOS 签名 6 + macOS icns 1 + Unix 进程组/进程树 2 +
+  POSIX fcntl 2）。
+  `Desktop Windows` run **40641422247**（同 sha）success。
+  **同轮闭合 R43 缺口 3**：`desktop-macos.yml` 是 `workflow_call` 型，run 列表
+  `total_count=0` 属正常；真实结果在 v1.0.2 tag run **40202145251** 的
+  `build-macos` job——core / full 双矩阵均 success，签名与 DMG 校验真跑。详见
+  HANDOVER_ROUND44 §9（本轮补记）。
 - **2026-10-24 CI 首绿（仓库已迁移：origin → `zhijianmengrao/xs2` 与 `zhijianmengrao/xs2-plugins`，原
   `yuyang0702/*` 保留为 upstream 远程）**：commit `e925dda`，run 40088073223，四 job 全绿（backend /
   windows-backend / frontend / container-config），CI 全量 **1790 passed / 26 skipped**。首跑过程修复三个
