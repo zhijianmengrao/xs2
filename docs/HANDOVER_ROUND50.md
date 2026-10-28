@@ -47,9 +47,12 @@ R49 §7-4 把这条从“不可验证”降级成“可验证但本轮没做”�
 workflow 里调了 `smoke_backend.py`，**且**脚本传的是 `--port` `0`。只钉第一层
 不够——把端口改成固定值后同样“跑了 smoke”，覆盖却没了。
 
-（`core candidate` 那个 job 最终状态是 **cancelled**——GHA 的并发策略在 full
-candidate 完成后取消了同组排队任务，不是失败。它与 full candidate 跑同一份
-`smoke_backend.py`，`--port 0` 的结论由 full 的 success 支撑。）
+**必须区分 run 级与 job 级结论**：这个 run 的总体 `conclusion` 是 **failure**，
+但原因是 `core candidate` job 被 GHA 并发策略 **cancelled**（同组只保留一个，
+full candidate 跑完就取消了排队的另一个）。`Build Apple Silicon full candidate`
+这个 job 本身是 **success**。两者跑同一份 `smoke_backend.py`，`--port 0` 的
+结论由 full 的 success 支撑。**不要把 run 级的 failure 读成「macOS 验证失败」**
+——那正是本轮要治的那类误读。
 
 ## 3. 桩故障注入（R50-1）
 

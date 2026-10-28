@@ -472,7 +472,10 @@ test("baseline toggle requests baseline_limit and keeps the viewed run", async (
     document.querySelector<HTMLInputElement>('input[aria-label="按 run_id 查询历史 run"]')!.value = "";
   });
   await toggleBaseline();
-  assert.ok((calls.at(-1)!.baseline || 0) > 0, "baseline_limit forwarded when toggled on");
+  // 不用 Array.prototype.at：web 的 tsconfig target 是 ES2020，`tsc -b` 报 TS2550
+  // （本地 `tsc --noEmit` 走另一份配置，抓不到这条——CI 的 npm run build 才发现）。
+  assert.ok((calls[calls.length - 1].baseline || 0) > 0,
+    "baseline_limit forwarded when toggled on");
 });
 
 test("baseline renders the series and the regressing verdict", async () => {
