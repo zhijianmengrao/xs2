@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -360,8 +361,22 @@ def test_c18_write_text_only_reference_and_console_paths(client, book):
 
 
 @pytest.mark.parametrize("relative", ["../escape.md", "references/../../escape.md", "/abs.md",
-                                      "C:/Windows/x.md", "references/NUL", "references/tail. "])
+                                      "C:/Windows/x.md"])
 def test_c19_write_text_rejects_unsafe_paths(client, book, relative):
+    """跨平台不安全路径（逃逸 / 绝对路径 / 盘符）一律拒绝，与平台无关。"""
+    response = client.put("/api/novel-console/text",
+                          json={"workflow_id": "xs2-novel-flywheel-mvp", "workspace": str(book),
+                                "path": relative, "content": "x"})
+    assert response.status_code in (403, 422), (relative, response.text)
+
+
+@pytest.mark.skipif(os.name != "nt",
+                    reason="设备名与尾随点别名是 Windows 文件系统语义，POSIX 上它们是合法文件名")
+@pytest.mark.parametrize("relative", ["references/NUL", "references/tail. "])
+def test_c19_write_text_rejects_windows_only_unsafe_paths(client, book, relative):
+    """`safe_target` 的 ``unsafe_windows_path`` 在 POSIX 上按设计返回 None
+    （见 src/web/path_guard.py），故这两条只能钉在 Windows——ubuntu CI 上跳过，
+    windows-backend 权威 job 仍真实执行。"""
     response = client.put("/api/novel-console/text",
                           json={"workflow_id": "xs2-novel-flywheel-mvp", "workspace": str(book),
                                 "path": relative, "content": "x"})
