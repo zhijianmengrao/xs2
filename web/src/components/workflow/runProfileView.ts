@@ -90,3 +90,35 @@ export function sortedAttempts(attempts: RunProfileAttemptDetail[] | undefined):
     (a, b) => (a.attempt_number ?? Number.MAX_SAFE_INTEGER) - (b.attempt_number ?? Number.MAX_SAFE_INTEGER),
   );
 }
+
+/** 失败率差值 → "+17%" / "-17%" / "持平"；null（不可比或无数据）→ "-"。
+ *  差值语义来自后端：current - previous，正值=退步、负值=改善。 */
+export function formatFailureRateDelta(delta: number | null | undefined): string {
+  if (delta == null || !Number.isFinite(delta)) return "-";
+  const pct = Math.round(delta * 100);
+  if (pct === 0) return "持平";
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
+/** 差值色调：退步红、改善绿、持平/不可比中性（不是失败原因判定，只是排序视觉）。 */
+export function failureRateDeltaClass(delta: number | null | undefined): string {
+  if (delta == null || !Number.isFinite(delta) || Math.round(delta * 100) === 0) {
+    return "text-muted-foreground";
+  }
+  return delta > 0 ? "text-destructive" : "text-success";
+}
+
+/** 整数差值（尝试数/失败数）→ "+3" / "-2" / "0"；null → "-" */
+export function formatCountDelta(delta: number | null | undefined): string {
+  if (delta == null || !Number.isFinite(delta)) return "-";
+  if (delta === 0) return "0";
+  return `${delta > 0 ? "+" : ""}${delta}`;
+}
+
+/** 秒数差值 → "+10 分 0 秒" / "-30 秒" / "持平"；null → "-" */
+export function formatDurationDelta(delta: number | null | undefined): string {
+  if (delta == null || !Number.isFinite(delta)) return "-";
+  if (delta === 0) return "持平";
+  const magnitude = formatDurationSeconds(Math.abs(delta));
+  return `${delta > 0 ? "+" : "-"}${magnitude}`;
+}

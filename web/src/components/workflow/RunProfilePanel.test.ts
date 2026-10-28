@@ -173,3 +173,144 @@ test("run_id query form passes explicit historical run id to the fetcher (R41 ?r
   });
   assert.equal(received, "run-738b7b19", "explicit run id forwarded");
 });
+
+// ---------- R43 跨 run 对比 ----------
+
+const comparisonProfile: RunProfile = {
+  ...r38ShapeProfile,
+  comparison: {
+    previous_run_id: "run-04ea8e0b",
+    previous_status: "failed",
+    previous_started_at: "2026-10-27T09:44:12+08:00",
+    previous_completed_at: null,
+    previous_wall_seconds: 3600,
+    delta_wall_seconds: 3600,
+    totals: {
+      attempts_current: 5, attempts_previous: 7, delta_attempts: -2,
+      failed_current: 3, failed_previous: 5, delta_failed: -2,
+      failure_rate_current: 0.6, failure_rate_previous: 0.7143,
+      delta_failure_rate: -0.1143, comparable: true,
+    },
+    stages: [
+      {
+        node_id: "build", occurrences_current: 1, occurrences_previous: 1,
+        attempts_current: 2, attempts_previous: 3, failed_current: 1,
+        failed_previous: 2, failure_rate_current: 0.5,
+        failure_rate_previous: 0.6667, delta_failure_rate: -0.1667,
+        delta_attempts: -1, comparable: true,
+      },
+      {
+        node_id: "character", occurrences_current: 1, occurrences_previous: 1,
+        attempts_current: 3, attempts_previous: 4, failed_current: 2,
+        failed_previous: 3, failure_rate_current: 0.6667,
+        failure_rate_previous: 0.75, delta_failure_rate: -0.0833,
+        delta_attempts: -1, comparable: true,
+      },
+    ],
+  },
+};
+
+async function toggleCompare() {
+  const box = document.querySelector<HTMLInputElement>('input[aria-label="与上一次 run 对比"]');
+  assert.ok(box, "compare checkbox exists");
+  await act(async () => {
+    box!.click();
+  });
+}
+
+test("compare toggle requests ?compare and forwards the run currently being viewed", async () => {
+  const calls: Array<{ runId?: string; compare?: boolean }> = [];
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, runId, compare) => {
+      calls.push({ runId, compare });
+      return runId ? comparisonProfile : r38ShapeProfile;
+    },
+  }));
+  assert.equal(calls.length, 1, "initial load once");
+  assert.equal(calls[0].compare, undefined, "compare off by default");
+
+  // 先查一个历史 run，再打开对比 —— 必须继续看那个 run，而不是跳回最新
+  const input = document.querySelector<HTMLInputElement>('input[aria-label="按 run_id 查询历史 run"]');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, "run-99b3bd1b");
+    input!.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    input!.closest("form")!.dispatchEvent(
+      new window.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  assert.deepEqual(calls[calls.length - 1], { runId: "run-99b3bd1b", compare: false },
+    "compare off is a falsy flag, not a changed run id");
+
+  await toggleCompare();
+  assert.deepEqual(calls[calls.length - 1], { runId: "run-99b3bd1b", compare: true },
+    "compare keeps the viewed run id");
+});
+
+test("comparison block renders deltas and per-stage comparison lines", async () => {
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, compare) =>
+      (compare ? comparisonProfile : r38ShapeProfile),
+  }));
+  assert.ok(!bodyText().includes("run-04ea8e0b"), "no comparison before toggling");
+
+  await toggleCompare();
+  const text = bodyText();
+  assert.ok(text.includes("run-04ea8e0b"), "previous run id shown");
+  assert.ok(text.includes("上次 失败"), "previous run status humanized");
+  assert.ok(text.includes("-11%"), "total failure rate delta signed");
+  assert.ok(text.includes("尝试 -2"), "total attempts delta");
+  assert.ok(text.includes("总耗时 +1 时 0 分"), "wall delta humanized");
+  assert.ok(text.includes("差值口径"), "delta sign convention explained");
+  // 每张阶段卡都有对比行（按 node_id 匹配，不与出现序号耦合）
+  const lines = document.querySelectorAll('[aria-label^="阶段 "][aria-label$=" 对比"]');
+  assert.equal(lines.length, 2, "one comparison line per stage card");
+  assert.ok((lines[0].textContent || "").includes("-17%"), "build stage delta");
+});
+
+test("comparable=false stage says 不可比 instead of faking 0%", async () => {
+  const withUncomparable: RunProfile = {
+    ...r38ShapeProfile,
+    comparison: {
+      ...comparisonProfile.comparison!,
+      stages: [
+        {
+          node_id: "build", occurrences_current: 1, occurrences_previous: 0,
+          attempts_current: 2, attempts_previous: 0, failed_current: 1,
+          failed_previous: 0, failure_rate_current: 0.5,
+          failure_rate_previous: null, delta_failure_rate: null,
+          delta_attempts: 2, comparable: false,
+        },
+      ],
+    },
+  };
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, compare) =>
+      (compare ? withUncomparable : r38ShapeProfile),
+  }));
+  await toggleCompare();
+  const line = document.querySelector('[aria-label="阶段 build 对比"]');
+  assert.ok(line, "comparison line rendered for the uncomparable stage");
+  const lineText = line!.textContent || "";
+  assert.ok(lineText.includes("不可比"), "uncomparable stage labeled honestly");
+  assert.ok(lineText.includes("上次尝试 0"), "previous attempts shown as 0");
+  assert.ok(!lineText.includes("失败率"), "no failure-rate delta faked for uncomparable stage");
+  assert.ok(!lineText.includes("+2%"), "no faked improvement/regression percent");
+});
+
+test("no earlier run yields an explicit empty-comparison notice", async () => {
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    // compare=true 但后端诚实返回 comparison: null（最早的那个 run）
+    fetchProfile: async (_wf, _task, _runId, compare) =>
+      ({ ...r38ShapeProfile, comparison: compare ? null : undefined }),
+  }));
+  await toggleCompare();
+  const notice = document.querySelector('[data-comparison-empty="true"]');
+  assert.ok(notice, "explicit empty-comparison notice");
+  assert.ok((notice!.textContent || "").includes("没有更早的 run"));
+});

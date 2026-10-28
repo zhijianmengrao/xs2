@@ -1,28 +1,34 @@
 /**
- * RunProfilePanel - 任务运行画像抽屉（R41）
+ * RunProfilePanel - 任务运行画像抽屉（R41；R43 加跨 run 对比）
  *
  * 消费 GET /api/workflows/{wf}/tasks/{task}/run-profile（R40 落地），
  * 渲染每阶段尝试/失败/错误分类卡片；支持按 run_id 查任意历史 run
- * （R41 ?run_id=）。只读：画像端点不建目录不写状态（B26/B28 静态钉测守卫）。
+ * （R41 ?run_id=）；打开对比开关后额外请求 ?compare=true（R43）并在每张
+ * 阶段卡显示「与上一次 run 对比」列。只读：画像端点不建目录不写状态
+ * （B26/B28 静态钉测守卫）。
  */
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw, X } from "lucide-react";
 import { getTaskRunProfile } from "../../lib/api";
-import type { RunProfile, RunProfileStage } from "../../types";
+import type { RunProfile, RunProfileComparisonStage, RunProfileStage } from "../../types";
 import { formatAttemptTrigger } from "./nodeFailureUtils";
 import {
   attemptStatusClass,
   attemptStatusLabel,
   errorClassBadgeClass,
   errorClassLabel,
+  failureRateDeltaClass,
+  formatCountDelta,
+  formatDurationDelta,
   formatDurationSeconds,
   formatFailureRate,
+  formatFailureRateDelta,
   formatProfileTime,
   sortedAttempts,
 } from "./runProfileView";
 
 export type RunProfileFetcher =
-  (workflowId: string, taskId: string, runId?: string) => Promise<RunProfile>;
+  (workflowId: string, taskId: string, runId?: string, compare?: boolean) => Promise<RunProfile>;
 
 interface RunProfilePanelProps {
   workflowId: string;
@@ -66,11 +72,49 @@ function ErrorClassBadges({ classes }: { classes: Record<string, number> | undef
   );
 }
 
-function StageCard({ stage, ordinal, duplicate }: {
+function ComparisonLine({ comparison, duplicate }: {
+  comparison: RunProfileComparisonStage;
+  /** node_id 在本 run 内重复时，对比行是「该节点合计」而非单次执行 */
+  duplicate: boolean;
+}) {
+  const note = duplicate ? "该节点合计" : "对比";
+  if (!comparison.comparable) {
+    return (
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
+           aria-label={`阶段 ${comparison.node_id} 对比`}>
+        <span className="text-muted-foreground">{note} 不可比（上一次 run 无该阶段尝试）</span>
+        <span>上次尝试 {comparison.attempts_previous}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
+         aria-label={`阶段 ${comparison.node_id} 对比`}>
+      <span>
+        {note} 失败率{" "}
+        <span className={failureRateDeltaClass(comparison.delta_failure_rate)}>
+          {formatFailureRateDelta(comparison.delta_failure_rate)}
+        </span>
+        （上次 {formatFailureRate(comparison.failure_rate_previous)}）
+      </span>
+      <span>
+        尝试{" "}
+        <span className="text-foreground">
+          {comparison.delta_attempts === 0 ? "持平" : formatCountDelta(comparison.delta_attempts)}
+        </span>
+        （上次 {comparison.attempts_previous}）
+      </span>
+    </div>
+  );
+}
+
+function StageCard({ stage, ordinal, duplicate, comparison }: {
   stage: RunProfileStage;
   /** 同类节点的出现序号（1 起），仅在 node_id 重复时展示 */
   ordinal: number;
   duplicate: boolean;
+  /** 该 node_id 的跨 run 对比（?compare=true 且存在上一次 run 时） */
+  comparison?: RunProfileComparisonStage;
 }) {
   const attempts = sortedAttempts(stage.attempts_detail);
   return (
@@ -95,6 +139,7 @@ function StageCard({ stage, ordinal, duplicate }: {
         )}
         <span>阶段耗时 {formatDurationSeconds(stage.duration_seconds)}</span>
       </div>
+      {comparison && <ComparisonLine comparison={comparison} duplicate={duplicate} />}
       <div className="mt-2">
         <ErrorClassBadges classes={stage.error_classes} />
       </div>
@@ -145,12 +190,13 @@ export default function RunProfilePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [runQuery, setRunQuery] = useState("");
+  const [compareEnabled, setCompareEnabled] = useState(false);
 
-  const fetchRun = useCallback(async (runId?: string) => {
+  const fetchRun = useCallback(async (runId?: string, compare?: boolean) => {
     setLoading(true);
     setError("");
     try {
-      setProfile(await load(workflowId, taskId, runId));
+      setProfile(await load(workflowId, taskId, runId, compare));
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载运行画像失败，请稍后重试");
     } finally {
@@ -162,12 +208,23 @@ export default function RunProfilePanel({
     if (open) void fetchRun();
   }, [open, fetchRun]);
 
+  // 切换对比开关时重新取「当前正在看的那个 run」（不是最新 run）：用户可能在
+  // 查历史 run 的过程中打开对比，跳回最新会丢掉他选中的上下文。
+  const handleCompareToggle = useCallback((next: boolean) => {
+    setCompareEnabled(next);
+    void fetchRun(profile?.run_id || undefined, next);
+  }, [fetchRun, profile?.run_id]);
+
   if (!open) return null;
 
   const totals = profile?.totals;
   const stages = profile?.stages || [];
+  const comparison = profile?.comparison || null;
   const statusLabel = RUN_STATUS_LABELS[profile?.status || ""] || profile?.status || "-";
   const statusClass = RUN_STATUS_CLASSES[profile?.status || ""] || "bg-muted text-muted-foreground border-border/20";
+  // 同一 node_id 在本 run 可执行多次，对比行按 node_id 汇总（后端同口径）
+  const comparisonByNode = new Map<string, RunProfileComparisonStage>(
+    (comparison?.stages || []).map((item) => [item.node_id, item]));
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="任务运行画像">
@@ -178,7 +235,7 @@ export default function RunProfilePanel({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => void fetchRun(runQuery.trim() || undefined)}
+              onClick={() => void fetchRun(runQuery.trim() || undefined, compareEnabled)}
               disabled={loading}
               aria-label="刷新运行画像"
               className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors disabled:opacity-50 cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
@@ -210,7 +267,7 @@ export default function RunProfilePanel({
             className="flex items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              void fetchRun(runQuery.trim() || undefined);
+              void fetchRun(runQuery.trim() || undefined, compareEnabled);
             }}
           >
             <input
@@ -229,6 +286,16 @@ export default function RunProfilePanel({
               查询
             </button>
           </form>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={compareEnabled}
+              onChange={(e) => handleCompareToggle(e.target.checked)}
+              aria-label="与上一次 run 对比"
+              className="accent-primary cursor-pointer"
+            />
+            与上一次 run 对比
+          </label>
           {error && <p className="text-xs text-destructive break-all" role="alert">{error}</p>}
         </div>
 
@@ -254,6 +321,41 @@ export default function RunProfilePanel({
                   <ErrorClassBadges classes={totals?.error_classes} />
                 </div>
               </div>
+              {compareEnabled && (
+                comparison ? (
+                  <div className="rounded-xl border border-primary/10 bg-card p-3"
+                       aria-label="与上一次 run 对比">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground">
+                      <span className="font-mono text-muted-foreground">{comparison.previous_run_id}</span>
+                      <span>上次 {RUN_STATUS_LABELS[comparison.previous_status] || comparison.previous_status || "-"}</span>
+                      <span>总失败率{" "}
+                        <span className={failureRateDeltaClass(comparison.totals.delta_failure_rate)}>
+                          {formatFailureRateDelta(comparison.totals.delta_failure_rate)}
+                        </span>
+                      </span>
+                      <span>尝试{" "}
+                        <span className="text-foreground">
+                          {comparison.totals.delta_attempts === 0
+                            ? "持平" : formatCountDelta(comparison.totals.delta_attempts)}
+                        </span>
+                      </span>
+                      <span>总耗时{" "}
+                        <span className={failureRateDeltaClass(comparison.delta_wall_seconds)}>
+                          {formatDurationDelta(comparison.delta_wall_seconds)}
+                        </span>
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      差值口径：本次 − 上一次；正值=退步，负值=改善。
+                    </p>
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-primary/10 bg-card p-3 text-xs text-muted-foreground"
+                     data-comparison-empty="true">
+                    该 run 之前没有更早的 run 记录，无可对比对象。
+                  </p>
+                )
+              )}
               {stages.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">该 run 无阶段执行记录</p>
               ) : (
@@ -269,6 +371,8 @@ export default function RunProfilePanel({
                       stage={stage}
                       ordinal={ordinal}
                       duplicate={duplicate}
+                      comparison={compareEnabled
+                        ? comparisonByNode.get(stage.node_id) : undefined}
                     />
                   );
                 })

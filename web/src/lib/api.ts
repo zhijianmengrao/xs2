@@ -476,9 +476,14 @@ export async function getTask(workflowId: string, taskId: string) {
   return request<import("../types").TaskDetailResponse>(`/workflows/${workflowId}/tasks/${taskId}`);
 }
 
-/** 任务运行画像：缺省最新 run，`runId` 指定历史 run（R41 ?run_id=） */
-export async function getTaskRunProfile(workflowId: string, taskId: string, runId?: string) {
-  const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
+/** 任务运行画像：缺省最新 run，`runId` 指定历史 run（R41 ?run_id=）；
+ *  `compare` 时附带与上一次 run 的对比块（R43 ?compare=true） */
+export async function getTaskRunProfile(workflowId: string, taskId: string, runId?: string,
+                                        compare?: boolean) {
+  const params = new URLSearchParams();
+  if (runId) params.set("run_id", runId);
+  if (compare) params.set("compare", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
   return request<import("../types").RunProfile>(`/workflows/${workflowId}/tasks/${taskId}/run-profile${qs}`);
 }
 

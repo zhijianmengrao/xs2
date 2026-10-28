@@ -1,4 +1,4 @@
-"""供应商失败率画像（R38 §7.4 落地，R40）：每阶段尝试/失败聚合。
+"""供应商失败率画像（R38 §7.4 落地，R40；R43 加跨 run 对比）：每阶段尝试/失败聚合。
 
 run 记录的 node_executions 每个节点自带 attempt_history（逐尝试
 trigger/status/error/时间戳），但只散落在 run JSON 里——R38 全流程实跑的
@@ -13,6 +13,12 @@ trigger/status/error/时间戳），但只散落在 run JSON 里——R38 全流
 错误分类是关键词启发式（timeout / http_5xx / connection / stream_stall /
 other），仅供压测参考，不构成失败原因判定；旧数据缺 attempt_history 时
 attempt 数回退 attempt_count、成败以节点终态近似。
+
+跨 run 对比（R43）：``compare_run_profiles`` 把「本次 run」与「上一次 run」
+的同名阶段并排算出失败率/尝试数差值，供前端抽屉的对比列消费。比较口径与
+``scripts/provider_failure_profile.py`` 的 TOTAL 口径一致——差值用未舍入
+比值算，展示字段才舍入；任一侧无尝试时该阶段标 ``comparable=False``，不
+把「无数据」当成 0%。
 """
 from __future__ import annotations
 
@@ -158,6 +164,147 @@ def build_run_profile(
             "stages_with_failures": [s["node_id"] for s in stages
                                      if s["failed"] > 0],
             "error_classes": error_classes,
+        },
+        "stages": stages,
+    }
+
+
+def _order_key(started_at: object, mtime: float) -> float:
+    """run 的排序键：优先用 started_at，缺/坏则回落文件 mtime（同为绝对时刻）。
+
+    统一取 ``timestamp()`` 浮点，避免 aware 与 naive datetime 直接比较抛
+    TypeError——本仓 run 记录两种都出现过（B31 前 completed_at 恒 null）。
+    """
+    parsed = _parse_iso(started_at)
+    if parsed is None:
+        return float(mtime)
+    try:
+        return parsed.timestamp()
+    except (OSError, OverflowError, ValueError):
+        return float(mtime)
+
+
+def pick_previous_run(current: dict[str, Any],
+                      candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """从候选 run 元数据里挑出「上一次 run」（纯函数，供端点与测试共用）。
+
+    ``current`` 与 ``candidates`` 都是 ``{run_id, started_at, mtime}``。
+    「上一次」定义为排序键严格小于当前 run 的那个最大者——没有更早的 run 时
+    返回 None（诚实表示无对比对象，不拿更晚的 run 冒充）。
+    """
+    current_key = _order_key(current.get("started_at"), current.get("mtime", 0.0))
+    older = [
+        c for c in candidates
+        if c.get("run_id") != current.get("run_id")
+        and _order_key(c.get("started_at"), c.get("mtime", 0.0)) < current_key
+    ]
+    if not older:
+        return None
+    return max(older, key=lambda c: (_order_key(c.get("started_at"),
+                                               c.get("mtime", 0.0)),
+                                     str(c.get("run_id", ""))))
+
+
+def _pool_by_node(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """按 node_id 汇总一次 run 的全部执行（同 node 可在一 run 内跑多次）。"""
+    pooled: dict[str, dict[str, Any]] = {}
+    for stage in profile.get("stages") or []:
+        if not isinstance(stage, dict):
+            continue
+        node_id = str(stage.get("node_id", ""))
+        bucket = pooled.setdefault(node_id, {
+            "occurrences": 0, "attempts": 0, "completed": 0, "failed": 0})
+        bucket["occurrences"] += 1
+        for field in ("attempts", "completed", "failed"):
+            bucket[field] += int(stage.get(field, 0) or 0)
+    return pooled
+
+
+def _rate(failed: int, attempts: int) -> float | None:
+    return failed / attempts if attempts else None
+
+
+def _round(value: float | None) -> float | None:
+    return round(value, 4) if value is not None else None
+
+
+def compare_run_profiles(current: dict[str, Any],
+                         previous: dict[str, Any]) -> dict[str, Any]:
+    """本次 run 与上一次 run 的逐阶段失败率/尝试数对比（R43）。
+
+    比较口径与 ``scripts/provider_failure_profile.py`` 一致：
+    - **按 node_id 汇总**同一 run 内的重复执行（`agent_deep` 可跑 4 次），
+      而不是按出现顺序配对——两次 run 的执行次数本就可能不同，按序号配对
+      会留下无对应的孤儿条目。
+    - 差值一律 **current - previous**：正值=退步，负值=改善。
+    - 差值用**未舍入**比值算，展示字段才舍入（与失败率闸门同理）。
+    - 任一侧该阶段无尝试时 ``comparable=False``、rate 侧差值为 None——
+      「无数据」不等于 0%，不让它冒充 0% 改善或恶化。
+    """
+    cur_pool = _pool_by_node(current)
+    prev_pool = _pool_by_node(previous)
+
+    stages: list[dict[str, Any]] = []
+    for node_id in sorted(set(cur_pool) | set(prev_pool)):
+        c = cur_pool.get(node_id, {"occurrences": 0, "attempts": 0,
+                                   "completed": 0, "failed": 0})
+        p = prev_pool.get(node_id, {"occurrences": 0, "attempts": 0,
+                                    "completed": 0, "failed": 0})
+        cur_rate = _rate(c["failed"], c["attempts"])
+        prev_rate = _rate(p["failed"], p["attempts"])
+        comparable = cur_rate is not None and prev_rate is not None
+        stages.append({
+            "node_id": node_id,
+            "occurrences_current": c["occurrences"],
+            "occurrences_previous": p["occurrences"],
+            "attempts_current": c["attempts"],
+            "attempts_previous": p["attempts"],
+            "failed_current": c["failed"],
+            "failed_previous": p["failed"],
+            "failure_rate_current": _round(cur_rate),
+            "failure_rate_previous": _round(prev_rate),
+            "delta_failure_rate": (_round(cur_rate - prev_rate)
+                                   if comparable else None),
+            "delta_attempts": c["attempts"] - p["attempts"],
+            "comparable": comparable,
+        })
+    # 退步的排前面（与挖矿脚本「失败多的优先」同款顺序），再按 node_id 稳定
+    stages.sort(key=lambda s: (-s["failed_current"], -s["failed_previous"],
+                               s["node_id"]))
+
+    cur_totals = current.get("totals") or {}
+    prev_totals = previous.get("totals") or {}
+    cur_attempts, prev_attempts = (int(cur_totals.get("attempts", 0) or 0),
+                                   int(prev_totals.get("attempts", 0) or 0))
+    cur_failed, prev_failed = (int(cur_totals.get("failed", 0) or 0),
+                               int(prev_totals.get("failed", 0) or 0))
+    cur_rate = _rate(cur_failed, cur_attempts)
+    prev_rate = _rate(prev_failed, prev_attempts)
+    comparable = cur_rate is not None and prev_rate is not None
+    cur_wall = current.get("wall_seconds")
+    prev_wall = previous.get("wall_seconds")
+
+    return {
+        "previous_run_id": previous.get("run_id", ""),
+        "previous_status": previous.get("status", ""),
+        "previous_started_at": previous.get("started_at"),
+        "previous_completed_at": previous.get("completed_at"),
+        "previous_wall_seconds": prev_wall,
+        "delta_wall_seconds": (round(cur_wall - prev_wall, 3)
+                               if isinstance(cur_wall, (int, float))
+                               and isinstance(prev_wall, (int, float)) else None),
+        "totals": {
+            "attempts_current": cur_attempts,
+            "attempts_previous": prev_attempts,
+            "delta_attempts": cur_attempts - prev_attempts,
+            "failed_current": cur_failed,
+            "failed_previous": prev_failed,
+            "delta_failed": cur_failed - prev_failed,
+            "failure_rate_current": _round(cur_rate),
+            "failure_rate_previous": _round(prev_rate),
+            "delta_failure_rate": (_round(cur_rate - prev_rate)
+                                   if comparable else None),
+            "comparable": comparable,
         },
         "stages": stages,
     }

@@ -21,7 +21,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.workflow.run_profile import build_run_profile, classify_error
+from src.workflow.run_profile import (build_run_profile, classify_error,
+                                      compare_run_profiles, pick_previous_run)
 from src.web import workflow_routes
 
 
@@ -298,3 +299,216 @@ def test_run_profile_endpoint_creates_nothing(tmp_path, monkeypatch):
         assert client.get(url).status_code in (404, 500)
     after = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
     assert after == before, "run-profile 端点查询即建目录（B26/B28 同族复发）"
+
+
+# ---------- 跨 run 对比（R43） ----------
+
+def _profile(node_specs, **kwargs):
+    """按 {node_id: [attempt_status...]} 造一份 run 画像（供对比纯函数测试）。
+
+    值也可以是 ``[[status...], [status...]]``——表示同一 node_id 在同一 run 内
+    多次执行（如 agent_deep 循环 N 次），用于覆盖「按 node_id 汇总」口径。
+    """
+    entries = []
+    for node_id, statuses in node_specs.items():
+        runs = statuses if statuses and isinstance(statuses[0], list) else [statuses]
+        for execution in runs:
+            entries.append(_node(node_id, [
+                _attempt(i + 1, s) for i, s in enumerate(execution)]))
+    return build_run_profile(entries, **kwargs)
+
+
+def test_compare_pools_repeated_nodes_and_uses_signed_deltas():
+    """对比按 node_id 汇总（一 run 内可重复执行 N 次），差值恒为 current - previous。"""
+    current = _profile({"agent_deep": [
+        ["completed"], ["failed"], ["completed"], ["completed"]]}, run_id="run-new")
+    previous = _profile({"agent_deep": [["completed"], ["completed"]]},
+                        run_id="run-old")
+    comparison = compare_run_profiles(current, previous)
+    stage = comparison["stages"][0]
+    assert stage["node_id"] == "agent_deep"
+    assert stage["occurrences_current"] == 4
+    assert stage["occurrences_previous"] == 2
+    assert stage["attempts_current"] == 4
+    assert stage["attempts_previous"] == 2
+    assert stage["delta_attempts"] == 2
+    assert stage["failed_current"] == 1
+    assert stage["failed_previous"] == 0
+    assert stage["failure_rate_current"] == 0.25
+    assert stage["failure_rate_previous"] == 0.0
+    assert stage["delta_failure_rate"] == 0.25   # 正值 = 退步
+    assert stage["comparable"] is True
+    assert comparison["previous_run_id"] == "run-old"
+    assert comparison["totals"]["delta_attempts"] == 2
+    assert comparison["totals"]["delta_failed"] == 1
+    assert comparison["totals"]["delta_failure_rate"] == 0.25
+
+
+def test_compare_improvement_is_negative():
+    current = _profile({"build": ["completed"]}, run_id="run-new")
+    previous = _profile({"build": ["failed", "failed", "completed"]}, run_id="run-old")
+    stage = compare_run_profiles(current, previous)["stages"][0]
+    assert stage["delta_failure_rate"] < 0          # 负值 = 改善
+    assert stage["delta_failure_rate"] == round(0.0 - 2 / 3, 4)
+    assert stage["delta_attempts"] == -2
+
+
+def test_compare_stage_only_in_one_run_is_not_comparable():
+    """一侧无该阶段 → comparable=False 且差值 None（不把「无数据」当 0%）。"""
+    current = _profile({"build": ["completed"], "new_stage": ["failed"]},
+                       run_id="run-new")
+    previous = _profile({"build": ["completed"], "gone_stage": ["completed"]},
+                        run_id="run-old")
+    by_node = {s["node_id"]: s for s in compare_run_profiles(current, previous)["stages"]}
+    added = by_node["new_stage"]
+    assert added["comparable"] is False
+    assert added["delta_failure_rate"] is None
+    assert added["failure_rate_previous"] is None
+    assert added["attempts_previous"] == 0
+    removed = by_node["gone_stage"]
+    assert removed["comparable"] is False
+    assert removed["delta_failure_rate"] is None
+    assert removed["failure_rate_current"] is None
+
+
+def test_compare_empty_runs_stay_non_comparable():
+    """两次空 run：总失败率差值必须诚实为 None 而非 0。"""
+    empty = build_run_profile([], run_id="run-x")
+    comparison = compare_run_profiles(empty, empty)
+    assert comparison["totals"]["comparable"] is False
+    assert comparison["totals"]["delta_failure_rate"] is None
+    assert comparison["stages"] == []
+
+
+def test_compare_delta_uses_unrounded_ratio():
+    """差值用未舍入比值算：1/3 vs 0 的差值应是 0.3333 而不是舍入后判平。"""
+    current = _profile({"s": ["failed", "completed", "completed"]}, run_id="run-new")
+    previous = _profile({"s": ["completed"]}, run_id="run-old")
+    stage = compare_run_profiles(current, previous)["stages"][0]
+    assert stage["delta_failure_rate"] == 0.3333
+    comparison = compare_run_profiles(current, previous)
+    assert comparison["totals"]["delta_failure_rate"] == 0.3333
+
+
+@pytest.mark.parametrize("current_started,current_mtime,older,expected", [
+    ("2026-10-27T10:00:00+08:00", 1.9e9, "2026-10-26T10:00:00+08:00", "run-older"),
+    ("2026-10-27T10:00:00+08:00", 1.9e9, "2026-10-28T10:00:00+08:00", None),  # 只有更晚的
+    (None, 1.9e9, "2026-10-26T10:00:00+08:00", "run-older"),  # 当前缺 started_at → 用 mtime
+])
+def test_pick_previous_run_picks_strictly_older(current_started, current_mtime,
+                                               older, expected):
+    """「上一次 run」= 排序键严格更小的最大者；没有更早的就不冒充。"""
+    current = {"run_id": "run-cur", "started_at": current_started,
+               "mtime": current_mtime}
+    candidates = [
+        {"run_id": "run-older", "started_at": older, "mtime": 1.8e9},
+        {"run_id": "run-cur", "started_at": current_started, "mtime": current_mtime},
+    ]
+    picked = pick_previous_run(current, candidates)
+    assert (picked or {}).get("run_id") == expected
+
+
+def test_pick_previous_run_falls_back_to_mtime_for_unparsable_time():
+    """started_at 坏/缺时回落 mtime 比较，且不与可解析的 aware 值混比抛错。
+
+    当前 run 的 started_at 是废值、mtime=2000（unix 秒，远早于 2026 年），
+    因此 run-b（2026-10-01，可解析）比它**更晚**、run-a（mtime=1000）更早。
+    """
+    current = {"run_id": "run-cur", "started_at": "not-a-date", "mtime": 2000.0}
+    candidates = [
+        {"run_id": "run-a", "started_at": None, "mtime": 1000.0},
+        {"run_id": "run-b", "started_at": "2026-10-01T00:00:00+08:00", "mtime": 3000.0},
+    ]
+    picked = pick_previous_run(current, candidates)
+    assert picked is not None and picked["run_id"] == "run-a"
+
+
+# ---------- 端点 ?compare=true ----------
+
+def _seed_compare_tree(tmp_path: Path) -> None:
+    """种子：task 指向 run-new，runs/ 里另有更早的 run-old。"""
+    wf_dir = tmp_path / "wf-x"
+    (wf_dir / "tasks").mkdir(parents=True)
+    (wf_dir / "tasks" / "task-1.json").write_text(
+        json.dumps({"task_id": "task-1", "run_id": "run-new", "status": "completed"}),
+        encoding="utf-8")
+    (wf_dir / "runs").mkdir()
+    (wf_dir / "runs" / "run-new.json").write_text(json.dumps({
+        "run_id": "run-new", "status": "completed",
+        "started_at": "2026-10-27T10:00:00+08:00",
+        "completed_at": "2026-10-27T10:30:00+08:00",
+        "node_executions": [_node("build", [
+            _attempt(1, "completed", started="2026-10-27T10:00:00+08:00",
+                     completed="2026-10-27T10:30:00+08:00")])],
+    }, ensure_ascii=False), encoding="utf-8")
+    (wf_dir / "runs" / "run-old.json").write_text(json.dumps({
+        "run_id": "run-old", "status": "failed",
+        "started_at": "2026-10-26T10:00:00+08:00",
+        "completed_at": "2026-10-26T10:20:00+08:00",
+        "node_executions": [_node("build", [
+            _attempt(1, "failed", error="HTTP 502",
+                     started="2026-10-26T10:00:00+08:00",
+                     completed="2026-10-26T10:05:00+08:00"),
+            _attempt(2, "completed", trigger="automatic_retry",
+                     started="2026-10-26T10:05:00+08:00",
+                     completed="2026-10-26T10:20:00+08:00")])],
+    }, ensure_ascii=False), encoding="utf-8")
+
+
+def test_run_profile_endpoint_compare_block(tmp_path, monkeypatch):
+    """?compare=true 返回上一次 run 的对比块，且不改变原有画像字段。"""
+    _seed_compare_tree(tmp_path)
+    client = _client(tmp_path, monkeypatch)
+    body = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?compare=true").json()
+    assert body["run_id"] == "run-new"
+    assert body["totals"]["attempts"] == 1          # 原画像字段不变
+    comparison = body["comparison"]
+    assert comparison["previous_run_id"] == "run-old"
+    assert comparison["totals"]["delta_attempts"] == -1
+    assert comparison["totals"]["delta_failed"] == -1
+    # 本次 0% vs 上次 50% → 改善 50 个百分点
+    assert comparison["totals"]["delta_failure_rate"] == -0.5
+    assert comparison["stages"][0]["node_id"] == "build"
+    assert comparison["stages"][0]["delta_attempts"] == -1
+
+
+def test_run_profile_endpoint_without_compare_has_no_comparison_key(tmp_path, monkeypatch):
+    """缺省（不带 compare）不返回 comparison 键——不加查询参数就没有多余扫描。"""
+    _seed_compare_tree(tmp_path)
+    client = _client(tmp_path, monkeypatch)
+    body = client.get("/api/workflows/wf-x/tasks/task-1/run-profile").json()
+    assert "comparison" not in body
+
+
+def test_run_profile_endpoint_compare_on_oldest_run_is_null(tmp_path, monkeypatch):
+    """查最早那个 run 的对比 → comparison 为 null（没有更早的 run 可对比）。"""
+    _seed_compare_tree(tmp_path)
+    client = _client(tmp_path, monkeypatch)
+    body = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?run_id=run-old&compare=true"
+    ).json()
+    assert body["run_id"] == "run-old"
+    assert body["comparison"] is None
+
+
+def test_run_profile_endpoint_compare_skips_corrupt_sibling(tmp_path, monkeypatch):
+    """损坏的兄弟 run 记录不参与「上一次 run」选择，也不让请求失败。"""
+    _seed_compare_tree(tmp_path)
+    (tmp_path / "wf-x" / "runs" / "run-broken.json").write_text(
+        "{not json", encoding="utf-8")
+    client = _client(tmp_path, monkeypatch)
+    body = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?compare=true").json()
+    assert body["comparison"]["previous_run_id"] == "run-old"
+
+
+def test_run_profile_endpoint_compare_creates_nothing(tmp_path, monkeypatch):
+    """?compare=true 仍属 GET 只读面：扫 runs/ 目录不得新建任何文件。"""
+    _seed_compare_tree(tmp_path)
+    before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    client = _client(tmp_path, monkeypatch)
+    assert client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?compare=true").status_code == 200
+    after = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    assert after == before, "compare 查询即建目录（B26/B28 同族复发）"

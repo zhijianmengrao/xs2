@@ -768,6 +768,49 @@ export interface RunProfile {
     error_classes?: Record<string, number>;
   };
   stages?: RunProfileStage[];
+  /** 与「上一次 run」的对比（仅 ?compare=true 返回；无更早 run 时为 null，R43） */
+  comparison?: RunProfileComparison | null;
+}
+
+/** 跨 run 对比的单阶段差值（后端 run_profile.compare_run_profiles，R43）。
+ *  差值一律 current - previous：正值=退步，负值=改善；任一侧无尝试时
+ *  `comparable=false` 且 `delta_failure_rate` 为 null（无数据不等于 0%）。 */
+export interface RunProfileComparisonStage {
+  node_id: string;
+  occurrences_current: number;
+  occurrences_previous: number;
+  attempts_current: number;
+  attempts_previous: number;
+  failed_current: number;
+  failed_previous: number;
+  failure_rate_current?: number | null;
+  failure_rate_previous?: number | null;
+  delta_failure_rate?: number | null;
+  delta_attempts: number;
+  comparable: boolean;
+}
+
+/** 与「上一次 run」的对比块（GET .../run-profile?compare=true，R43） */
+export interface RunProfileComparison {
+  previous_run_id: string;
+  previous_status: string;
+  previous_started_at?: string | null;
+  previous_completed_at?: string | null;
+  previous_wall_seconds?: number | null;
+  delta_wall_seconds?: number | null;
+  totals: {
+    attempts_current: number;
+    attempts_previous: number;
+    delta_attempts: number;
+    failed_current: number;
+    failed_previous: number;
+    delta_failed: number;
+    failure_rate_current?: number | null;
+    failure_rate_previous?: number | null;
+    delta_failure_rate?: number | null;
+    comparable: boolean;
+  };
+  stages: RunProfileComparisonStage[];
 }
 
 /** 工作流参数变量定义（与后端 WorkflowVariable 对齐，参照 bk-sops） */

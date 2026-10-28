@@ -5,8 +5,12 @@ import {
   attemptStatusLabel,
   attemptStatusClass,
   errorClassLabel,
+  failureRateDeltaClass,
+  formatCountDelta,
+  formatDurationDelta,
   formatDurationSeconds,
   formatFailureRate,
+  formatFailureRateDelta,
   sortedAttempts,
 } from "./runProfileView";
 import type { RunProfileAttemptDetail } from "../../types";
@@ -63,4 +67,30 @@ test("sortedAttempts tolerates missing numbers and keeps numeric order", () => {
     sortedAttempts("garbage" as unknown as RunProfileAttemptDetail[]),
     [],
   );
+});
+
+test("failure rate delta keeps sign, rounds to whole percent, and marks ties", () => {
+  assert.equal(formatFailureRateDelta(0.17), "+17%");
+  assert.equal(formatFailureRateDelta(-0.17), "-17%");
+  assert.equal(formatFailureRateDelta(0), "持平");
+  assert.equal(formatFailureRateDelta(0.0001), "持平");  // 舍入后为 0 → 持平
+  assert.equal(formatFailureRateDelta(null), "-");
+  assert.equal(formatFailureRateDelta(undefined), "-");
+  assert.equal(formatFailureRateDelta(Number.NaN), "-");
+  // 差值语义：正=退步（红）、负=改善（绿）、持平/无数据中性
+  assert.equal(failureRateDeltaClass(0.17), "text-destructive");
+  assert.equal(failureRateDeltaClass(-0.17), "text-success");
+  assert.equal(failureRateDeltaClass(0), "text-muted-foreground");
+  assert.equal(failureRateDeltaClass(null), "text-muted-foreground");
+});
+
+test("count delta and duration delta show explicit signs", () => {
+  assert.equal(formatCountDelta(3), "+3");
+  assert.equal(formatCountDelta(-2), "-2");
+  assert.equal(formatCountDelta(0), "0");
+  assert.equal(formatCountDelta(null), "-");
+  assert.equal(formatDurationDelta(600), "+10 分 0 秒");
+  assert.equal(formatDurationDelta(-30), "-30 秒");
+  assert.equal(formatDurationDelta(0), "持平");
+  assert.equal(formatDurationDelta(null), "-");
 });

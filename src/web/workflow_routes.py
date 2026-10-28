@@ -667,15 +667,17 @@ _RUN_ID_RE = re.compile(r"^[\w][\w\-]*$")
 
 @router.get("/{workflow_id}/tasks/{task_id}/run-profile")
 async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
-                               run_id: str | None = None):
+                               run_id: str | None = None,
+                               compare: bool = False):
     """获取任务一次运行的每阶段尝试/失败画像（R38 §7.4 落地，R40）。
 
     缺省取任务最新一次运行；``?run_id=run-xxx``（R41）查询任意历史 run
-    （前端画像可视化按 run 切换）。与 token-usage 同款只读文件模式：
-    任务 JSON → runs/{run_id}.json → run_profile.build_run_profile 纯函数
-    聚合。不建目录、不写状态——本端点是 GET，读端点「查询即建目录」属
-    B26/B28 同族缺陷（有静态钉测守卫）。非法 run_id 拒 400，run 文件缺失
-    拒 404（任务不存在 / 尚无运行记录语义不变）。
+    （前端画像可视化按 run 切换）。``?compare=true``（R43）额外返回
+    ``comparison`` 块：本次 run 与「上一次 run」的逐阶段失败率/尝试数差值。
+    与 token-usage 同款只读文件模式：任务 JSON → runs/{run_id}.json →
+    run_profile.build_run_profile 纯函数聚合。不建目录、不写状态——本端点是
+    GET，读端点「查询即建目录」属 B26/B28 同族缺陷（有静态钉测守卫）。非法
+    run_id 拒 400，run 文件缺失拒 404（任务不存在 / 尚无运行记录语义不变）。
 
     Returns:
         {run_id, workflow_id, status, started_at, completed_at, wall_seconds,
@@ -685,7 +687,11 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
                    automatic_retry_count, output_repair_count,
                    first_started_at, duration_seconds, error_classes,
                    attempts_detail: [{attempt_number, trigger, status,
-                                      error, error_class, duration_seconds}]}]}
+                                      error, error_class, duration_seconds}]}],
+         comparison: null | {previous_run_id, previous_status, ...,
+                             totals: {...delta 字段...},
+                             stages: [{node_id, ..., delta_failure_rate,
+                                       comparable}]}}（仅 ``?compare=true``）
     """
     task_file = WORKFLOWS_DIR / workflow_id / "tasks" / f"{task_id}.json"
     if not task_file.exists():
@@ -713,9 +719,69 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
 
     from src.workflow.run_profile import build_run_profile
 
-    return build_run_profile(
+    profile = build_run_profile(
         run_data.get("node_executions", []),
         run_id=str(target_run_id),
+        workflow_id=workflow_id,
+        status=str(run_data.get("status", "")),
+        started_at=run_data.get("started_at"),
+        completed_at=run_data.get("completed_at"),
+    )
+    if not compare:
+        return profile
+
+    from src.workflow.run_profile import compare_run_profiles, pick_previous_run
+
+    runs_dir = WORKFLOWS_DIR / workflow_id / "runs"
+    previous_meta = pick_previous_run(
+        {"run_id": str(target_run_id), "started_at": run_data.get("started_at"),
+         "mtime": run_file.stat().st_mtime},
+        _iter_run_metadata(runs_dir))
+    previous_profile = _load_run_profile(runs_dir, previous_meta, workflow_id)
+    profile["comparison"] = (
+        compare_run_profiles(profile, previous_profile)
+        if previous_profile is not None else None)
+    return profile
+
+
+def _iter_run_metadata(runs_dir: Path) -> list[dict]:
+    """扫 runs/ 目录的 run 元数据（只读 stat/JSON，不建目录不写文件）。
+
+    坏 JSON 与读失败一律跳过：对比对象的选择不该被一条损坏记录带歪，
+    这与挖矿脚本「坏记录不占配额」同一取舍。
+    """
+    if not runs_dir.is_dir():
+        return []
+    metas: list[dict] = []
+    for run_file in runs_dir.glob("run-*.json"):
+        try:
+            data = json.loads(run_file.read_text(encoding="utf-8"))
+            mtime = run_file.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        metas.append({
+            "run_id": str(data.get("run_id") or run_file.stem),
+            "started_at": data.get("started_at"),
+            "mtime": mtime,
+        })
+    return metas
+
+
+def _load_run_profile(runs_dir: Path, meta: dict | None,
+                      workflow_id: str) -> dict | None:
+    """按元数据载入该 run 的画像；meta 为空或文件损坏时返回 None（诚实无对比）。"""
+    if not meta:
+        return None
+    from src.workflow.run_profile import build_run_profile
+
+    run_file = runs_dir / f"{meta['run_id']}.json"
+    try:
+        run_data = json.loads(run_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return build_run_profile(
+        run_data.get("node_executions", []),
+        run_id=str(meta["run_id"]),
         workflow_id=workflow_id,
         status=str(run_data.get("status", "")),
         started_at=run_data.get("started_at"),
