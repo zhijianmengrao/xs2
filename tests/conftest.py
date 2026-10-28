@@ -206,3 +206,62 @@ def pytest_collection_modifyitems(config, items):
                     reason="OS-level symlink creation is unavailable in this environment"
                 )
             )
+
+
+# ---------------------------------------------------------------------------
+# R39：真实运行索引防污染守卫（R38 B27 教训的机械化）
+#
+# B27：走「写」分支的路由用例若漏 patch 模块级路径常量（_index 在 import 期
+# 求值，patch DATA_DIR 不联动），tmp_path 会写进真实
+# data/novel-console/workspaces.json。本守卫在每个用例前后对真实索引做
+# 「pytest 临时路径条目」集合差比对，新增即在该用例上报错，精确归因到污染者。
+# 仅抓 pytest 临时路径签名，不约束对真实索引的任何其他合法变更。
+# ---------------------------------------------------------------------------
+
+_REAL_CONSOLE_INDEX = (
+    pathlib.Path(__file__).resolve().parents[1] / "data" / "novel-console" / "workspaces.json"
+)
+
+
+def _polluted_index_entries() -> set[str]:
+    """真实索引中指向 pytest 临时目录的条目；索引缺失/损坏时返回空集。"""
+    import json
+
+    try:
+        entries = json.loads(_REAL_CONSOLE_INDEX.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(entries, list):
+        return set()
+    flagged: set[str] = set()
+    temp_root = pathlib.Path(tempfile.gettempdir()).resolve()
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    # 注意事项 8：本机 %TEMP% 可能回落为进程 CWD（即仓库根），此时 tempdir
+    # 前缀规则会误伤全部合法条目，只保留 pytest-of- 签名规则。
+    temp_rule_usable = not temp_root.is_relative_to(repo_root)
+    for item in entries:
+        text = str(item)
+        if "pytest-of-" in text:
+            flagged.add(text)
+            continue
+        if temp_rule_usable:
+            candidate = pathlib.Path(text)
+            if candidate.is_absolute():
+                try:
+                    candidate.resolve().relative_to(temp_root)
+                except (ValueError, OSError):
+                    continue
+                flagged.add(text)
+    return flagged
+
+
+@pytest.fixture(autouse=True)
+def _no_real_console_index_pollution():
+    before = _polluted_index_entries()
+    yield
+    added = _polluted_index_entries() - before
+    if added:
+        pytest.fail(
+            "本用例把 pytest 临时路径写进了真实运行索引 "
+            f"({_REAL_CONSOLE_INDEX}，R38 B27 家族）：{sorted(added)}"
+        )
