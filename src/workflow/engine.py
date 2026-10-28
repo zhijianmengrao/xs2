@@ -276,6 +276,11 @@ class WorkflowEngine(WorkflowFlowMixin, WorkflowLoopMixin):
         write failure must remain an infrastructure error instead of rewriting an
         already successful execution to ``failed``.
         """
+        # R40：run 记录取证补全——终态盖章（此前只有 task.completed_at，
+        # run JSON 恒为 null，画像 wall_seconds 无法计算）。retry_waiting
+        # 不是终点（任务会被恢复续跑），保持 None 诚实表达「未收尾」。
+        if run_record.completed_at is None and run_record.status != "retry_waiting":
+            run_record.completed_at = _now_iso()
         workflow_main = self._session_manager.sessions.get(workflow_main_id)
         if workflow_main is not None:
             workflow_main.status = "completed"

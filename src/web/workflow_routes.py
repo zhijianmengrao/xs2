@@ -660,6 +660,55 @@ async def get_task_token_usage(workflow_id: str, task_id: str, request: Request)
     }
 
 
+@router.get("/{workflow_id}/tasks/{task_id}/run-profile")
+async def get_task_run_profile(workflow_id: str, task_id: str, request: Request):
+    """获取任务最新一次运行的每阶段尝试/失败画像（R38 §7.4 落地，R40）。
+
+    与 token-usage 同款只读文件模式：任务 JSON 取 run_id → runs/{run_id}.json
+    → run_profile.build_run_profile 纯函数聚合。不建目录、不写状态——本端点
+    是 GET，读端点「查询即建目录」属 B26/B28 同族缺陷（有静态钉测守卫）。
+
+    Returns:
+        {run_id, workflow_id, status, started_at, completed_at, wall_seconds,
+         totals: {stages, attempts, completed, failed, failure_rate,
+                  stages_with_retry, error_classes},
+         stages: [{node_id, attempts, completed, failed, failure_rate,
+                   automatic_retry_count, output_repair_count,
+                   first_started_at, duration_seconds, error_classes,
+                   attempts_detail: [{attempt_number, trigger, status,
+                                      error, error_class, duration_seconds}]}]}
+    """
+    task_file = WORKFLOWS_DIR / workflow_id / "tasks" / f"{task_id}.json"
+    if not task_file.exists():
+        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        task_data = json.loads(task_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, IOError):
+        raise HTTPException(status_code=500, detail="任务文件损坏")
+
+    run_id = task_data.get("run_id")
+    if not run_id:
+        raise HTTPException(status_code=404, detail="任务尚无运行记录")
+    run_file = WORKFLOWS_DIR / workflow_id / "runs" / f"{run_id}.json"
+    if not run_file.is_file():
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    try:
+        run_data = json.loads(run_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, IOError):
+        raise HTTPException(status_code=500, detail="运行记录损坏")
+
+    from src.workflow.run_profile import build_run_profile
+
+    return build_run_profile(
+        run_data.get("node_executions", []),
+        run_id=str(run_id),
+        workflow_id=workflow_id,
+        status=str(run_data.get("status", "")),
+        started_at=run_data.get("started_at"),
+        completed_at=run_data.get("completed_at"),
+    )
+
+
 @router.post("/{workflow_id}/tasks/{task_id}/stop")
 async def stop_task(workflow_id: str, task_id: str, request: Request):
     """停止正在运行的任务。"""
