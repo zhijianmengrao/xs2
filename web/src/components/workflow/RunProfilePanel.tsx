@@ -15,6 +15,7 @@ import { formatAttemptTrigger } from "./nodeFailureUtils";
 import {
   attemptStatusClass,
   attemptStatusLabel,
+  describeStageChanges,
   errorClassBadgeClass,
   errorClassLabel,
   failureRateDeltaClass,
@@ -25,6 +26,8 @@ import {
   formatFailureRateDelta,
   formatProfileTime,
   sortedAttempts,
+  stageChangeOf,
+  summarizeStageChanges,
 } from "./runProfileView";
 
 export type RunProfileFetcher =
@@ -191,6 +194,8 @@ export default function RunProfilePanel({
   const [error, setError] = useState("");
   const [runQuery, setRunQuery] = useState("");
   const [compareEnabled, setCompareEnabled] = useState(false);
+  /** R47：只看「有变化」的阶段（退步/改善），跳过持平与不可比 */
+  const [changesOnly, setChangesOnly] = useState(false);
 
   const fetchRun = useCallback(async (runId?: string, compare?: boolean) => {
     setLoading(true);
@@ -225,6 +230,15 @@ export default function RunProfilePanel({
   // 同一 node_id 在本 run 可执行多次，对比行按 node_id 汇总（后端同口径）
   const comparisonByNode = new Map<string, RunProfileComparisonStage>(
     (comparison?.stages || []).map((item) => [item.node_id, item]));
+
+  // R47：对比摘要与「只看变化」过滤。都从同一份 comparison.stages 算，
+  // 保证顶部摘要与列表过滤口径一致（不会出现摘要说 2 个退步、列表只剩 1 个）。
+  const changeSummary = compareEnabled && comparison
+    ? summarizeStageChanges(comparison.stages) : null;
+  const changedNodeIds = new Set(changeSummary?.changedNodeIds || []);
+  const visibleStages = (compareEnabled && changesOnly && changeSummary)
+    ? stages.filter((stage) => changedNodeIds.has(stage.node_id))
+    : stages;
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="任务运行画像">
@@ -296,6 +310,18 @@ export default function RunProfilePanel({
             />
             与上一次 run 对比
           </label>
+          {compareEnabled && comparison && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={changesOnly}
+                onChange={(e) => setChangesOnly(e.target.checked)}
+                aria-label="只看有变化的阶段"
+                className="accent-primary cursor-pointer"
+              />
+              只看有变化的阶段
+            </label>
+          )}
           {error && <p className="text-xs text-destructive break-all" role="alert">{error}</p>}
         </div>
 
@@ -348,6 +374,38 @@ export default function RunProfilePanel({
                     <p className="mt-1 text-xs text-muted-foreground">
                       差值口径：本次 − 上一次；正值=退步，负值=改善。
                     </p>
+                    {changeSummary && (
+                      <div className="mt-2 border-t border-primary/10 pt-2"
+                           data-stage-change-summary="true">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                          <span className="text-muted-foreground">阶段变化</span>
+                          <span className="text-foreground">{describeStageChanges(changeSummary)}</span>
+                          <span className="text-muted-foreground">（共 {changeSummary.total} 个阶段）</span>
+                        </div>
+                        {changeSummary.changedNodeIds.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {changeSummary.changedNodeIds.map((nodeId) => {
+                              const item = comparisonByNode.get(nodeId);
+                              const change = stageChangeOf(
+                                item?.delta_failure_rate, item?.comparable ?? false);
+                              const tone = change === "regressed"
+                                ? "bg-destructive/10 text-destructive border-destructive/20"
+                                : "bg-success/10 text-success border-success/20";
+                              return (
+                                <span key={nodeId}
+                                      data-stage-change={change}
+                                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-mono ${tone}`}>
+                                  {nodeId}
+                                  <span className="font-sans">
+                                    {formatFailureRateDelta(item?.delta_failure_rate)}
+                                  </span>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="rounded-xl border border-primary/10 bg-card p-3 text-xs text-muted-foreground"
@@ -358,16 +416,23 @@ export default function RunProfilePanel({
               )}
               {stages.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">该 run 无阶段执行记录</p>
+              ) : visibleStages.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground"
+                   data-changes-only-empty="true">
+                  与上一次 run 相比没有阶段变化（取消「只看有变化的阶段」可看全部）。
+                </p>
               ) : (
-                stages.map((stage, index) => {
-                  // 同一 node_id 可在一个 run 内多次执行（如 agent_deep 循环 N 次），
-                  // index+node_id 保证 key 唯一；重复时卡片头标 `#n` 便于逐次区分。
-                  const ordinal = stages.slice(0, index + 1)
+                visibleStages.map((stage) => {
+                  // 同一 node_id 可在一个 run 内多次执行（如 agent_deep 循环 N 次）。
+                  // 序号必须在**原始 stages** 上定位：过滤后下标会失真（R47 引入
+                  // 「只看变化」后踩到过），key 与 `#n` 都跟着原数组走。
+                  const original = stages.indexOf(stage);
+                  const ordinal = stages.slice(0, original + 1)
                     .filter((s) => s.node_id === stage.node_id).length;
                   const duplicate = stages.filter((s) => s.node_id === stage.node_id).length > 1;
                   return (
                     <StageCard
-                      key={`${stage.node_id}-${index}`}
+                      key={`${stage.node_id}-${original}`}
                       stage={stage}
                       ordinal={ordinal}
                       duplicate={duplicate}

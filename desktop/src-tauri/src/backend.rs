@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -110,8 +110,6 @@ fn terminate_macos_process_group(child: &mut Child) {
 
 #[cfg(target_os = "macos")]
 fn send_macos_process_group_signal(process_group: i32, signal: i32) {
-    // The backend is launched as its own process-group leader. A negative PID
-    // targets every process in that group, including Workflow executors.
     unsafe {
         libc::kill(-process_group, signal);
     }
@@ -145,7 +143,12 @@ pub fn launch(app: &AppHandle) -> Result<LaunchedBackend, String> {
         return Err(format!("内置后端不存在: {}", backend_path.display()));
     }
 
-    let port = reserve_local_port()?;
+    let config_dir = user_root.join("config");
+    fs::create_dir_all(&config_dir)
+        .map_err(|error| format!("无法创建配置目录: {error}"))?;
+    let port_file = config_dir.join("backend-port");
+    let _ = fs::remove_file(&port_file);
+
     let log_path = logs_dir.join("backend-console.log");
     let stdout = open_log(&log_path)?;
     let stderr = stdout
@@ -155,7 +158,7 @@ pub fn launch(app: &AppHandle) -> Result<LaunchedBackend, String> {
     let mut command = Command::new(&backend_path);
     command
         .arg("--port")
-        .arg(port.to_string())
+        .arg("0")
         .arg("--user-data-dir")
         .arg(&user_root)
         .current_dir(&user_root)
@@ -180,13 +183,52 @@ pub fn launch(app: &AppHandle) -> Result<LaunchedBackend, String> {
     #[cfg(target_os = "macos")]
     command.process_group(0);
 
-    let child = command
+    let mut child = command
         .spawn()
         .map_err(|error| format!("无法启动内置后端: {error}"))?;
+
+    let actual_port = match read_port_file(&port_file, &mut child, STARTUP_TIMEOUT) {
+        Ok(port) => port,
+        Err(error) => {
+            terminate_child(&mut child);
+            return Err(format!("{}（详见 backend-console.log）", error));
+        }
+    };
+
     Ok(LaunchedBackend {
         child,
-        url: format!("http://127.0.0.1:{port}"),
+        url: format!("http://127.0.0.1:{}", actual_port),
     })
+}
+
+/// 等后端把实际监听端口写进端口文件。
+///
+/// 子进程提前退出时立刻返回错误，而不是把 90 秒超时白等完——「后端崩了」
+/// 与「后端慢」在诊断上完全不同（R47）。
+fn read_port_file(path: &Path, child: &mut Child, timeout: Duration) -> Result<u16, String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(format!("后端在报告端口前退出（{status}）"));
+        }
+        if let Ok(content) = fs::read_to_string(path) {
+            for line in content.lines() {
+                if let Some(port_str) = line.strip_prefix("LISTEN_PORT=") {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        if port > 0 {
+                            return Ok(port);
+                        }
+                    }
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "后端未在 {} 秒内上报监听端口（{}）",
+        timeout.as_secs(),
+        path.display()
+    ))
 }
 
 pub fn wait_until_ready(base_url: &str) -> Result<(), String> {
@@ -241,15 +283,6 @@ fn request_status(address: &str) -> Result<u16, String> {
     Ok(status)
 }
 
-fn reserve_local_port() -> Result<u16, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| format!("无法分配本地端口: {error}"))?;
-    listener
-        .local_addr()
-        .map(|address| address.port())
-        .map_err(|error| format!("无法读取本地端口: {error}"))
-}
-
 fn resolve_backend_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("DETERMINFLOW_DESKTOP_BACKEND") {
         return Ok(PathBuf::from(path));
@@ -274,13 +307,12 @@ fn open_log(path: &Path) -> Result<std::fs::File, String> {
         .create(true)
         .append(true)
         .open(path)
-        .map_err(|error| format!("无法打开后端日志 {}: {error}", path.display()))
+        .map_err(|error| format!("无法打开后端日志 {}: {}", path.display(), error))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpListener;
 
     fn spawn_long_running_child() -> Child {
         #[cfg(target_os = "windows")]
@@ -333,10 +365,77 @@ mod tests {
     }
 
     #[test]
-    fn reserves_a_loopback_port() {
-        let port = reserve_local_port().expect("port should be available");
-        assert!(port > 0);
-        TcpListener::bind(("127.0.0.1", port)).expect("reserved port should be released");
+    fn read_port_file_parses_listen_port_line() {
+        let dir = std::env::temp_dir().join("determinflow-port-test");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("backend-port");
+        let _ = fs::remove_file(&path);
+        fs::write(&path, b"LISTEN_PORT=54321\n").unwrap();
+
+        let mut child = spawn_long_running_child();
+        let port = read_port_file(&path, &mut child, Duration::from_secs(2))
+            .expect("should read port");
+        assert_eq!(port, 54321);
+        terminate_child(&mut child);
+    }
+
+    #[test]
+    fn read_port_file_rejects_zero_and_garbage() {
+        let dir = std::env::temp_dir().join("determinflow-port-test-bad");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("backend-port");
+        let _ = fs::remove_file(&path);
+        let mut child = spawn_long_running_child();
+
+        // zero is rejected
+        fs::write(&path, b"LISTEN_PORT=0\n").unwrap();
+        let result = read_port_file(&path, &mut child, Duration::from_millis(200));
+        assert!(result.is_err(), "zero port should be rejected");
+
+        // garbage is ignored
+        fs::write(&path, b"hello world\n").unwrap();
+        let result = read_port_file(&path, &mut child, Duration::from_millis(200));
+        assert!(result.is_err(), "garbage should be ignored");
+        terminate_child(&mut child);
+    }
+
+    #[test]
+    fn read_port_file_reports_early_child_exit() {
+        let dir = std::env::temp_dir().join("determinflow-port-test-exit");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("backend-port");
+        let _ = fs::remove_file(&path);
+
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "exit 3"]).creation_flags(CREATE_NO_WINDOW);
+            command
+        };
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 3"]);
+            command
+        };
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("short-lived child should start");
+
+        let started = Instant::now();
+        let error = read_port_file(&path, &mut child, Duration::from_secs(30))
+            .expect_err("exited child should be reported");
+        assert!(
+            error.contains("退出"),
+            "错误信息应说明进程已退出，实得: {error}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "进程退出应立即返回，而不是等满 30 秒超时"
+        );
     }
 
     #[test]

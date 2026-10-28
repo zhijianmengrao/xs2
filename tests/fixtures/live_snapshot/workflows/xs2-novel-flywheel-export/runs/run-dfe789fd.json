@@ -1,0 +1,34 @@
+{
+  "run_id": "run-dfe789fd",
+  "workflow_id": "xs2-novel-flywheel-export",
+  "status": "completed",
+  "started_at": "2026-10-28T08:34:30.895325+08:00",
+  "completed_at": "2026-10-28T08:34:30.966378+08:00",
+  "node_executions": [
+    {
+      "node_id": "script_export_manuscript",
+      "status": "completed",
+      "started_at": "2026-10-28T08:34:30.896061+08:00",
+      "completed_at": "2026-10-28T08:34:30.965499+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-28T08:34:30.896061+08:00",
+          "completed_at": "2026-10-28T08:34:30.965499+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}

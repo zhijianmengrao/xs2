@@ -64,6 +64,26 @@ jobs:
             python scripts/provider_failure_profile.py --limit 100 --require-sample \
             --fail-if-above 15 --summary
 
+      # 真实数据面（R47）：上一步的 fixture 是**固定**样本，只能证明「闸门与
+      # 脚本不退化」，判不了「这批 run 的真实失败率」（HANDOVER_ROUND46 §2.1
+      # 的判据边界）。本步判入库的真实快照 tests/fixtures/live_snapshot ——
+      # 从本机真实 run 记录裁剪而来，带 snapshot-meta.json 记录导出时的数字。
+      #
+      # 为什么不是「又一个恒绿」：阈值由快照自身实测失败率 + 余量算出，且脚本
+      # 先校验「元数据与内容复算一致」——内容变了而没重导元数据会以退出码 4
+      # 失败。退出码语义与 R45/R46 的闸门一致：0 通过 / 1 超阈 / 3 无样本。
+      - name: Provider failure-rate gate against real snapshot
+        env:
+          DETERMINFLOW_DATA_DIR: ${{ github.workspace }}/tests/fixtures/live_snapshot
+        run: |
+          # 先跑闸门再解释退出码；不能靠 `set -e` 抢走退出码（$? 会是 0）。
+          code=0
+          python scripts/check_live_snapshot_gate.py || code=$?
+          cat <<'EOF'
+          退出码：0=通过 1=超阈 3=无样本 4=元数据漂移（改过快照但没重导）
+          EOF
+          exit $code
+
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
   # 快速跨平台信号；本 job 与本机 High-IL 全量跑（docs/PROJECT_INFO.md 测试环境）

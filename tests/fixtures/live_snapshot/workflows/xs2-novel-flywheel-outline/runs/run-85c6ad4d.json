@@ -1,0 +1,209 @@
+{
+  "run_id": "run-85c6ad4d",
+  "workflow_id": "xs2-novel-flywheel-outline",
+  "status": "completed",
+  "started_at": "2026-10-27T10:25:53.374439+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_story_context",
+      "status": "completed",
+      "started_at": "2026-10-27T10:25:53.375253+08:00",
+      "completed_at": "2026-10-27T10:25:53.474634+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:25:53.375253+08:00",
+          "completed_at": "2026-10-27T10:25:53.474634+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_down",
+      "status": "completed",
+      "started_at": "2026-10-27T10:25:53.475755+08:00",
+      "completed_at": "2026-10-27T10:25:53.552792+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:25:53.475755+08:00",
+          "completed_at": "2026-10-27T10:25:53.552792+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_vo",
+      "status": "completed",
+      "started_at": "2026-10-27T10:25:53.554165+08:00",
+      "completed_at": "2026-10-27T10:29:54.624665+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:25:53.554165+08:00",
+          "completed_at": "2026-10-27T10:29:54.624665+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_vo_post",
+      "status": "completed",
+      "started_at": "2026-10-27T10:29:54.625975+08:00",
+      "completed_at": "2026-10-27T10:29:54.735200+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:29:54.625975+08:00",
+          "completed_at": "2026-10-27T10:29:54.735200+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_up_vo",
+      "status": "completed",
+      "started_at": "2026-10-27T10:29:54.736813+08:00",
+      "completed_at": "2026-10-27T10:29:54.827626+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:29:54.736813+08:00",
+          "completed_at": "2026-10-27T10:29:54.827626+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_no",
+      "status": "completed",
+      "started_at": "2026-10-27T10:29:54.828979+08:00",
+      "completed_at": "2026-10-27T10:30:35.346800+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:29:54.828979+08:00",
+          "completed_at": "2026-10-27T10:30:35.346800+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_no_post",
+      "status": "completed",
+      "started_at": "2026-10-27T10:30:35.348513+08:00",
+      "completed_at": "2026-10-27T10:30:35.423665+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:30:35.348513+08:00",
+          "completed_at": "2026-10-27T10:30:35.423665+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_up_no",
+      "status": "completed",
+      "started_at": "2026-10-27T10:30:35.425206+08:00",
+      "completed_at": "2026-10-27T10:30:35.511586+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T10:30:35.425206+08:00",
+          "completed_at": "2026-10-27T10:30:35.511586+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}

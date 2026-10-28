@@ -31,20 +31,6 @@ function Get-CommandExecutable([string]$CommandLine) {
     return ($CommandLine -split " ", 2)[0]
 }
 
-function Get-FreeTcpPort {
-    $Listener = [System.Net.Sockets.TcpListener]::new(
-        [System.Net.IPAddress]::Loopback,
-        0
-    )
-    $Listener.Start()
-    try {
-        return ([System.Net.IPEndPoint]$Listener.LocalEndpoint).Port
-    }
-    finally {
-        $Listener.Stop()
-    }
-}
-
 function Get-InstalledBackendProcesses([string]$BackendExecutable) {
     $ExpectedPath = [System.IO.Path]::GetFullPath($BackendExecutable)
     return @(
@@ -117,17 +103,49 @@ function Wait-InstalledBackendExit([string]$BackendExecutable) {
     throw "Installed backend processes did not exit: $($Remaining.ProcessId -join ', ')"
 }
 
+function Get-BackendPortFromFile([string]$UserData) {
+    $PortFile = Join-Path $UserData "config\backend-port"
+    $Deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $Deadline) {
+        if (Test-Path $PortFile) {
+            foreach ($Line in (Get-Content $PortFile -ErrorAction SilentlyContinue)) {
+                if ($Line -match '^LISTEN_PORT=(\d+)$') {
+                    $Value = [int]$Matches[1]
+                    if ($Value -gt 0) {
+                        return $Value
+                    }
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return 0
+}
+
 function Start-TestBackend([string]$BackendExecutable, [string]$UserData) {
-    $Port = Get-FreeTcpPort
-    $Arguments = "--port $Port --user-data-dir `"$UserData`""
+    # R47：后端自选端口（--port 0）并把实际端口写进 config/backend-port。
+    # 不再由脚本预留端口再交给后端，从根上消掉「释放再复用」的 TOCTOU 窗口。
+    $PortFile = Join-Path $UserData "config\backend-port"
+    if (Test-Path $PortFile) {
+        Remove-Item $PortFile -Force -ErrorAction SilentlyContinue
+    }
+    $Arguments = "--port 0 --user-data-dir `"$UserData`""
     $Process = Start-Process `
         -FilePath $BackendExecutable `
         -ArgumentList $Arguments `
         -PassThru
     $Deadline = (Get-Date).AddSeconds(180)
+    $Port = 0
     while ((Get-Date) -lt $Deadline) {
         if ($Process.HasExited) {
             throw "Standalone backend exited before becoming ready"
+        }
+        if ($Port -eq 0) {
+            $Port = Get-BackendPortFromFile $UserData
+        }
+        if ($Port -eq 0) {
+            Start-Sleep -Milliseconds 250
+            continue
         }
         try {
             $Response = Invoke-WebRequest `

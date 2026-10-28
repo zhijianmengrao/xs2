@@ -1,0 +1,66 @@
+{
+  "exported_at": "2026-10-28T12:30:35+00:00",
+  "source_root": "workflows",
+  "per_workflow": {
+    "xs2-novel-flywheel-build": {
+      "runs": 2,
+      "attempts": 14,
+      "failed": 1,
+      "failure_rate": 0.0714
+    },
+    "xs2-novel-flywheel-character": {
+      "runs": 2,
+      "attempts": 45,
+      "failed": 1,
+      "failure_rate": 0.0222
+    },
+    "xs2-novel-flywheel-export": {
+      "runs": 2,
+      "attempts": 2,
+      "failed": 0,
+      "failure_rate": 0.0
+    },
+    "xs2-novel-flywheel-mvp": {
+      "runs": 2,
+      "attempts": 56,
+      "failed": 4,
+      "failure_rate": 0.0714
+    },
+    "xs2-novel-flywheel-outline": {
+      "runs": 2,
+      "attempts": 16,
+      "failed": 0,
+      "failure_rate": 0.0
+    },
+    "xs2-novel-flywheel-polish": {
+      "runs": 2,
+      "attempts": 14,
+      "failed": 0,
+      "failure_rate": 0.0
+    },
+    "xs2-novel-flywheel-post-hoc": {
+      "runs": 2,
+      "attempts": 16,
+      "failed": 1,
+      "failure_rate": 0.0625
+    },
+    "xs2-novel-flywheel-reader-sim": {
+      "runs": 2,
+      "attempts": 8,
+      "failed": 0,
+      "failure_rate": 0.0
+    },
+    "xs2-novel-flywheel-story-plan": {
+      "runs": 2,
+      "attempts": 16,
+      "failed": 0,
+      "failure_rate": 0.0
+    }
+  },
+  "totals": {
+    "runs": 18,
+    "attempts": 187,
+    "failed": 7,
+    "failure_rate": 0.0374
+  }
+}

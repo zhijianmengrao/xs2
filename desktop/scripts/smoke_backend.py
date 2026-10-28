@@ -6,7 +6,6 @@ import argparse
 from collections import Counter
 import json
 import logging
-import socket
 import subprocess
 import sys
 import tempfile
@@ -22,12 +21,6 @@ from src.workflow.executor_process import force_kill_pid, process_is_alive
 
 
 LOGGER = logging.getLogger("desktop.smoke_backend")
-
-
-def _free_port() -> int:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
 
 
 def _seed_smoke_model(user_root: Path) -> None:
@@ -269,19 +262,36 @@ def _wait_for_processes_exit(pids: list[int], timeout: float) -> list[int]:
     return [pid for pid in pids if process_is_alive(pid)]
 
 
+def _read_listen_port(port_file: Path, timeout: float) -> int | None:
+    """等后端把自己的实际端口写进文件（R47：后端自选端口，不再由外部预留）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if port_file.is_file():
+            try:
+                for line in port_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.startswith("LISTEN_PORT="):
+                        port = int(line.split("=", 1)[1])
+                        if port > 0:
+                            return port
+            except (OSError, ValueError):
+                pass
+        time.sleep(0.05)
+    return None
+
+
 def smoke_backend(executable: Path, timeout: float = 60.0) -> None:
-    port = _free_port()
     member_pids: list[int] = []
     with tempfile.TemporaryDirectory(prefix="determinflow-desktop-smoke-") as root:
         user_root = Path(root)
         _seed_smoke_model(user_root)
         log_path = Path(root) / "backend.log"
+        port_file = user_root / "config" / "backend-port"
         with log_path.open("wb") as log_file:
             process = subprocess.Popen(
                 [
                     str(executable),
                     "--port",
-                    str(port),
+                    "0",
                     "--user-data-dir",
                     root,
                 ],
@@ -291,12 +301,20 @@ def smoke_backend(executable: Path, timeout: float = 60.0) -> None:
             )
             try:
                 deadline = time.monotonic() + timeout
-                url = f"http://127.0.0.1:{port}/api/system/status"
-                base_url = f"http://127.0.0.1:{port}"
+                url = ""
+                base_url = ""
                 last_status_error: Exception | None = None
+                port: int | None = None
                 while time.monotonic() < deadline:
                     if process.poll() is not None:
                         break
+                    if port is None:
+                        port = _read_listen_port(port_file, timeout=0.5)
+                        if port is not None:
+                            url = f"http://127.0.0.1:{port}/api/system/status"
+                            base_url = f"http://127.0.0.1:{port}"
+                    if port is None:
+                        continue
                     try:
                         status = _request_json(url, timeout=2)
                         member_pids = _assert_process_pool(status, process.pid)

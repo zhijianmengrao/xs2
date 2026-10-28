@@ -266,6 +266,55 @@ def test_desktop_lifecycle_cleans_up_the_backend_before_every_exit() -> None:
     assert "/IM determinflow-backend.exe" in hooks
 
 
+def test_desktop_backend_self_selects_its_port(tmp_path: Path) -> None:
+    """R47：端口 TOCTOU 根治。
+
+    旧设计是 Rust 先 bind 一个空闲端口拿到号码、listener 随函数返回被 drop
+    （端口释放）、再把号码传给后端重新 bind。两步之间任何进程占走该端口，
+    后端就 bind 失败——R46 §10.3 的 Full NSIS 冒烟间歇失败正是这个窗口。
+    新协议：Rust 传 `--port 0`，后端自己 bind port 0 并把**同一个 socket**
+    交给 uvicorn，实际端口写进 config/backend-port。全程不释放，窗口消失。
+    """
+    backend_source = (
+        REPO_ROOT / "desktop" / "src-tauri" / "src" / "backend.rs"
+    ).read_text(encoding="utf-8")
+    entrypoint_source = (
+        REPO_ROOT / "desktop" / "python" / "entrypoint.py"
+    ).read_text(encoding="utf-8")
+
+    # 预留再复用的旧协议必须彻底消失
+    assert "reserve_local_port" not in backend_source, (
+        "reserve_local_port 是 TOCTOU 的来源，不应再存在"
+    )
+    assert ".arg(\"0\")" in backend_source, "Rust 端应传 --port 0 让后端自选"
+    assert "backend-port" in backend_source, "Rust 端应从端口文件读取实际端口"
+    assert "backend-port" in entrypoint_source, "后端应写出实际端口"
+
+    # 后端必须把已 bind 的 socket 交给 uvicorn，而不是关掉再按端口重开
+    assert "sockets=[sock]" in entrypoint_source, (
+        "必须把已绑定的 socket 直接交给 uvicorn，否则等于回到「释放再复用」"
+    )
+
+    # 端口文件是协议的一部分，解析规则要被钉住
+    assert "LISTEN_PORT=" in entrypoint_source
+    assert "LISTEN_PORT=" in backend_source
+
+    # smoke 脚本不得再自己预留端口
+    smoke_source = (
+        REPO_ROOT / "desktop" / "scripts" / "smoke_backend.py"
+    ).read_text(encoding="utf-8")
+    assert "_free_port" not in smoke_source, (
+        "smoke 脚本继续自行预留端口会把 TOCTOU 搬到测试侧"
+    )
+    installer_smoke = (
+        REPO_ROOT / "desktop" / "scripts" / "smoke_installer.ps1"
+    ).read_text(encoding="utf-8")
+    assert "Get-FreeTcpPort" not in installer_smoke, (
+        "installer 冒烟脚本不得再自行预留端口"
+    )
+    assert "Get-BackendPortFromFile" in installer_smoke
+
+
 def test_desktop_workflow_builds_candidates_and_publishes_tags() -> None:
     workflow = (
         REPO_ROOT / ".github" / "workflows" / "desktop-windows.yml"

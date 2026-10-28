@@ -122,3 +122,67 @@ export function formatDurationDelta(delta: number | null | undefined): string {
   const magnitude = formatDurationSeconds(Math.abs(delta));
   return `${delta > 0 ? "+" : "-"}${magnitude}`;
 }
+
+/** 阶段变化方向（R47 对比视图演进）。
+ *  regressed = 失败率变高；improved = 变低；flat = 有可比数据但没变；
+ *  incomparable = 任一侧无尝试（「无数据」不等于 0%，单列一档不混入 flat）。 */
+export type StageChange = "regressed" | "improved" | "flat" | "incomparable";
+
+export function stageChangeOf(delta: number | null | undefined, comparable: boolean): StageChange {
+  if (!comparable || delta == null || !Number.isFinite(delta)) return "incomparable";
+  const pct = Math.round(delta * 100);
+  if (pct > 0) return "regressed";
+  if (pct < 0) return "improved";
+  return "flat";
+}
+
+export const STAGE_CHANGE_LABELS: Record<StageChange, string> = {
+  regressed: "退步",
+  improved: "改善",
+  flat: "持平",
+  incomparable: "不可比",
+};
+
+/** 分组顺序：先看退步（最需要行动），再看改善，最后持平/不可比。 */
+const STAGE_CHANGE_ORDER: StageChange[] = ["regressed", "improved", "flat", "incomparable"];
+
+export interface StageChangeSummary {
+  counts: Record<StageChange, number>;
+  /** 有变化的阶段 node_id（退步在前、改善次之），供「只看变化」过滤 */
+  changedNodeIds: string[];
+  total: number;
+}
+
+/** 把逐阶段对比汇成一句话的摘要（纯函数，供顶部块与测试共用）。 */
+export function summarizeStageChanges(
+  stages: Array<{ node_id: string; delta_failure_rate?: number | null; comparable: boolean }> | undefined,
+): StageChangeSummary {
+  const counts: Record<StageChange, number> = {
+    regressed: 0, improved: 0, flat: 0, incomparable: 0,
+  };
+  const changedNodeIds: string[] = [];
+  const list = Array.isArray(stages) ? stages : [];
+
+  for (const stage of list) {
+    const change = stageChangeOf(stage.delta_failure_rate, stage.comparable);
+    counts[change] += 1;
+    if (change === "regressed" || change === "improved") changedNodeIds.push(stage.node_id);
+  }
+  // 变化列表按方向排序（退步在前），同方向内保持后端给的顺序（已按失败数降序）
+  const ordered = STAGE_CHANGE_ORDER.flatMap((change) =>
+    change === "regressed" || change === "improved"
+      ? list.filter((s) => stageChangeOf(s.delta_failure_rate, s.comparable) === change)
+        .map((s) => s.node_id)
+      : [],
+  );
+  return { counts, changedNodeIds: ordered.length ? ordered : changedNodeIds, total: list.length };
+}
+
+/** 摘要一句话：只列非零档，全零时明说「无阶段变化」。 */
+export function describeStageChanges(summary: StageChangeSummary): string {
+  const parts = STAGE_CHANGE_ORDER
+    .filter((change) => summary.counts[change] > 0)
+    .map((change) => `${STAGE_CHANGE_LABELS[change]} ${summary.counts[change]}`);
+  if (parts.length === 0) return "无阶段变化";
+  return parts.join(" · ");
+}

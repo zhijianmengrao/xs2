@@ -149,6 +149,37 @@ def test_classify_error_buckets():
     assert classify_error("weird failure") == "other"
 
 
+def test_classify_error_prefers_specific_signal_over_broad_one():
+    """R47 §2.1：越具体的模式越先匹配。
+
+    真实错误文本常同时含多个桶的关键词，旧的「stream_stall 宽匹配在前」把
+    `peer closed connection ... incomplete chunked read` 判成了流式停摆，
+    掩盖了连接层故障（R46 §5-2 记录的正是这条）。强信号先于宽匹配后，
+    两个桶各自归位。
+    """
+    peer_closed = ("peer closed connection without sending complete message body "
+                   "(incomplete chunked read)")
+    assert classify_error(peer_closed) == "connection"
+    # 同一个词 chunk 出现在两条不同性质的错误里，必须靠强信号分开
+    assert classify_error("stream chunk 停摆") == "stream_stall"
+
+
+def test_classify_error_stream_stall_is_not_swallowed_by_connection_wording():
+    """LangChain 停摆原文带一句「The connection may be alive at the TCP layer」：
+    若 connection 的宽匹配排在前面，所有流式停摆都会被误判成连接错误。"""
+    stall = ("No streaming chunk received for 120.0s (model=z-ai/glm-5.3-flash, "
+             "chunks_received=1456). The connection may be alive at the TCP layer "
+             "but is not producing content. Tune or disable via the "
+             "`stream_chunk_timeout` constructor kwarg.")
+    assert classify_error(stall) == "stream_stall"
+
+
+def test_classify_error_keeps_plain_timeout_distinguishable():
+    """显式超时措辞仍归 timeout —— 不被附近出现的 chunk/stream 字样抢走。"""
+    assert classify_error("upstream request timed out after 30s") == "timeout"
+    assert classify_error("HTTP 524 upstream timeout") == "http_5xx"
+
+
 def test_engine_finalize_stamps_run_completed_at(tmp_path, monkeypatch):
     """R40 观察项修复回归：run 记录终态盖章（此前恒 null，画像 wall_seconds
     无法计算）；retry_waiting 是恢复中转而非终点，不盖章。"""

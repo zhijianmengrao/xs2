@@ -28,8 +28,28 @@ from typing import Any
 
 # 供应商侧已实测的失败形态（R38 §2.0）：流式停摆表现为 120s/600s 超时打穿、
 # 免费档 530/524/502。分类按错误文本关键词，宽松命中。
+#
+# **顺序即判据**（R47）：同一条真实错误文本常同时含多个桶的关键词，谁先匹配
+# 就决定它进哪个桶。R46 §5-2 的实例是 `peer closed connection without sending
+# complete message body (incomplete chunked read)`——它既有 connection 也有
+# chunk，旧的「stream_stall 在前」把它判成了流式停摆，掩盖了真实的连接层故障。
+# 因此改成「强信号优先、宽匹配兜底」两层：
+#   1. http_5xx          数字状态码，最无歧义
+#   2. connection（强）   peer closed / connection reset|refused|aborted / 连接被重置
+#   3. stream_stall（强） no streaming chunk / stream_chunk_timeout / 流式停摆
+#   4. timeout           显式超时措辞（供应商原文常写 timed out）
+#   5. stream_stall（宽） 仅出现 stream/chunk 字样、没有更强信号
+#   6. connection（宽）   仅出现 connection/连接 字样
+# 强信号层之所以必须存在：LangChain 的停摆原文里带一句 "The connection may be
+# alive at the TCP layer"，若 connection 的宽匹配排在前面，所有流式停摆都会被
+# 误判成连接错误——两层结构同时让「真连接故障」和「真流式停摆」各归其位。
 _ERROR_CLASS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("http_5xx", re.compile(r"\b(?:500|502|503|504|524|529|530)\b|http 5\d\d", re.IGNORECASE)),
+    ("connection", re.compile(
+        r"peer closed|connection (?:reset|refused|aborted|closed)"
+        r"|incomplete chunked read|连接被?(?:重置|拒绝|中断|断开)", re.IGNORECASE)),
+    ("stream_stall", re.compile(
+        r"no streaming chunk|stream_chunk_timeout|流式停摆|停摆", re.IGNORECASE)),
     ("timeout", re.compile(r"timed? ?out|timeout|超时", re.IGNORECASE)),
     ("stream_stall", re.compile(r"stream|chunk|流式", re.IGNORECASE)),
     ("connection", re.compile(r"connection|refused|reset|unreachable|连接", re.IGNORECASE)),

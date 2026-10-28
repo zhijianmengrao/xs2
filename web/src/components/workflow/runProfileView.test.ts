@@ -11,7 +11,10 @@ import {
   formatDurationSeconds,
   formatFailureRate,
   formatFailureRateDelta,
+  describeStageChanges,
   sortedAttempts,
+  stageChangeOf,
+  summarizeStageChanges,
 } from "./runProfileView";
 import type { RunProfileAttemptDetail } from "../../types";
 
@@ -93,4 +96,53 @@ test("count delta and duration delta show explicit signs", () => {
   assert.equal(formatDurationDelta(-30), "-30 秒");
   assert.equal(formatDurationDelta(0), "持平");
   assert.equal(formatDurationDelta(null), "-");
+});
+
+// ---------- R47 对比视图演进：阶段变化分档 ----------
+
+test("stage change buckets never fake data for incomparable stages", () => {
+  assert.equal(stageChangeOf(0.17, true), "regressed");
+  assert.equal(stageChangeOf(-0.17, true), "improved");
+  assert.equal(stageChangeOf(0, true), "flat");
+  // 任一侧无尝试 → 不可比，绝不混进「持平」（持平意味着「比过且没变」）
+  assert.equal(stageChangeOf(null, false), "incomparable");
+  assert.equal(stageChangeOf(0.2, false), "incomparable");
+  assert.equal(stageChangeOf(NaN, true), "incomparable");
+  // 四舍五入后为 0 的小差值算持平（展示层与 formatFailureRateDelta 同口径）
+  assert.equal(stageChangeOf(0.004, true), "flat");
+});
+
+test("change summary orders regressions first and counts every bucket", () => {
+  const summary = summarizeStageChanges([
+    { node_id: "a", delta_failure_rate: 0.2, comparable: true },
+    { node_id: "b", delta_failure_rate: -0.1, comparable: true },
+    { node_id: "c", delta_failure_rate: 0, comparable: true },
+    { node_id: "d", delta_failure_rate: null, comparable: false },
+    { node_id: "e", delta_failure_rate: 0.05, comparable: true },
+  ]);
+  assert.deepEqual(summary.counts,
+    { regressed: 2, improved: 1, flat: 1, incomparable: 1 });
+  assert.equal(summary.total, 5);
+  // 退步在前（最需要行动），改善次之
+  assert.deepEqual(summary.changedNodeIds, ["a", "e", "b"]);
+});
+
+test("change summary tolerates missing stages and reports no-change honestly", () => {
+  const empty = summarizeStageChanges(undefined);
+  assert.equal(empty.total, 0);
+  assert.equal(describeStageChanges(empty), "无阶段变化");
+
+  const flat = summarizeStageChanges([
+    { node_id: "a", delta_failure_rate: 0, comparable: true },
+  ]);
+  assert.deepEqual(flat.changedNodeIds, []);
+  assert.equal(describeStageChanges(flat), "持平 1");
+});
+
+test("describeStageChanges lists only non-zero buckets", () => {
+  const summary = summarizeStageChanges([
+    { node_id: "a", delta_failure_rate: 0.2, comparable: true },
+    { node_id: "b", delta_failure_rate: -0.1, comparable: true },
+  ]);
+  assert.equal(describeStageChanges(summary), "退步 1 · 改善 1");
 });

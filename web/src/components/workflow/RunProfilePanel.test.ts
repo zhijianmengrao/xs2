@@ -314,3 +314,111 @@ test("no earlier run yields an explicit empty-comparison notice", async () => {
   assert.ok(notice, "explicit empty-comparison notice");
   assert.ok((notice!.textContent || "").includes("没有更早的 run"));
 });
+
+// ---------- R47 对比视图演进 ----------
+
+async function toggleChangesOnly() {
+  const box = document.querySelector<HTMLInputElement>('input[aria-label="只看有变化的阶段"]');
+  assert.ok(box, "changes-only checkbox exists when comparison is shown");
+  await act(async () => {
+    box!.click();
+  });
+}
+
+test("comparison summary lists regressed stages with signed deltas", async () => {
+  const withRegression: RunProfile = {
+    ...r38ShapeProfile,
+    comparison: {
+      ...comparisonProfile.comparison!,
+      stages: [
+        {
+          node_id: "build", occurrences_current: 1, occurrences_previous: 1,
+          attempts_current: 2, attempts_previous: 2, failed_current: 2,
+          failed_previous: 1, failure_rate_current: 1,
+          failure_rate_previous: 0.5, delta_failure_rate: 0.5,
+          delta_attempts: 0, comparable: true,
+        },
+        {
+          node_id: "character", occurrences_current: 1, occurrences_previous: 1,
+          attempts_current: 3, attempts_previous: 3, failed_current: 1,
+          failed_previous: 1, failure_rate_current: 0.3333,
+          failure_rate_previous: 0.3333, delta_failure_rate: 0,
+          delta_attempts: 0, comparable: true,
+        },
+      ],
+    },
+  };
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, compare) =>
+      (compare ? withRegression : r38ShapeProfile),
+  }));
+  assert.ok(!document.querySelector('[data-stage-change-summary="true"]'),
+    "summary hidden until compare is on");
+
+  await toggleCompare();
+  const summary = document.querySelector('[data-stage-change-summary="true"]');
+  assert.ok(summary, "stage change summary rendered");
+  const text = summary!.textContent || "";
+  assert.ok(text.includes("阶段变化"), "summary labeled");
+  assert.ok(text.includes("退步 1"), "regression counted");
+  assert.ok(text.includes("持平 1"), "flat counted");
+
+  const chips = document.querySelectorAll("[data-stage-change]");
+  const regressed = [...chips].filter((c) => c.getAttribute("data-stage-change") === "regressed");
+  assert.equal(regressed.length, 1, "only the regressed stage gets a chip");
+  assert.ok((regressed[0].textContent || "").includes("build"));
+  assert.ok((regressed[0].textContent || "").includes("+50%"), "signed delta on the chip");
+});
+
+test("changes-only filter hides unchanged stages and explains the empty state", async () => {
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, compare) =>
+      (compare ? comparisonProfile : r38ShapeProfile),
+  }));
+  await toggleCompare();
+  // 默认两阶段都显示
+  assert.equal(document.querySelectorAll("[data-node-id]").length, 2);
+
+  await toggleChangesOnly();
+  // comparisonProfile 里两阶段都是改善 → 过滤后仍显示两个
+  assert.equal(document.querySelectorAll("[data-node-id]").length, 2,
+    "improved stages count as changes and stay visible");
+});
+
+test("changes-only on an unchanged run shows a dedicated empty state", async () => {
+  const allFlat: RunProfile = {
+    ...r38ShapeProfile,
+    comparison: {
+      ...comparisonProfile.comparison!,
+      stages: comparisonProfile.comparison!.stages.map((s) => ({
+        ...s, delta_failure_rate: 0,
+      })),
+    },
+  };
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, compare) => (compare ? allFlat : r38ShapeProfile),
+  }));
+  await toggleCompare();
+  await toggleChangesOnly();
+  assert.equal(document.querySelectorAll("[data-node-id]").length, 0,
+    "no stage cards when nothing changed");
+  const empty = document.querySelector('[data-changes-only-empty="true"]');
+  assert.ok(empty, "dedicated empty state instead of a blank list");
+  assert.ok((empty!.textContent || "").includes("没有阶段变化"));
+});
+
+test("changes-only is only offered when a comparison exists", async () => {
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, compare) =>
+      ({ ...r38ShapeProfile, comparison: compare ? null : undefined }),
+  }));
+  assert.ok(!document.querySelector('input[aria-label="只看有变化的阶段"]'),
+    "no changes-only toggle before compare is on");
+  await toggleCompare();
+  assert.ok(!document.querySelector('input[aria-label="只看有变化的阶段"]'),
+    "no changes-only toggle when backend reports no earlier run");
+});

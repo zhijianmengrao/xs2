@@ -1,0 +1,209 @@
+{
+  "run_id": "run-b9afcd19",
+  "workflow_id": "xs2-novel-flywheel-post-hoc",
+  "status": "failed",
+  "started_at": "2026-10-26T18:38:37.715387+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_story_context",
+      "status": "completed",
+      "started_at": "2026-10-26T18:38:37.716010+08:00",
+      "completed_at": "2026-10-26T18:38:37.822257+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:38:37.716010+08:00",
+          "completed_at": "2026-10-26T18:38:37.822257+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_down",
+      "status": "completed",
+      "started_at": "2026-10-26T18:38:37.823491+08:00",
+      "completed_at": "2026-10-26T18:38:37.908963+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:38:37.823491+08:00",
+          "completed_at": "2026-10-26T18:38:37.908963+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_review_source",
+      "status": "completed",
+      "started_at": "2026-10-26T18:38:37.910360+08:00",
+      "completed_at": "2026-10-26T18:38:38.009852+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:38:37.910360+08:00",
+          "completed_at": "2026-10-26T18:38:38.009852+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_obs",
+      "status": "completed",
+      "started_at": "2026-10-26T18:38:38.011188+08:00",
+      "completed_at": "2026-10-26T18:42:05.616005+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:38:38.011188+08:00",
+          "completed_at": "2026-10-26T18:42:05.616005+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_arb",
+      "status": "completed",
+      "started_at": "2026-10-26T18:42:05.617287+08:00",
+      "completed_at": "2026-10-26T18:42:43.783894+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:42:05.617287+08:00",
+          "completed_at": "2026-10-26T18:42:43.783894+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_up",
+      "status": "completed",
+      "started_at": "2026-10-26T18:42:43.785206+08:00",
+      "completed_at": "2026-10-26T18:42:43.878372+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:42:43.785206+08:00",
+          "completed_at": "2026-10-26T18:42:43.878372+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_down_final",
+      "status": "completed",
+      "started_at": "2026-10-26T18:42:43.879871+08:00",
+      "completed_at": "2026-10-26T18:42:43.969886+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:42:43.879871+08:00",
+          "completed_at": "2026-10-26T18:42:43.969886+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_confirm_archive",
+      "status": "failed",
+      "started_at": "2026-10-26T18:42:43.971547+08:00",
+      "completed_at": "2026-10-26T18:42:44.085639+08:00",
+      "error": "Traceback (most recent call last):\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 775, in <module>\r\n    main()\r\n    ~~~~^^\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 768, in main\r\n    prepare_context(root, args.chapter, args.check) if args.command == 'context' else action[args.command](root, args.chapter))\r\n                                                                                      ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 688, in commit\r\n    quote = validated_evidence(item.get(\"evidence\"), body,\r\n            ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n                               \"人物状态的正文依据无法核实，未更新正式档案。\")\r\n                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 144, in validated_evidence\r\n    raise ValueError(error)\r\nValueError: 人物状态的正文依据无法核实，未更新正式档案。",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "Traceback (most recent call last):\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 775, in <module>\r\n    main()\r\n    ~~~~^^\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 768, in main\r\n    prepare_context(root, args.chapter, args.check) if args.command == 'context' else action[args.command](root, args.chapter))\r\n                                                                                      ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 688, in commit\r\n    quote = validated_evidence(item.get(\"evidence\"), body,\r\n            ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n                               \"人物状态的正文依据无法核实，未更新正式档案。\")\r\n                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"F:\\DeterminFlow x2\\xs2\\data\\plugins\\runtime-resources\\xs2-novel-flywheel\\script-libraries\\0\\xs2-novel-flywheel-xs2\\story_support\\story_support.py\", line 144, in validated_evidence\r\n    raise ValueError(error)\r\nValueError: 人物状态的正文依据无法核实，未更新正式档案。",
+          "started_at": "2026-10-26T18:42:43.971547+08:00",
+          "completed_at": "2026-10-26T18:42:44.085639+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}

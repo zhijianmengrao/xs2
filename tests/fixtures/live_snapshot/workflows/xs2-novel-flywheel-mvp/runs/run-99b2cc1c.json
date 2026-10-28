@@ -1,0 +1,709 @@
+{
+  "run_id": "run-99b2cc1c",
+  "workflow_id": "xs2-novel-flywheel-mvp",
+  "status": "completed",
+  "started_at": "2026-10-26T18:18:25.358338+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_story_context",
+      "status": "completed",
+      "started_at": "2026-10-26T18:18:25.359102+08:00",
+      "completed_at": "2026-10-26T18:18:25.470084+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:18:25.359102+08:00",
+          "completed_at": "2026-10-26T18:18:25.470084+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_sync_down",
+      "status": "completed",
+      "started_at": "2026-10-26T18:18:25.472364+08:00",
+      "completed_at": "2026-10-26T18:18:25.575201+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:18:25.472364+08:00",
+          "completed_at": "2026-10-26T18:18:25.575201+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_smart_context",
+      "status": "failed",
+      "started_at": "2026-10-26T18:18:25.577420+08:00",
+      "completed_at": "2026-10-26T18:18:25.685198+08:00",
+      "error": "退出码 1",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "退出码 1",
+          "started_at": "2026-10-26T18:18:25.577420+08:00",
+          "completed_at": "2026-10-26T18:18:25.685198+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_we",
+      "status": "completed",
+      "started_at": "2026-10-26T18:18:25.687744+08:00",
+      "completed_at": "2026-10-26T18:19:26.539130+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:18:25.687744+08:00",
+          "completed_at": "2026-10-26T18:19:26.539130+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_we_post",
+      "status": "completed",
+      "started_at": "2026-10-26T18:19:26.541525+08:00",
+      "completed_at": "2026-10-26T18:19:26.626677+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:19:26.541525+08:00",
+          "completed_at": "2026-10-26T18:19:26.626677+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_render_we",
+      "status": "completed",
+      "started_at": "2026-10-26T18:19:26.629328+08:00",
+      "completed_at": "2026-10-26T18:19:26.718651+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:19:26.629328+08:00",
+          "completed_at": "2026-10-26T18:19:26.718651+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "sync_up_we",
+      "status": "completed",
+      "started_at": "2026-10-26T18:19:26.721316+08:00",
+      "completed_at": "2026-10-26T18:19:26.812596+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:19:26.721316+08:00",
+          "completed_at": "2026-10-26T18:19:26.812596+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_id",
+      "status": "completed",
+      "started_at": "2026-10-26T18:19:26.815456+08:00",
+      "completed_at": "2026-10-26T18:19:46.359190+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:19:26.815456+08:00",
+          "completed_at": "2026-10-26T18:19:46.359190+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_parse_intent",
+      "status": "completed",
+      "started_at": "2026-10-26T18:19:46.361979+08:00",
+      "completed_at": "2026-10-26T18:19:46.452853+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:19:46.361979+08:00",
+          "completed_at": "2026-10-26T18:19:46.452853+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_od",
+      "status": "completed",
+      "started_at": "2026-10-26T18:19:46.455985+08:00",
+      "completed_at": "2026-10-26T18:21:46.512351+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:19:46.455985+08:00",
+          "completed_at": "2026-10-26T18:21:46.512351+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_od_post",
+      "status": "completed",
+      "started_at": "2026-10-26T18:21:46.515279+08:00",
+      "completed_at": "2026-10-26T18:21:46.615466+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:21:46.515279+08:00",
+          "completed_at": "2026-10-26T18:21:46.615466+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_render_od",
+      "status": "completed",
+      "started_at": "2026-10-26T18:21:46.618748+08:00",
+      "completed_at": "2026-10-26T18:21:46.716573+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:21:46.618748+08:00",
+          "completed_at": "2026-10-26T18:21:46.716573+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "sync_up_od",
+      "status": "completed",
+      "started_at": "2026-10-26T18:21:46.720145+08:00",
+      "completed_at": "2026-10-26T18:21:46.821245+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:21:46.720145+08:00",
+          "completed_at": "2026-10-26T18:21:46.821245+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_cm",
+      "status": "completed",
+      "started_at": "2026-10-26T18:21:46.824870+08:00",
+      "completed_at": "2026-10-26T18:27:16.818960+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:21:46.824870+08:00",
+          "completed_at": "2026-10-26T18:27:16.818960+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_cm_post",
+      "status": "completed",
+      "started_at": "2026-10-26T18:27:16.822320+08:00",
+      "completed_at": "2026-10-26T18:27:16.910644+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:27:16.822320+08:00",
+          "completed_at": "2026-10-26T18:27:16.910644+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_render_cm",
+      "status": "completed",
+      "started_at": "2026-10-26T18:27:16.915692+08:00",
+      "completed_at": "2026-10-26T18:27:17.013623+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:27:16.915692+08:00",
+          "completed_at": "2026-10-26T18:27:17.013623+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "sync_up_cm",
+      "status": "completed",
+      "started_at": "2026-10-26T18:27:17.017599+08:00",
+      "completed_at": "2026-10-26T18:27:17.119613+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:27:17.017599+08:00",
+          "completed_at": "2026-10-26T18:27:17.119613+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_se",
+      "status": "completed",
+      "started_at": "2026-10-26T18:27:17.123832+08:00",
+      "completed_at": "2026-10-26T18:28:45.206685+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:27:17.123832+08:00",
+          "completed_at": "2026-10-26T18:28:45.206685+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_se_post",
+      "status": "completed",
+      "started_at": "2026-10-26T18:28:45.210672+08:00",
+      "completed_at": "2026-10-26T18:28:45.304070+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:28:45.210672+08:00",
+          "completed_at": "2026-10-26T18:28:45.304070+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_trimmer",
+      "status": "completed",
+      "started_at": "2026-10-26T18:28:45.308171+08:00",
+      "completed_at": "2026-10-26T18:29:07.911470+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:28:45.308171+08:00",
+          "completed_at": "2026-10-26T18:29:07.911470+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_trimmer_post",
+      "status": "completed",
+      "started_at": "2026-10-26T18:29:07.915983+08:00",
+      "completed_at": "2026-10-26T18:29:08.019939+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:29:07.915983+08:00",
+          "completed_at": "2026-10-26T18:29:08.019939+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_render_trimmer",
+      "status": "completed",
+      "started_at": "2026-10-26T18:29:08.024369+08:00",
+      "completed_at": "2026-10-26T18:29:08.124676+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:29:08.024369+08:00",
+          "completed_at": "2026-10-26T18:29:08.124676+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_render_trimmed_chars",
+      "status": "completed",
+      "started_at": "2026-10-26T18:29:08.129162+08:00",
+      "completed_at": "2026-10-26T18:29:08.233546+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:29:08.129162+08:00",
+          "completed_at": "2026-10-26T18:29:08.233546+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_sw",
+      "status": "completed",
+      "started_at": "2026-10-26T18:29:08.243290+08:00",
+      "completed_at": "2026-10-26T18:31:52.644178+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:29:08.243290+08:00",
+          "completed_at": "2026-10-26T18:31:52.644178+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_si_post",
+      "status": "completed",
+      "started_at": "2026-10-26T18:31:52.654577+08:00",
+      "completed_at": "2026-10-26T18:31:52.747644+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:31:52.654577+08:00",
+          "completed_at": "2026-10-26T18:31:52.747644+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_render_si",
+      "status": "completed",
+      "started_at": "2026-10-26T18:31:52.752802+08:00",
+      "completed_at": "2026-10-26T18:31:52.852051+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:31:52.752802+08:00",
+          "completed_at": "2026-10-26T18:31:52.852051+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "sync_up_si",
+      "status": "completed",
+      "started_at": "2026-10-26T18:31:52.857026+08:00",
+      "completed_at": "2026-10-26T18:31:52.960636+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:31:52.857026+08:00",
+          "completed_at": "2026-10-26T18:31:52.960636+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_check_originality",
+      "status": "failed",
+      "started_at": "2026-10-26T18:31:52.965694+08:00",
+      "completed_at": "2026-10-26T18:31:53.080790+08:00",
+      "error": "退出码 1",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "退出码 1",
+          "started_at": "2026-10-26T18:31:52.965694+08:00",
+          "completed_at": "2026-10-26T18:31:53.080790+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}
