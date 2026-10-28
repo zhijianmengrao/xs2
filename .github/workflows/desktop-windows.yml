@@ -216,6 +216,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          # 分发域名取变量（R46）：与 replace-desktop-assets.yml 同款，便于改域名
+          # 时不改代码；未设变量时回落到既有域名，行为不变。
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}
         run: |
           version="${RELEASE_TAG#v}"
           aws --version
@@ -226,4 +229,4 @@ jobs:
             --pub-date "$(git show -s --format=%cI "$GITHUB_SHA")" \
             --bucket "$R2_BUCKET" \
             --endpoint-url "$R2_ENDPOINT_URL" \
-            --public-base-url "https://downloads.determinflow.com"
+            --public-base-url "$R2_PUBLIC_BASE_URL"

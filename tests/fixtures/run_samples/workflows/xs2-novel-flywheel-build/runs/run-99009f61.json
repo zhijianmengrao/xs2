@@ -1,0 +1,84 @@
+{
+  "run_id": "run-99009f61",
+  "workflow_id": "xs2-novel-flywheel-build",
+  "status": "failed",
+  "started_at": "2026-10-25T11:29:47.989766+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "agent_corelaws",
+      "status": "completed",
+      "started_at": "2026-10-25T11:29:47.990534+08:00",
+      "completed_at": "2026-10-25T11:29:56.092769+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-25T11:29:47.990534+08:00",
+          "completed_at": "2026-10-25T11:29:56.092769+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_persist_corelaws",
+      "status": "completed",
+      "started_at": "2026-10-25T11:29:56.093990+08:00",
+      "completed_at": "2026-10-25T11:29:56.175737+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-25T11:29:56.093990+08:00",
+          "completed_at": "2026-10-25T11:29:56.175737+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_spacetime",
+      "status": "failed",
+      "started_at": "2026-10-25T11:29:56.177061+08:00",
+      "completed_at": "2026-10-25T11:39:28.793728+08:00",
+      "error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=65536, prompt_tokens=2666, total_tokens=68202, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=None, audio_tokens=None, reasoning_tokens=0, rejected_prediction_tokens=None), prompt_tokens_details=None)",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "Could not parse response content as the length limit was reached - CompletionUsage(completion_tokens=65536, prompt_tokens=2666, total_tokens=68202, completion_tokens_details=CompletionTokensDetails(accepted_prediction_tokens=None, audio_tokens=None, reasoning_tokens=0, rejected_prediction_tokens=None), prompt_tokens_details=None)",
+          "started_at": "2026-10-25T11:29:56.177061+08:00",
+          "completed_at": "2026-10-25T11:39:28.793728+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    }
+  ]
+}

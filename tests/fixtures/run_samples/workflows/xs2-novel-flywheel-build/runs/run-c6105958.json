@@ -1,0 +1,34 @@
+{
+  "run_id": "run-c6105958",
+  "workflow_id": "xs2-novel-flywheel-build",
+  "status": "failed",
+  "started_at": "2026-10-26T14:12:32.005738+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "agent_corelaws",
+      "status": "failed",
+      "started_at": "2026-10-26T14:12:32.006526+08:00",
+      "completed_at": "2026-10-26T14:19:10.103803+08:00",
+      "error": "peer closed connection without sending complete message body (incomplete chunked read)",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "peer closed connection without sending complete message body (incomplete chunked read)",
+          "started_at": "2026-10-26T14:12:32.006526+08:00",
+          "completed_at": "2026-10-26T14:19:10.103803+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    }
+  ]
+}

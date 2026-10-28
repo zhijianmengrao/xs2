@@ -23,6 +23,46 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-dev.lock
       - run: python -m pytest -q
+      # 供应商失败率闸门自检（R46）：R45 把「无样本空转」做成退出码 3，但闸门
+      # 本身仍无任何自动使用者（HANDOVER_ROUND45 §2.4）。本步用入库的真实形状
+      # fixture 把三种退出码都真实走一遍——证明闸门在 CI 上真的判、且「没判到
+      # 东西」会自己发出声音，而不是每步都绿却零样本。
+      #
+      # 注意判据边界：fixture 是**固定**数据，所以本步保护的是「闸门与脚本行为
+      # 不退化」，不是「供应商今天健康」。真实数据的失败率判定需要 run 记录进
+      # CI（artifact 聚合或入库数据面），尚未接线（R46 §未做）。
+      - name: Provider failure-rate gate self-test (fixture)
+        env:
+          # fixture 落在 tests/fixtures/run_samples/workflows/，DATA_DIR 指到其
+          # 上一层即可让 src.config.WORKFLOWS_DIR 正好命中（src/config.py:21）。
+          DETERMINFLOW_DATA_DIR: ${{ github.workspace }}/tests/fixtures/run_samples
+        run: |
+          run_gate() {
+            python scripts/provider_failure_profile.py --limit 100 --require-sample "$@"
+          }
+          # 断言退出码；不符则带上下文报错（CI 日志里直接看到 gate 的 stderr）
+          expect_exit() {
+            want=$1; label=$2; errfile=$3; shift 3
+            code=0
+            "$@" > /dev/null 2> "$errfile" || code=$?
+            cat "$errfile"
+            if [ "$code" -ne "$want" ]; then
+              echo "::error::$label 期望退出码 $want，实际 $code"
+              exit 1
+            fi
+            echo "OK  $label  exit=$code"
+          }
+
+          # 基线 60 次尝试 / 7 失败 / 11.67%：阈值 15 应通过
+          expect_exit 0 "阈值 15 未超阈" gate-ok.err run_gate --fail-if-above 15 --summary
+          # 阈值 1 应触发——证明闸门不是恒真
+          expect_exit 1 "阈值 1 触发闸门" gate-breach.err run_gate --fail-if-above 1 --summary
+          # 空数据 + --require-sample 应为 3——证明「闸门没生效」会显式失败
+          mkdir -p empty-data/workflows
+          expect_exit 3 "无样本时闸门显式失败" gate-nosample.err \
+            env DETERMINFLOW_DATA_DIR="$PWD/empty-data" \
+            python scripts/provider_failure_profile.py --limit 100 --require-sample \
+            --fail-if-above 15 --summary
 
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作

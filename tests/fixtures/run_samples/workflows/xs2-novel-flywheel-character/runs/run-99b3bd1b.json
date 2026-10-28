@@ -1,0 +1,324 @@
+{
+  "run_id": "run-99b3bd1b",
+  "workflow_id": "xs2-novel-flywheel-character",
+  "status": "failed",
+  "started_at": "2026-10-27T09:21:21.127058+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_sync_down",
+      "status": "completed",
+      "started_at": "2026-10-27T09:21:21.127921+08:00",
+      "completed_at": "2026-10-27T09:21:21.205607+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:21:21.127921+08:00",
+          "completed_at": "2026-10-27T09:21:21.205607+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_skeleton",
+      "status": "completed",
+      "started_at": "2026-10-27T09:21:21.206795+08:00",
+      "completed_at": "2026-10-27T09:24:52.094588+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:21:21.206795+08:00",
+          "completed_at": "2026-10-27T09:24:52.094588+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_persist_skeleton",
+      "status": "completed",
+      "started_at": "2026-10-27T09:24:52.095769+08:00",
+      "completed_at": "2026-10-27T09:24:52.172940+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:24:52.095769+08:00",
+          "completed_at": "2026-10-27T09:24:52.172940+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_extract",
+      "status": "completed",
+      "started_at": "2026-10-27T09:24:52.174385+08:00",
+      "completed_at": "2026-10-27T09:24:52.239947+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:24:52.174385+08:00",
+          "completed_at": "2026-10-27T09:24:52.239947+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_belief",
+      "status": "completed",
+      "started_at": "2026-10-27T09:24:52.241419+08:00",
+      "completed_at": "2026-10-27T09:25:58.429470+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:24:52.241419+08:00",
+          "completed_at": "2026-10-27T09:25:58.429470+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_persist_belief",
+      "status": "completed",
+      "started_at": "2026-10-27T09:25:58.430858+08:00",
+      "completed_at": "2026-10-27T09:25:58.506780+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:25:58.430858+08:00",
+          "completed_at": "2026-10-27T09:25:58.506780+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:25:58.514943+08:00",
+          "completed_at": "2026-10-27T09:27:13.650158+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_persist_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:27:13.651805+08:00",
+          "completed_at": "2026-10-27T09:27:13.732282+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 2,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:25:58.514943+08:00",
+          "completed_at": "2026-10-27T09:27:13.650158+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:27:13.742952+08:00",
+          "completed_at": "2026-10-27T09:33:04.838859+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_persist_deep",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 2,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:27:13.651805+08:00",
+          "completed_at": "2026-10-27T09:27:13.732282+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:33:04.840573+08:00",
+          "completed_at": "2026-10-27T09:33:04.916336+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "failed",
+      "started_at": "2026-10-27T09:33:04.926393+08:00",
+      "completed_at": "2026-10-27T09:43:34.633265+08:00",
+      "error": "No streaming chunk received for 600.0s (model=Gemma-4-31B-IT, chunks_received=602). The connection may be alive at the TCP layer but is not producing content. Tune or disable via the `stream_chunk_timeout` constructor kwarg (set to None or 0 to disable) or the `LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S` env var. See also `http_socket_options` for the kernel-level TCP timeout that catches dead TCP peers.",
+      "attempt_count": 3,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:25:58.514943+08:00",
+          "completed_at": "2026-10-27T09:27:13.650158+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:27:13.742952+08:00",
+          "completed_at": "2026-10-27T09:33:04.838859+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 3,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "No streaming chunk received for 600.0s (model=Gemma-4-31B-IT, chunks_received=602). The connection may be alive at the TCP layer but is not producing content. Tune or disable via the `stream_chunk_timeout` constructor kwarg (set to None or 0 to disable) or the `LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S` env var. See also `http_socket_options` for the kernel-level TCP timeout that catches dead TCP peers.",
+          "started_at": "2026-10-27T09:33:04.926393+08:00",
+          "completed_at": "2026-10-27T09:43:34.633265+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    }
+  ]
+}

@@ -111,13 +111,20 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
           gh release edit "$RELEASE_TAG" --notes-file "desktop/release-notes/$RELEASE_TAG.md" --repo "$GITHUB_REPOSITORY"
+      # 应急通道，不属于常规发版路径（R46）：本 workflow 只在有人手动触发、
+      # 且指定「同一 commit 的 Windows/macOS 成功构建 run」时执行，用途是回填
+      # 已发布 tag 的产物。它此前**无条件**写 R2 并切换 stable manifest，与
+      # 「大陆下载加速维持现状」的结论并存有歧义——任何人跑一次就会改动线上
+      # 分发面。R46 补上与 desktop-windows.yml 相同的门控，两者行为一致。
       - name: Publish rebuild to R2 and switch stable manifest
+        if: vars.R2_DISTRIBUTION_ENABLED == 'true'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}
           VERSION: ${{ steps.release.outputs.version }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           PUB_DATE: ${{ steps.release.outputs.pub_date }}
@@ -126,4 +133,4 @@ jobs:
             --assets-dir release-assets --version "$VERSION" --revision "$GITHUB_SHA" \
             --notes-file "desktop/release-notes/$RELEASE_TAG.md" --pub-date "$PUB_DATE" \
             --bucket "$R2_BUCKET" --endpoint-url "$R2_ENDPOINT_URL" \
-            --public-base-url "https://downloads.determinflow.com"
+            --public-base-url "$R2_PUBLIC_BASE_URL"

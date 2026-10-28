@@ -1,0 +1,109 @@
+{
+  "run_id": "run-04ea8e0b",
+  "workflow_id": "xs2-novel-flywheel-character",
+  "status": "failed",
+  "started_at": "2026-10-27T09:44:12.137404+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_sync_down",
+      "status": "completed",
+      "started_at": "2026-10-27T09:44:12.138224+08:00",
+      "completed_at": "2026-10-27T09:44:12.220649+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:44:12.138224+08:00",
+          "completed_at": "2026-10-27T09:44:12.220649+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "agent_skeleton",
+      "status": "completed",
+      "started_at": "2026-10-27T09:44:12.222217+08:00",
+      "completed_at": "2026-10-27T09:52:26.304933+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:44:12.222217+08:00",
+          "completed_at": "2026-10-27T09:52:26.304933+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_persist_skeleton",
+      "status": "completed",
+      "started_at": "2026-10-27T09:52:26.306114+08:00",
+      "completed_at": "2026-10-27T09:52:26.381295+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-27T09:52:26.306114+08:00",
+          "completed_at": "2026-10-27T09:52:26.381295+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    },
+    {
+      "node_id": "script_extract",
+      "status": "failed",
+      "started_at": "2026-10-27T09:52:26.382789+08:00",
+      "completed_at": "2026-10-27T09:52:26.448551+08:00",
+      "error": "JSON 解析失败: Expecting ',' delimiter: line 43 column 49 (char 1163)",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "JSON 解析失败: Expecting ',' delimiter: line 43 column 49 (char 1163)",
+          "started_at": "2026-10-27T09:52:26.382789+08:00",
+          "completed_at": "2026-10-27T09:52:26.448551+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ],
+      "rejection_count": 0,
+      "reject_upstream_count": 0
+    }
+  ]
+}
