@@ -56,6 +56,36 @@ API 均 200；插件套件按 `PYTHONPATH=<core>` 跑 **98 passed**；
 `validate_definition.py` 对 14 个 workflow 全部 `[PASS]` exit 0；
 `ci.yml` 经 `yaml.safe_load` 通过。
 
+### 1.2b 第二次推送后仍红：vendor 文件换行符假绿
+
+修完上面两条再推，插件仓 CI 从「checkout 阶段就败」推进到「只剩 1 条测试败」：
+
+```
+test_story_support.py::test_actual_upstream_files_and_runtime_functions
+AssertionError: assert '03221ddf…' == '82fcf8a2…'
+```
+
+**根因是换行符，不是文件内容被改**（三段证据链）：
+
+| 位置 | 字节形态 | 与 `UPSTREAM.json` 的 sha256 |
+|---|---|---|
+| `UPSTREAM.json` 记录 | CRLF 原始字节 | —（这是基准） |
+| 仓库 blob（修复前） | **LF** | 不匹配 |
+| 本机工作区（`core.autocrlf=true`） | CRLF | 匹配（假绿） |
+| Linux/CI 检出 | LF（blob 原样） | 不匹配（真实暴露） |
+
+即这条断言在 Windows 开发机上是**假绿**——历史 `core.autocrlf=true` 下 add 时
+被转成 LF 入库，检出时又转回 CRLF，两边都是 CRLF 所以碰巧对上；CI 上 blob 原样
+检出，14 条哈希全部不匹配。
+
+**修复**：新增 `.gitattributes` 把 vendor 目录标 `-text`（add/checkout 双向都
+不做换行转换），再 `git add --renormalize` 按工作区真实 CRLF 字节重新入库
+（14 个文件 `i/crlf w/crlf attr/-text`）。这样仓库内容 = provenance 记录的字节
+= 任何平台检出后的字节，三处一致。
+
+**验证**：模拟 Linux 检出（`git -c core.autocrlf=input checkout`）后
+**14/14 匹配**；本机插件套件仍 98 passed。
+
 ### 1.3 xs2 `Desktop Windows` 红：官方插件构建锁脱钩
 
 红在「Verify latest official Plugin lock for Full candidate」步骤：
@@ -180,9 +210,19 @@ TOTAL: runs=23 attempts=243 failed=7 failure_rate=2.9%
 | xs2 | `c995746` `fix(desktop)` | lock 跟随插件仓再次推进到 74b7ddc |
 | xs2 | 本文档提交 | 交接文档 + PROJECT_INFO R42 条目 |
 | plugins | `74b7ddc` `ci` | 删除残留 job + Core 仓地址改真实仓库 + source-url/gitignore |
+| plugins | `e1e4e0a` `fix(plugin)` | vendor 文件字节保真（`.gitattributes` `-text` + renormalize） |
+| xs2 | `43daf54` `fix(desktop)` | lock 跟随插件仓到 `e1e4e0a` |
 
 未入库：`config/skills_config.json`（社区插件运行时合法写入，B23/R36 定性，
 与前几轮一致）。
+
+### CI 最终结果（推送后实际观察）
+
+| 仓库 / job | 结果 |
+|---|---|
+| xs2 `CI`（`43daf54`） | **success**（backend / windows-backend / frontend / container-config 四 job 全绿） |
+| xs2 `Desktop Windows`（`43daf54`） | **success**（含 NSIS 构建与官方插件锁校验） |
+| xs2-plugins `CI`（`e1e4e0a`） | **success——本仓 CI 首次绿**（此前连红 4 次） |
 
 ## 6. 测试执行汇总（全部实际运行）
 
@@ -214,18 +254,22 @@ TOTAL: runs=23 attempts=243 failed=7 failure_rate=2.9%
    「Must have admin rights to Repository」。本轮用 GCM 里已存的自有 token
    （`git credential fill` 取，Authorization: Bearer）才拉到日志。
    后续排 CI 若只拿到注解（annotations 无正文），按此方式取。
-3. **代理通道分流**：socks5 口 10808 对 TLS 连接不稳（curl/requests 都
+3. **vendor 文件的 provenance 哈希依赖字节保真**（R42 新增）：凡把带 sha256
+   记录的第三方快照入库，必须配 `.gitattributes` `-text`，否则 Linux/CI 上
+   哈希必错、而 Windows 开发机上因 `core.autocrlf=true` 假绿——
+   **这类缺陷只在 CI 上可发现，本地跑一万次也看不到**。
+4. **代理通道分流**：socks5 口 10808 对 TLS 连接不稳（curl/requests 都
    `RemoteDisconnected`），但 **HTTP 口 10509 稳定**——GitHub API、rustup
    下载都走它。git 传输仍用 socks5 且正常。
-4. **High-IL 跑法必须用 Windows 反斜杠路径**：本轮首次用 Git Bash 的正斜杠
+5. **High-IL 跑法必须用 Windows 反斜杠路径**：本轮首次用 Git Bash 的正斜杠
    拼 PYTHONPATH，131 个模块收集期 `ModuleNotFoundError`。正确写法见
    PROJECT_INFO 平台注意事项 9，需 `F:\...\site-packages;F:\...\win32;…`
    （反斜杠 + 分号）。
-5. **`F:\DeterminFlow x2` 路径含空格会挡 Rust 构建**：见 §3.3 第 1 条。
+6. **`F:\DeterminFlow x2` 路径含空格会挡 Rust 构建**：见 §3.3 第 1 条。
    要跑 `cargo build/check` 必须设 `CARGO_TARGET_DIR` 到无空格路径。
-6. **POSIX 真跑 / 大陆下载加速**：R32 起状态未变，分别需容器环境与外部基础
+7. **POSIX 真跑 / 大陆下载加速**：R32 起状态未变，分别需容器环境与外部基础
    设施决策（T2 类）。本轮用户只选了 updater 死通道（已收尾）。
-7. **服务进程托管**：仍须 `powershell Start-Process -WindowStyle Hidden`
+8. **服务进程托管**：仍须 `powershell Start-Process -WindowStyle Hidden`
    脱离会话启动（R40 §7.5 纪律，本轮未重启服务故未复验）。
 
 ## 8. 下一轮候选
