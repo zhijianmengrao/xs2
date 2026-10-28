@@ -19,8 +19,14 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
 旧的数字。``--check-stale``（R48）补这一半：拿快照的 ``exported_at`` 与真实
 ``data/workflows`` 里最新一次 run 的时间比，滞后超过容忍天数即报过期（退出码 5）。
 
-**``--check-stale`` 刻意不接进 CI**：CI 检出里没有 ``data/workflows``，接进去
-只会永远「无法判定」，那是又一个永远绿的防护。它是轮次收官动作，不是 CI 步骤。
+``--check-coverage``（R49）补另一半：``--check-stale`` 只判时间，判不到「新增了
+一个 workflow 但快照里没有它」——那时快照可能仍然「尚新」，却已不代表真实覆盖面
+（HANDOVER_ROUND48 §8-2）。覆盖度单独成退出码 6：它与 5 的处置不同（5 是重导
+一次就好，6 还要看新工作流是不是真的进了样本）。
+
+**``--check-stale`` / ``--check-coverage`` 刻意不接进 CI**：CI 检出里没有
+``data/workflows``，接进去只会永远「无法判定」，那是又一个永远绿的防护。它们
+是轮次收官动作，不是 CI 步骤。
 
 用法（仓库根执行）::
 
@@ -31,6 +37,9 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
     # 快照保鲜（轮次收官跑；真实数据落后快照超过 7 天即报过期）
     python scripts/check_live_snapshot_gate.py --check-stale
     python scripts/check_live_snapshot_gate.py --check-stale --max-lag-days 3
+
+    # 快照覆盖度（轮次收官跑；真实跑过的工作流缺样本即报缺口）
+    python scripts/check_live_snapshot_gate.py --check-coverage
 """
 
 from __future__ import annotations
@@ -65,6 +74,7 @@ EXIT_GATE_TRIGGERED = 1
 EXIT_NO_SAMPLE = 3
 EXIT_META_DRIFT = 4
 EXIT_STALE = 5
+EXIT_COVERAGE_GAP = 6
 
 
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
@@ -210,6 +220,63 @@ def check_stale(data_dir: Path, source_dir: Path,
         f"滞后 {lag_days:.1f} 天 ≤ 容忍 {max_lag_days:.1f} 天")
 
 
+def _workflow_names_with_runs(root: Path) -> set[str]:
+    """``root`` 下真正产生过 run 记录的工作流名集合。"""
+    names: set[str] = set()
+    if not root.is_dir():
+        return names
+    for wf_dir in root.iterdir():
+        if not wf_dir.is_dir():
+            continue
+        runs_dir = wf_dir / "runs"
+        if not runs_dir.is_dir():
+            continue
+        if any(runs_dir.glob("run-*.json")):
+            names.add(wf_dir.name)
+    return names
+
+
+def check_coverage(data_dir: Path, source_dir: Path) -> tuple[int, str]:
+    """快照覆盖度：真实数据里跑过的工作流，快照里是否都有样本。
+
+    ``--check-stale``（R48）只看时间，判不到「新增了一个 workflow 但快照里没有
+    它」——那种情况下快照可能仍然「尚新」，而它已经不再代表真实覆盖面
+    （HANDOVER_ROUND48 §8-2）。这里补的正是那一问。
+
+    为什么单独成码 6 而不并入 5：两者的处置**不同**。5 是「重导一次就好」，
+    6 是「快照的 workflow 集合已经不完整，重导后还要看新工作流是不是真的进了
+    样本」——并进 5 会让人对着一个只差一条 workflow 的快照去查导出脚本。
+    两者都与 1（失败率不合格，要查供应商）不同，这是同一条纪律的第三次延伸。
+
+    只判「真实有、快照没有」。反方向（快照里有、真实已删）不报：删掉的工作流
+    留在快照里只是冗余样本，不影响判据的代表性。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判覆盖度：{meta_path}"
+
+    snapshot_names = _workflow_names_with_runs(data_dir / "workflows")
+    if not snapshot_names:
+        return EXIT_NO_SAMPLE, (
+            f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
+
+    real_names = _workflow_names_with_runs(source_dir)
+    if not real_names:
+        return EXIT_NO_SAMPLE, (
+            f"真实数据里没有任何带 run 记录的工作流（{source_dir}），"
+            "无法判覆盖度。本机无 run 记录时这是预期结果，不是故障")
+
+    missing = sorted(real_names - snapshot_names)
+    if missing:
+        return EXIT_COVERAGE_GAP, (
+            f"快照覆盖不全：真实数据有 {len(real_names)} 个工作流，快照缺 "
+            f"{len(missing)} 个 {missing}。重导：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+    return EXIT_OK, (
+        f"快照覆盖完整：真实数据 {len(real_names)} 个工作流全部在快照内"
+        f"（快照含 {len(snapshot_names)} 个）")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -219,9 +286,11 @@ def main() -> int:
                         help="阈值相对实测失败率的余量（百分比点，默认 10）")
     parser.add_argument("--check-stale", action="store_true",
                         help="改判快照新鲜度：真实数据比快照新多少天（不判失败率）")
+    parser.add_argument("--check-coverage", action="store_true",
+                        help="改判快照覆盖度：真实数据跑过的工作流是否都在快照内")
     parser.add_argument("--source", type=Path, default=None,
                         help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
-                             "仅 --check-stale 使用")
+                             "仅 --check-stale / --check-coverage 使用")
     parser.add_argument("--max-lag-days", type=float, default=7.0,
                         help="快照允许落后真实数据的天数（默认 7）")
     options = parser.parse_args()
@@ -229,15 +298,20 @@ def main() -> int:
         parser.error("--margin 不能为负")
     if options.max_lag_days < 0:
         parser.error("--max-lag-days 不能为负")
+    if options.check_stale and options.check_coverage:
+        parser.error("--check-stale 与 --check-coverage 是两种判据，不能同时使用")
 
-    if options.check_stale:
+    if options.check_stale or options.check_coverage:
         source = options.source
         if source is None:
             from src.config import WORKFLOWS_DIR
 
             source = WORKFLOWS_DIR
-        code, message = check_stale(
-            options.data_dir or _default_data_dir(), Path(source), options.max_lag_days)
+        snapshot = options.data_dir or _default_data_dir()
+        if options.check_coverage:
+            code, message = check_coverage(snapshot, Path(source))
+        else:
+            code, message = check_stale(snapshot, Path(source), options.max_lag_days)
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
 

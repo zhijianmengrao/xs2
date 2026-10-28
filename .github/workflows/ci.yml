@@ -84,6 +84,36 @@ jobs:
           EOF
           exit $code
 
+      # 工作流编排 e2e（R49）：前三轮（R45/R46/R47）反复记录的「最有价值缺口」。
+      # 它一直没做，卡的不是工作量而是凭据——真实 e2e 要一家供应商的 key，而 key
+      # 不能进 CI（fork PR 拿不到 secrets），也不该为了跑测试烧额度。
+      #
+      # 桩 provider 把卡点换成两件可控的事：**协议是真的**（真实 HTTP + SSE，
+      # 走 ChatOpenAI SDK → LangGraph → 引擎回调的完整链路），**判定是真的**
+      # （断言落在节点流转、失败传导、占位符传参上）。它不判模型质量，也不判
+      # 供应商健康——那两件事属于人工验收与真实快照闸门。
+      #
+      # 不引 secrets 是这条路线的前提：加了 secrets 就退回「fork PR 跑不了」。
+      # 有 test_ci_e2e_step_takes_no_secrets 反向钉住。
+      - name: Workflow orchestration e2e (stub provider)
+        # 硬上限：桩是本地进程，正常 3 个场景约 10s。卡住通常是桩没回 SSE 收尾
+        # 导致图空转——那种情况该红，而不是把 job 拖到 GHA 的 6 小时上限。
+        timeout-minutes: 10
+        run: |
+          # 退出码语义：0=通过 1=编排行为不符（真 bug） 3=环境无法启动（导入/
+          # 端口问题）。两种都让这一步红——**不**把 3 当警告放过：环境起不来
+          # 通常意味着 import 链断了，那本身就是回归；把 3 静默成绿，恰恰是
+          # R45/R46/R47 反复批评的「永远绿的防护」。区分只体现在提示文案上，
+          # 让人一眼看出该往编排语义还是往装配栈排查（见 R49 §8 的取舍记录）。
+          code=0
+          python scripts/e2e_workflow_stub.py || code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::error::e2e 无法启动（退出码 3）：先看装配栈，不是编排语义"
+          elif [ "$code" -ne 0 ]; then
+            echo "::error::e2e 编排行为不符（退出码 $code）"
+          fi
+          exit $code
+
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
   # 快速跨平台信号；本 job 与本机 High-IL 全量跑（docs/PROJECT_INFO.md 测试环境）

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from desktop.python.entrypoint import _run_python_compatibility_mode
 from desktop.python.runtime import (
@@ -995,3 +996,38 @@ def test_desktop_onboarding_capability_allows_only_the_bundled_loopback_ui() -> 
         "allow-get-desktop-onboarding-status",
         "allow-set-desktop-onboarding-status",
     ]
+
+
+def test_macos_workflow_is_manually_dispatchable_without_a_tag() -> None:
+    """macOS 面必须能不打 tag 就跑（R49 §2.4 的结论）。
+
+    HANDOVER_ROUND48 §8-4 与 §9-3 把 ``desktop-macos.yml`` 记成 "tag-only"，
+    据此把「R47 的 ``--port 0`` 在 macOS 上未复核」挂了两轮。实际读文件可知它
+    是 ``workflow_dispatch`` + ``pull_request(paths: desktop/**)``——**没有** tag
+    触发条件。这条误记本身值得钉死：一处错误的触发假设，会让一个可验证的
+    风险面被当成不可验证而无限期挂着。
+
+    断言三件事：可手动触发、没有 tag-only 的 ``tags:`` 过滤器、PR 路径过滤里
+    含 ``desktop/**``（否则改了 entrypoint/冒烟脚本反而不会触发）。
+    """
+    document = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "desktop-macos.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    # PyYAML 会把裸 `on:` 解析成布尔 True，两种键名都要认
+    triggers = document.get("on", document.get(True))
+    assert isinstance(triggers, dict), "desktop-macos.yml 的触发段无法解析"
+
+    assert "workflow_dispatch" in triggers, (
+        "macOS 面必须能手动触发，否则 --port 0 的 process_group 路径只能等发版才验"
+    )
+    pull_request = triggers.get("pull_request") or {}
+    assert isinstance(pull_request, dict)
+    paths = pull_request.get("paths") or []
+    assert "desktop/**" in paths, (
+        "PR 路径过滤必须覆盖 desktop/**，否则改冒烟脚本不会触发 macOS 面验证"
+    )
+    assert "tags" not in triggers, (
+        "desktop-macos.yml 不是 tag-only；若真要加 tag 触发，需同步撤掉 R48 §8-4 的挂账说法"
+    )

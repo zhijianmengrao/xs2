@@ -270,3 +270,114 @@ def test_stale_check_is_not_wired_into_ci() -> None:
         assert "--check-stale" not in str(step.get("run", "")), (
             "快照保鲜是轮次收官动作，不该作为 CI step：CI 里没有 data/workflows"
         )
+
+
+# ------------------------------------------------- 快照覆盖度（R49）
+def _write_snapshot_workflows(root: Path, names: list[str]) -> None:
+    """快照里放若干「有 run 记录」的工作流。"""
+    (root / "workflows").mkdir(parents=True, exist_ok=True)
+    (root / "snapshot-meta.json").write_text(
+        json.dumps({"totals": {"attempts": 0, "failed": 0},
+                    "exported_at": "2026-02-01T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    for name in names:
+        runs = root / "workflows" / name / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        (runs / "run-x.json").write_text(
+            json.dumps({"run_id": "run-x", "status": "completed",
+                        "node_executions": []}), encoding="utf-8")
+
+
+def _write_real_workflows(root: Path, names: list[str]) -> None:
+    for name in names:
+        runs = root / name / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        (runs / "run-real.json").write_text(
+            json.dumps({"run_id": "run-real", "status": "completed",
+                        "node_executions": []}), encoding="utf-8")
+
+
+def test_coverage_flags_workflow_missing_from_snapshot(tmp_path: Path) -> None:
+    """真实跑过但快照里没有的 workflow → 退出码 6，且 6 与 5/1 都不同。"""
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot_workflows(snap, ["wf-old"])
+    _write_real_workflows(real, ["wf-old", "wf-new"])
+
+    code, message = live_gate.check_coverage(snap, real)
+    assert code == live_gate.EXIT_COVERAGE_GAP, message
+    assert "wf-new" in message
+    assert code != live_gate.EXIT_STALE
+    assert code != live_gate.EXIT_GATE_TRIGGERED
+
+
+def test_coverage_does_not_confuse_time_with_scope(tmp_path: Path) -> None:
+    """快照「尚新」也不能替覆盖度作保——这是 R48 §8-2 记的那个缺口。
+
+    时间全对（真实最新时间早于导出时间），但真实数据里多了一个 workflow。
+    ``--check-stale`` 会绿，``--check-coverage`` 必须红。
+    """
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot_workflows(snap, ["wf-old"])
+    _write_real_workflows(real, ["wf-old", "wf-added"])
+    for name in ("wf-old", "wf-added"):
+        (real / name / "runs" / "run-real.json").write_text(
+            json.dumps({"run_id": "run-real", "status": "completed",
+                        "started_at": "2026-01-01T00:00:00+00:00",
+                        "completed_at": "2026-01-01T00:00:10+00:00",
+                        "node_executions": []}),
+            encoding="utf-8",
+        )
+
+    stale_code, _ = live_gate.check_stale(snap, real, max_lag_days=7.0)
+    assert stale_code == live_gate.EXIT_OK, "本用例的前提是新鲜度判据为绿"
+
+    code, message = live_gate.check_coverage(snap, real)
+    assert code == live_gate.EXIT_COVERAGE_GAP, message
+
+
+def test_coverage_passes_when_all_real_workflows_are_sampled(tmp_path: Path) -> None:
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot_workflows(snap, ["wf-a", "wf-b", "wf-c"])
+    _write_real_workflows(real, ["wf-a", "wf-b"])
+
+    code, message = live_gate.check_coverage(snap, real)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_coverage_ignores_snapshot_only_workflows(tmp_path: Path) -> None:
+    """快照里有、真实已删：只是冗余样本，不影响代表性，不得报缺口。"""
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_snapshot_workflows(snap, ["wf-live", "wf-deleted"])
+    _write_real_workflows(real, ["wf-live"])
+
+    code, message = live_gate.check_coverage(snap, real)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_coverage_reports_no_sample_when_real_data_absent(tmp_path: Path) -> None:
+    """CI 检出里没有 data/workflows —— 必须报判不到，不能假绿。"""
+    snap = tmp_path / "snap"
+    _write_snapshot_workflows(snap, ["wf-a"])
+
+    code, message = live_gate.check_coverage(snap, tmp_path / "missing")
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+
+
+def test_coverage_requires_snapshot_metadata(tmp_path: Path) -> None:
+    snap, real = tmp_path / "snap", tmp_path / "real"
+    _write_real_workflows(real, ["wf-a"])
+    (snap / "workflows" / "wf-a" / "runs").mkdir(parents=True)
+    (snap / "workflows" / "wf-a" / "runs" / "run-x.json").write_text(
+        json.dumps({"run_id": "run-x", "node_executions": []}), encoding="utf-8")
+
+    code, message = live_gate.check_coverage(snap, real)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+
+
+def test_coverage_check_is_not_wired_into_ci() -> None:
+    """与 --check-stale 同理：CI 无真实数据，接进去只会变成永远判不到的步骤。"""
+    for step in _backend_steps():
+        assert "--check-coverage" not in str(step.get("run", "")), (
+            "快照覆盖度是轮次收官动作，不该作为 CI step：CI 里没有 data/workflows"
+        )
