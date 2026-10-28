@@ -44,12 +44,34 @@ R45/R46/R47 连续三轮把「CI e2e」列为最有价值的缺口。它一直�
 3. 任务描述（首条 user 消息）含 ``[stub:fail]`` → 同 2，但 ``status="failure"``，
    用来验失败策略。
 4. 其他情况 → 回一句固定文本。
+
+## 故障注入（R50）
+
+除上述语义外，任务文本里的标记可以让桩**按真实 provider 的响应格式**报错，
+用来验重试与错误分类在真实 chain 上的行为（此前只在单测层验）：
+
+| 标记 | 桩行为 | 期望被测行为 |
+|---|---|---|
+| ``[stub:5xx]`` | HTTP 503 + OpenAI 错误体 | 瞬时错误 → 按 ``retry.max_retries`` 重试 |
+| ``[stub:429]`` | HTTP 429 + ``rate_limit_exceeded`` | 瞬时错误 → 重试 |
+| ``[stub:401]`` | HTTP 401 + ``invalid_api_key`` | **永久**错误 → 不重试，立即失败 |
+| ``[stub:stall]`` | SSE 头已发、正文停住 ``stall_seconds`` 秒 | 触发 ``stream_chunk_timeout`` |
+
+``[stub:fail_once]`` 与该标记组合（如 ``[stub:5xx][stub:fail_once]``）表示
+**只在前一次请求上失败**，之后正常回复——这是「重试确实救回来了」的唯一可
+观察证据（一直失败只能证明它最终失败）。
+
+**这不是伪造失败语义**（R49 §7-5 拒绝的那件事）：注入的是真实 provider 会
+发出的 HTTP 状态码与错误体，经过的是真实的 ``openai`` SDK → ``provider_errors``
+分类 → ``_should_retry_provider_error`` 判定链路。桩不发明新的失败类型，只
+决定「这一发返回什么状态码」。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -59,6 +81,28 @@ CALL_ID_PREFIX = "call_stub_"
 FAIL_MARKER = "[stub:fail]"
 DEFAULT_TEXT = "stub-provider: no-op completion"
 _MODEL = "stub-model"
+
+# 故障注入标记（R50）。值是「要返回的 HTTP 状态码」；0 表示不返回错误状态，
+# 而是发完 SSE 头之后停住（stream_chunk_timeout 路径）。
+ERROR_MARKERS: dict[str, int] = {
+    "[stub:5xx]": 503,
+    "[stub:429]": 429,
+    "[stub:401]": 401,
+    "[stub:stall]": 0,
+}
+# 只让第一次注入生效；之后正常回复。没有它就是「每次请求都失败」。
+FAIL_ONCE_MARKER = "[stub:fail_once]"
+STALL_SECONDS_DEFAULT = 3.0
+
+# 各状态码对应的 OpenAI 风格错误体。code 必须落在 src/core/provider_errors.py
+# 认识的集合里，否则分类会退化成 unknown——那会让「分类对不对」这件事失去意义。
+_ERROR_BODIES: dict[int, tuple[str, str]] = {
+    503: ("service_unavailable", "stub injected 503: service unavailable"),
+    429: ("rate_limit_exceeded", "stub injected 429: rate limit exceeded"),
+    401: ("invalid_api_key", "stub injected 401: invalid api key"),
+}
+
+_MARKER_RE = re.compile(r"\[stub:[a-z0-9_]+\]")
 
 
 def _last_user_text(messages: list[dict]) -> str:
@@ -86,8 +130,44 @@ def _tool_names(payload: dict) -> set[str]:
     return names
 
 
-def decide(payload: dict) -> dict:
-    """把一次请求映射成响应意图。纯函数，测试可直接调它验行为契约。"""
+def injection(payload: dict) -> dict | None:
+    """请求是否命中故障注入标记（纯函数）。未命中返回 None。
+
+    只看 ``user`` 消息：``role=tool`` 的追问不该再触发注入，否则「重试成功后
+    的收尾请求」会被同一条标记再次打回，永远走不到成功路径。
+    """
+    messages = payload.get("messages") or []
+    last_role = str((messages[-1] or {}).get("role", "")) if messages else ""
+    if last_role == "tool":
+        return None
+
+    task_text = _last_user_text(messages)
+    markers = set(_MARKER_RE.findall(task_text))
+    fail_once = FAIL_ONCE_MARKER in markers
+    for marker, status in ERROR_MARKERS.items():
+        if marker not in markers:
+            continue
+        if status == 0:
+            return {
+                "kind": "stall",
+                "seconds": STALL_SECONDS_DEFAULT,
+                "marker": marker,
+                "fail_once": fail_once,
+            }
+        code, message = _ERROR_BODIES[status]
+        return {
+            "kind": "error",
+            "status": status,
+            "code": code,
+            "message": message,
+            "marker": marker,
+            "fail_once": fail_once,
+        }
+    return None
+
+
+def _completion_decision(payload: dict) -> dict:
+    """正常回复意图（不含故障注入）。"""
     messages = payload.get("messages") or []
     last_role = str((messages[-1] or {}).get("role", "")) if messages else ""
     if last_role == "tool":
@@ -111,6 +191,20 @@ def decide(payload: dict) -> dict:
     if failed:
         arguments["error"] = "stub induced failure"
     return {"kind": "tool_call", "tool": completion_tool, "arguments": arguments}
+
+
+def decide(payload: dict) -> dict:
+    """把一次请求映射成响应意图。纯函数，测试可直接调它验行为契约。
+
+    命中故障注入标记时返回注入意图（``kind`` 为 ``error`` 或 ``stall``）；
+    否则返回正常完成意图。``[stub:fail_once]`` 的「只失败一次」需要跨请求
+    状态，由 ``_Handler`` 用 ``StubProvider`` 上的计数器实现——纯函数这一层
+    始终按「该注入」返回，测试因此能直接验注入语义本身。
+    """
+    injected = injection(payload)
+    if injected is not None:
+        return injected
+    return _completion_decision(payload)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -156,10 +250,53 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         decision = decide(payload)
+        # ``[stub:fail_once]``：只有第一条命中注入的请求真的失败，之后照常回复。
+        # 键按「注入标记 + 消息摘要」记，避免同进程里两个场景互相吃掉配额。
+        if decision["kind"] in {"error", "stall"} and decision.get("fail_once"):
+            key = (decision.get("marker", ""),
+                   json.dumps(payload.get("messages") or [], sort_keys=True)[:400])
+            if not server.claim(key):
+                decision = _completion_decision(payload)
+
+        if decision["kind"] == "error":
+            self._error(decision)
+            return
+        if decision["kind"] == "stall":
+            self._stall(decision, payload)
+            return
         if payload.get("stream"):
             self._stream(decision, payload)
         else:
             self._complete(decision, payload)
+
+    # ---- 故障注入 ----
+    def _error(self, decision: dict) -> None:
+        """按 OpenAI 的错误响应形状返回状态码（真实 SDK 才能解析出 code）。"""
+        self._json(decision["status"], {
+            "error": {
+                "message": decision["message"],
+                "type": "stub_injected_error",
+                "code": decision["code"],
+            }
+        })
+
+    def _stall(self, decision: dict, payload: dict) -> None:
+        """发完 SSE 头与一个 chunk 后停住，让 stream_chunk_timeout 真的触发。
+
+        必须**先**发一个 content chunk：``stream_chunk_timeout`` 量的是「解析出的
+        chunk 之间」的间隔，一个 chunk 都不发的路径走的是 httpx 读超时，那条
+        路不经过被测的 ``stream_stall`` 分类。
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self._chunk(payload, choices=[{
+            "index": 0,
+            "delta": {"role": "assistant", "content": "partial"},
+            "finish_reason": None,
+        }])
+        time.sleep(float(decision.get("seconds") or STALL_SECONDS_DEFAULT))
 
     # ---- 非流式 ----
     def _complete(self, decision: dict, payload: dict) -> None:
@@ -251,6 +388,7 @@ class StubProvider:
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._claims: set[tuple[str, str]] = set()
         self.requests: list[dict] = []
 
     # -- 生命周期 --
@@ -258,6 +396,7 @@ class StubProvider:
         server = ThreadingHTTPServer((self._host, self._port), _Handler)
         server.daemon_threads = True
         server.record = self._record  # 绑定实例方法，见 _Handler.do_POST
+        server.claim = self.claim    # 同上，供 [stub:fail_once] 用
         self._server = server
         self._thread = threading.Thread(
             target=server.serve_forever,
@@ -298,6 +437,31 @@ class StubProvider:
             if self._record_path is not None:
                 with open(self._record_path, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def claim(self, key: tuple[str, str]) -> bool:
+        """``[stub:fail_once]`` 的一次性配额：首次 True，之后 False。
+
+        跨请求状态只能放在服务端（纯函数决定「该注入什么」，服务端决定
+        「这次还算不算首次」），否则同一进程里两个场景会互相吃掉配额。
+        """
+        with self._lock:
+            if key in self._claims:
+                return False
+            self._claims.add(key)
+            return True
+
+    def reset_claims(self) -> None:
+        """清掉 fail_once 配额（每场景开始时调用，与 ``requests.clear()`` 配套）。"""
+        with self._lock:
+            self._claims.clear()
+
+    def error_requests(self) -> list[dict]:
+        """桩判定要报错的那些请求（含 stall），供重试类断言用。"""
+        with self._lock:
+            return [
+                r for r in self.requests
+                if decide(r["payload"])["kind"] in {"error", "stall"}
+            ]
 
     def tool_call_requests(self) -> list[dict]:
         """其中桩判定要「调工具」的那些请求，供 e2e 断言用。"""

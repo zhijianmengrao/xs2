@@ -98,6 +98,9 @@ def _node_profile(entry: dict[str, Any]) -> dict[str, Any]:
             attempts_detail.append({
                 "attempt_number": item.get("attempt_number"),
                 "trigger": item.get("trigger", ""),
+                # R50：循环轮次（0 = 非循环节点）。旧记录没有这个键，
+                # 回落到 0——与「非循环」同一表示，不伪造轮次。
+                "loop_iteration": int(item.get("loop_iteration", 0) or 0),
                 "status": status,
                 "error": error,
                 "error_class": classify_error(error),
@@ -327,4 +330,111 @@ def compare_run_profiles(current: dict[str, Any],
             "comparable": comparable,
         },
         "stages": stages,
+    }
+
+
+def pick_recent_runs(current: dict[str, Any],
+                     candidates: list[dict[str, Any]],
+                     limit: int = 3) -> list[dict[str, Any]]:
+    """挑出当前 run 之前最近的 ``limit`` 个 run（按时间**升序**返回）。
+
+    与 ``pick_previous_run`` 同一套排序键与「严格更早」定义，只是从「取一个」
+    扩成「取一串」。升序返回是因为趋势判定要从旧到新读——调用方拿到的顺序
+    直接就是时间序列，不必再排一次。
+
+    ``limit <= 0`` 返回空列表（不把「要多点对比」误当成「全都要」）。
+    """
+    if limit <= 0:
+        return []
+    current_key = _order_key(current.get("started_at"), current.get("mtime", 0.0))
+    older = [
+        c for c in candidates
+        if c.get("run_id") != current.get("run_id")
+        and _order_key(c.get("started_at"), c.get("mtime", 0.0)) < current_key
+    ]
+    older.sort(key=lambda c: (_order_key(c.get("started_at"), c.get("mtime", 0.0)),
+                              str(c.get("run_id", ""))))
+    return older[-limit:]
+
+
+TREND_IMPROVING = "improving"
+TREND_REGRESSING = "regressing"
+TREND_STABLE = "stable"
+TREND_INSUFFICIENT = "insufficient"
+
+# 连续退步的判据：最近 ``TREND_STREAK_REQUIRED`` 次相邻对比**全部**为正。
+# 用「连续」而不是「与首个基线比」：后者会被一次偶发尖峰带偏——首次 50%、
+# 第二次 0%、第三次 10% 明明在退步，与首个基线比却是改善。R47 §8-5 要的正
+# 是「连续三次都在退步」这种形状。
+TREND_STREAK_REQUIRED = 2
+
+
+def compare_run_baseline(current: dict[str, Any],
+                         previous_runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """把「本次 run」与一串历史 run 排成时间序列，判趋势（R50）。
+
+    ``previous_runs`` 是**按时间升序**的历史画像（``pick_recent_runs`` 的输出）。
+    差值一律 current - previous，正值=退步（与 ``compare_run_profiles`` 同款）。
+
+    趋势结论（``trend``）:
+    - ``insufficient``：没有可比的相邻对比——没有序列就谈不上趋势。
+      「无数据」不冒充 ``stable``。
+    - ``regressing``：最近 ``TREND_STREAK_REQUIRED`` 次相邻差值**全部 > 0**。
+    - ``improving``：同样连续、且全部 < 0。
+    - ``stable``：其余（含「有涨有跌」、「持平」、以及只有 1 次对比）。
+
+    这是「多 run 基线」相对「只比上一次」的全部增量：单次对比看不出方向，
+    序列才看得出。它**不**替代失败率闸门——闸门判「当前是否超阈」，这里判
+    「是否在持续变坏」。
+    """
+    series = [*(previous_runs or []), current]
+    points: list[dict[str, Any]] = []
+    for index, profile in enumerate(series):
+        totals = profile.get("totals") or {}
+        attempts = int(totals.get("attempts", 0) or 0)
+        failed = int(totals.get("failed", 0) or 0)
+        points.append({
+            "run_id": profile.get("run_id", ""),
+            "status": profile.get("status", ""),
+            "started_at": profile.get("started_at"),
+            "attempts": attempts,
+            "failed": failed,
+            "failure_rate": _round(_rate(failed, attempts)),
+            "wall_seconds": profile.get("wall_seconds"),
+            "is_current": index == len(series) - 1,
+        })
+
+    deltas: list[dict[str, Any]] = []
+    for older, newer in zip(points, points[1:]):
+        old_rate = _rate(older["failed"], older["attempts"])
+        new_rate = _rate(newer["failed"], newer["attempts"])
+        comparable = old_rate is not None and new_rate is not None
+        deltas.append({
+            "from_run_id": older["run_id"],
+            "to_run_id": newer["run_id"],
+            "failure_rate_from": _round(old_rate),
+            "failure_rate_to": _round(new_rate),
+            "delta_failure_rate": (_round(new_rate - old_rate)
+                                   if comparable else None),
+            "comparable": comparable,
+        })
+
+    comparable_deltas = [d for d in deltas if d["comparable"]]
+    if len(comparable_deltas) < TREND_STREAK_REQUIRED:
+        trend = TREND_INSUFFICIENT
+    else:
+        tail = comparable_deltas[-TREND_STREAK_REQUIRED:]
+        if all(d["delta_failure_rate"] > 0 for d in tail):
+            trend = TREND_REGRESSING
+        elif all(d["delta_failure_rate"] < 0 for d in tail):
+            trend = TREND_IMPROVING
+        else:
+            trend = TREND_STABLE
+
+    return {
+        "points": points,
+        "deltas": deltas,
+        "trend": trend,
+        "consecutive_required": TREND_STREAK_REQUIRED,
+        "baseline_run_ids": [p["run_id"] for p in series[:-1]],
     }

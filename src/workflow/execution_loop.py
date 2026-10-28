@@ -249,6 +249,10 @@ class WorkflowLoopMixin:
         node_state.input_snapshot = {}
         node_state.upstream_summary_snapshot = ""
         node_state.next_attempt_trigger = "initial"
+        # R50：把循环轮次单独记下来。loop 每次重置都会把 trigger 打回
+        # "initial"，仅凭 attempt_history 无法区分「循环第 2 轮」与「一次重试」
+        # ——R41 §7 的观察项正是这个形状。
+        node_state.loop_iteration = iteration
         self._reset_rejection_state_for_iteration(node_state)
 
     async def _cleanup_loop_session(

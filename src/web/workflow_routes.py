@@ -668,12 +668,17 @@ _RUN_ID_RE = re.compile(r"^[\w][\w\-]*$")
 @router.get("/{workflow_id}/tasks/{task_id}/run-profile")
 async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
                                run_id: str | None = None,
-                               compare: bool = False):
+                               compare: bool = False,
+                               baseline_limit: int = 0):
     """获取任务一次运行的每阶段尝试/失败画像（R38 §7.4 落地，R40）。
 
     缺省取任务最新一次运行；``?run_id=run-xxx``（R41）查询任意历史 run
     （前端画像可视化按 run 切换）。``?compare=true``（R43）额外返回
     ``comparison`` 块：本次 run 与「上一次 run」的逐阶段失败率/尝试数差值。
+    ``?baseline_limit=N``（R50）额外返回 ``baseline`` 块：本次 run 与最近 N 次
+    历史 run 的时间序列与趋势判定（``regressing``/``improving``/``stable``/
+    ``insufficient``）。两者独立：``compare`` 判「这一步退步了吗」，
+    ``baseline_limit`` 判「是否在连续变坏」。
     与 token-usage 同款只读文件模式：任务 JSON → runs/{run_id}.json →
     run_profile.build_run_profile 纯函数聚合。不建目录、不写状态——本端点是
     GET，读端点「查询即建目录」属 B26/B28 同族缺陷（有静态钉测守卫）。非法
@@ -692,6 +697,13 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
                              totals: {...delta 字段...},
                              stages: [{node_id, ..., delta_failure_rate,
                                        comparable}]}}（仅 ``?compare=true``）
+         baseline: null | {points: [{run_id, status, attempts, failed,
+                                     failure_rate, is_current}],
+                           deltas: [{from_run_id, to_run_id,
+                                     failure_rate_from, failure_rate_to,
+                                     delta_failure_rate, comparable}],
+                           trend, consecutive_required,
+                           baseline_run_ids}（仅 ``?baseline_limit=N>0``）
     """
     task_file = WORKFLOWS_DIR / workflow_id / "tasks" / f"{task_id}.json"
     if not task_file.exists():
@@ -727,20 +739,43 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
         started_at=run_data.get("started_at"),
         completed_at=run_data.get("completed_at"),
     )
-    if not compare:
+    if not compare and baseline_limit <= 0:
         return profile
 
-    from src.workflow.run_profile import compare_run_profiles, pick_previous_run
+    from src.workflow.run_profile import (
+        compare_run_baseline,
+        compare_run_profiles,
+        pick_previous_run,
+        pick_recent_runs,
+    )
 
     runs_dir = WORKFLOWS_DIR / workflow_id / "runs"
-    previous_meta = pick_previous_run(
-        {"run_id": str(target_run_id), "started_at": run_data.get("started_at"),
-         "mtime": run_file.stat().st_mtime},
-        _iter_run_metadata(runs_dir))
-    previous_profile = _load_run_profile(runs_dir, previous_meta, workflow_id)
-    profile["comparison"] = (
-        compare_run_profiles(profile, previous_profile)
-        if previous_profile is not None else None)
+    current_meta = {
+        "run_id": str(target_run_id),
+        "started_at": run_data.get("started_at"),
+        "mtime": run_file.stat().st_mtime,
+    }
+    metas = None
+    if compare:
+        metas = _iter_run_metadata(runs_dir)
+        previous_meta = pick_previous_run(current_meta, metas)
+        previous_profile = _load_run_profile(runs_dir, previous_meta, workflow_id)
+        profile["comparison"] = (
+            compare_run_profiles(profile, previous_profile)
+            if previous_profile is not None else None)
+
+    if baseline_limit > 0:
+        # 上限 20：与 ``--limit`` 一类「最近 N 次」口径一致，也避免一次请求
+        # 扫遍整个 runs/ 目录（跑得久的工作流可能有上百条记录）。
+        limit = min(baseline_limit, 20)
+        if metas is None:
+            metas = _iter_run_metadata(runs_dir)
+        history: list[dict] = []
+        for meta in pick_recent_runs(current_meta, metas, limit):
+            loaded = _load_run_profile(runs_dir, meta, workflow_id)
+            if loaded is not None:
+                history.append(loaded)
+        profile["baseline"] = compare_run_baseline(profile, history)
     return profile
 
 

@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw, X } from "lucide-react";
 import { getTaskRunProfile } from "../../lib/api";
-import type { RunProfile, RunProfileComparisonStage, RunProfileStage } from "../../types";
+import type { RunProfile, RunProfileBaseline, RunProfileComparisonStage, RunProfileStage } from "../../types";
 import { formatAttemptTrigger } from "./nodeFailureUtils";
 import {
   attemptStatusClass,
@@ -31,7 +31,8 @@ import {
 } from "./runProfileView";
 
 export type RunProfileFetcher =
-  (workflowId: string, taskId: string, runId?: string, compare?: boolean) => Promise<RunProfile>;
+  (workflowId: string, taskId: string, runId?: string, compare?: boolean,
+   baselineLimit?: number) => Promise<RunProfile>;
 
 interface RunProfilePanelProps {
   workflowId: string;
@@ -57,6 +58,76 @@ const RUN_STATUS_CLASSES: Record<string, string> = {
   stopped: "bg-warning/10 text-warning border-warning/20",
   retry_waiting: "bg-warning/10 text-warning border-warning/20",
 };
+
+/** 趋势标签（R50）。insufficient 必须自成一档：没有序列不等于「稳定」。 */
+const TREND_LABELS: Record<string, string> = {
+  regressing: "连续退步",
+  improving: "连续改善",
+  stable: "有涨有跌 / 持平",
+  insufficient: "历史不足",
+};
+
+const TREND_CLASSES: Record<string, string> = {
+  regressing: "bg-destructive/10 text-destructive border-destructive/20",
+  improving: "bg-success/10 text-success border-success/20",
+  stable: "bg-muted text-muted-foreground border-border/20",
+  insufficient: "bg-muted text-muted-foreground border-border/20",
+};
+
+function BaselineSummary({ baseline, limit }: {
+  baseline: RunProfileBaseline | null;
+  limit: number;
+}) {
+  if (!baseline) {
+    return (
+      <div className="rounded-xl border border-primary/10 bg-card p-3"
+           aria-label="多 run 基线">
+        <p className="text-xs text-muted-foreground">
+          历史 run 不足 {limit} 个，暂无多 run 基线。
+        </p>
+      </div>
+    );
+  }
+  const trend = baseline.trend || "insufficient";
+  const { consecutive_required: required, points } = baseline;
+  return (
+    <div className="rounded-xl border border-primary/10 bg-card p-3"
+         aria-label="多 run 基线">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground">
+        <span className="font-medium">最近 {points.length} 次 run</span>
+        <span data-trend={trend}
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${TREND_CLASSES[trend] || TREND_CLASSES.stable}`}>
+          {TREND_LABELS[trend] || trend}
+        </span>
+        {trend === "regressing" && (
+          <span className="text-destructive">最近 {required} 次对比全部退步</span>
+        )}
+        {trend === "insufficient" && (
+          <span className="text-muted-foreground">
+            至少需 {required} 次相邻对比才判趋势
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        {points.map((point, index) => (
+          <span
+            key={`${point.run_id}-${index}`}
+            data-baseline-point={point.run_id}
+            data-current={point.is_current ? "true" : "false"}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-mono ${
+              point.is_current
+                ? "border-primary/40 bg-primary/5 text-foreground"
+                : "border-border/20 text-muted-foreground"
+            }`}
+            title={`${point.run_id}：尝试 ${point.attempts} / 失败 ${point.failed}`}
+          >
+            {formatFailureRate(point.failure_rate)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ErrorClassBadges({ classes }: { classes: Record<string, number> | undefined }) {
   const entries = Object.entries(classes || {});
@@ -160,6 +231,14 @@ function StageCard({ stage, ordinal, duplicate, comparison }: {
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="font-medium text-foreground">
                     第 {attempt.attempt_number ?? index + 1} 次 · {formatAttemptTrigger(attempt.trigger)}
+                    {/* R50：循环轮次独立显示。loop 会把 trigger 重置成 initial，
+                        单看 trigger 分不清「循环第 2 轮」与「第 1 次执行」。 */}
+                    {(attempt.loop_iteration ?? 0) > 0 && (
+                      <span className="ml-1 rounded-full border border-info/20 bg-info/10 px-1.5 text-xs text-info"
+                            data-loop-iteration={attempt.loop_iteration}>
+                        循环第 {attempt.loop_iteration} 轮
+                      </span>
+                    )}
                   </span>
                   <span className={attemptStatusClass(attempt.status)}>
                     {attemptStatusLabel(attempt.status)}
@@ -194,14 +273,19 @@ export default function RunProfilePanel({
   const [error, setError] = useState("");
   const [runQuery, setRunQuery] = useState("");
   const [compareEnabled, setCompareEnabled] = useState(false);
+  /** R50：多 run 基线（看连续趋势，而不是只比上一次） */
+  const [baselineEnabled, setBaselineEnabled] = useState(false);
+  const BASELINE_LIMIT = 5;
   /** R47：只看「有变化」的阶段（退步/改善），跳过持平与不可比 */
   const [changesOnly, setChangesOnly] = useState(false);
 
-  const fetchRun = useCallback(async (runId?: string, compare?: boolean) => {
+  const fetchRun = useCallback(async (runId?: string, compare?: boolean,
+                                      baseline?: boolean) => {
     setLoading(true);
     setError("");
     try {
-      setProfile(await load(workflowId, taskId, runId, compare));
+      setProfile(await load(workflowId, taskId, runId, compare,
+                            baseline ? BASELINE_LIMIT : 0));
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载运行画像失败，请稍后重试");
     } finally {
@@ -213,12 +297,17 @@ export default function RunProfilePanel({
     if (open) void fetchRun();
   }, [open, fetchRun]);
 
-  // 切换对比开关时重新取「当前正在看的那个 run」（不是最新 run）：用户可能在
-  // 查历史 run 的过程中打开对比，跳回最新会丢掉他选中的上下文。
+  // 切换对比/基线开关时重新取「当前正在看的那个 run」（不是最新 run）：用户
+  // 可能在查历史 run 的过程中打开开关，跳回最新会丢掉他选中的上下文。
   const handleCompareToggle = useCallback((next: boolean) => {
     setCompareEnabled(next);
-    void fetchRun(profile?.run_id || undefined, next);
-  }, [fetchRun, profile?.run_id]);
+    void fetchRun(profile?.run_id || undefined, next, baselineEnabled);
+  }, [fetchRun, profile?.run_id, baselineEnabled]);
+
+  const handleBaselineToggle = useCallback((next: boolean) => {
+    setBaselineEnabled(next);
+    void fetchRun(profile?.run_id || undefined, compareEnabled, next);
+  }, [fetchRun, profile?.run_id, compareEnabled]);
 
   if (!open) return null;
 
@@ -249,7 +338,7 @@ export default function RunProfilePanel({
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => void fetchRun(runQuery.trim() || undefined, compareEnabled)}
+              onClick={() => void fetchRun(runQuery.trim() || undefined, compareEnabled, baselineEnabled)}
               disabled={loading}
               aria-label="刷新运行画像"
               className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card transition-colors disabled:opacity-50 cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
@@ -281,7 +370,7 @@ export default function RunProfilePanel({
             className="flex items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              void fetchRun(runQuery.trim() || undefined, compareEnabled);
+              void fetchRun(runQuery.trim() || undefined, compareEnabled, baselineEnabled);
             }}
           >
             <input
@@ -309,6 +398,16 @@ export default function RunProfilePanel({
               className="accent-primary cursor-pointer"
             />
             与上一次 run 对比
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={baselineEnabled}
+              onChange={(e) => handleBaselineToggle(e.target.checked)}
+              aria-label="显示多 run 连续趋势"
+              className="accent-primary cursor-pointer"
+            />
+            连续趋势（最近 {BASELINE_LIMIT} 次）
           </label>
           {compareEnabled && comparison && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
@@ -347,6 +446,10 @@ export default function RunProfilePanel({
                   <ErrorClassBadges classes={totals?.error_classes} />
                 </div>
               </div>
+              {baselineEnabled && (
+                <BaselineSummary baseline={profile?.baseline || null}
+                                 limit={BASELINE_LIMIT} />
+              )}
               {compareEnabled && (
                 comparison ? (
                   <div className="rounded-xl border border-primary/10 bg-card p-3"

@@ -477,12 +477,15 @@ export async function getTask(workflowId: string, taskId: string) {
 }
 
 /** 任务运行画像：缺省最新 run，`runId` 指定历史 run（R41 ?run_id=）；
- *  `compare` 时附带与上一次 run 的对比块（R43 ?compare=true） */
+ *  `compare` 时附带与上一次 run 的对比块（R43 ?compare=true）；
+ *  `baselineLimit` 时附带多 run 基线与趋势（R50 ?baseline_limit=N） */
 export async function getTaskRunProfile(workflowId: string, taskId: string, runId?: string,
-                                        compare?: boolean) {
+                                        compare?: boolean, baselineLimit?: number) {
   const params = new URLSearchParams();
   if (runId) params.set("run_id", runId);
   if (compare) params.set("compare", "true");
+  // 0/未传 → 后端不返回 baseline 块（也就不会多扫一遍 runs/ 目录）
+  if (baselineLimit && baselineLimit > 0) params.set("baseline_limit", String(baselineLimit));
   const qs = params.toString() ? `?${params.toString()}` : "";
   return request<import("../types").RunProfile>(`/workflows/${workflowId}/tasks/${taskId}/run-profile${qs}`);
 }

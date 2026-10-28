@@ -72,6 +72,11 @@ class NodeExecutionState:
     input_snapshot: dict[str, Any] = field(default_factory=dict)
     upstream_summary_snapshot: str = ""
     next_attempt_trigger: str = "initial"
+    # 循环节点当前处于第几轮迭代（非循环节点恒 0）。R50：loop 会重置
+    # next_attempt_trigger 为 "initial"，使 attempt_history 里「循环第 N 轮」
+    # 与「第 N 次重试」看起来一模一样（R41 §7 观察项）。这个字段把轮次单独
+    # 记下来，重试语义不受影响。
+    loop_iteration: int = 0
 
 
 def _non_negative_int(value: Any, default: int = 0) -> int:
@@ -149,6 +154,7 @@ def _node_state_from_dict(data: dict, node_id: str = "") -> NodeExecutionState:
             if isinstance(data.get("next_attempt_trigger", "initial"), str)
             else "initial"
         ),
+        loop_iteration=_non_negative_int(data.get("loop_iteration", 0)),
     )
 
 
@@ -180,6 +186,7 @@ def _node_state_to_dict(
         "input_snapshot": deepcopy(state.input_snapshot),
         "upstream_summary_snapshot": state.upstream_summary_snapshot,
         "next_attempt_trigger": state.next_attempt_trigger,
+        "loop_iteration": state.loop_iteration,
     }
     if state.token_usage:
         data["token_usage"] = state.token_usage

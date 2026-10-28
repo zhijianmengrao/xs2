@@ -406,3 +406,39 @@ def test_failure_skip_clears_partial_outputs_but_preserves_failure_audit() -> No
 def test_only_failed_node_can_be_auto_skipped() -> None:
     with pytest.raises(ValueError, match="failed"):
         apply_failure_skip(NodeExecutionState(status="completed"))
+
+
+# ---------- 循环轮次与重试语义区分（R50） ----------
+
+def test_record_attempt_stamps_loop_iteration():
+    """attempt_history 必须能区分「循环第 2 轮」与「第 2 次重试」。
+
+    R41 §7 的观察项：循环体每轮会把 ``next_attempt_trigger`` 重置成
+    ``initial``，于是同样 trigger=initial 的两条记录，一条是循环轮次、一条
+    是首次执行，前端只能如实显示「首次执行」。加上 ``loop_iteration`` 后
+    两者可分，且**不改动** trigger 语义（重试仍由 trigger 表达）。
+    """
+    state = NodeExecutionState(node_id="loop_body", status="running",
+                               attempt_count=1, loop_iteration=2)
+    recorded = record_attempt(state, status="completed")
+    assert recorded.attempt_history[-1]["loop_iteration"] == 2
+    assert recorded.attempt_history[-1]["trigger"] == "initial"
+
+    # 非循环节点是 0，不是 None，也不是伪造的轮次
+    plain = record_attempt(
+        NodeExecutionState(node_id="solo", status="running", attempt_count=1),
+        status="completed")
+    assert plain.attempt_history[-1]["loop_iteration"] == 0
+
+
+def test_loop_iteration_survives_state_roundtrip():
+    """轮次要能落盘再读回——否则重启后画像又分不清循环与重试。"""
+    from src.workflow.runtime_models import _node_state_to_dict
+
+    state = NodeExecutionState(node_id="loop_body", loop_iteration=3)
+    restored = _node_state_from_dict(_node_state_to_dict(state), "loop_body")
+    assert restored.loop_iteration == 3
+
+    # 旧记录没有这个键 → 回落 0（旧数据兼容，不伪造轮次）
+    legacy = _node_state_from_dict({"node_id": "old"}, "old")
+    assert legacy.loop_iteration == 0

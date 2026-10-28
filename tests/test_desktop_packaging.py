@@ -1031,3 +1031,27 @@ def test_macos_workflow_is_manually_dispatchable_without_a_tag() -> None:
     assert "tags" not in triggers, (
         "desktop-macos.yml 不是 tag-only；若真要加 tag 触发，需同步撤掉 R48 §8-4 的挂账说法"
     )
+
+
+def test_macos_smoke_really_runs_the_ephemeral_port_path() -> None:
+    """macOS 面的 smoke 必须走 ``--port 0``，否则「已覆盖」是假的（R50）。
+
+    R49 把「macOS 可手动触发」钉死之后，还剩一个问题：它触发起来的那些步骤
+    到底跑不跑 ``--port 0``。如果一个都不跑，那「可手动触发」只是形式上
+    可验证，实际覆盖不到 ``process_group(0)`` 那条路径。
+
+    两层断言：workflow 里调了 smoke_backend.py；脚本传的是 ``--port`` ``0``。
+    前者单独成立不够——把端口改成固定值后，同样「跑了 smoke」但不再走
+    临时端口那条路。
+    """
+    workflow = (REPO_ROOT / ".github" / "workflows" / "desktop-macos.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "smoke_backend.py" in workflow, "macOS workflow 没有跑后端冒烟"
+
+    smoke = (REPO_ROOT / "desktop" / "scripts" / "smoke_backend.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"--port"' in smoke and '"0"' in smoke, (
+        "smoke_backend.py 不再以 --port 0 启动：临时端口路径失去覆盖"
+    )

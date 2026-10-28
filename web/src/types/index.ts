@@ -728,6 +728,9 @@ export interface WorkflowState {
 export interface RunProfileAttemptDetail {
   attempt_number?: number | null;
   trigger?: string;
+  /** 循环轮次（0 = 非循环节点，R50）。用它与 trigger 一起区分「循环第 N 轮」
+   *  与「第 N 次重试」——loop 会把 trigger 重置成 initial，单看 trigger 分不清。 */
+  loop_iteration?: number;
   status?: string;
   error?: string;
   error_class?: string;
@@ -770,6 +773,8 @@ export interface RunProfile {
   stages?: RunProfileStage[];
   /** 与「上一次 run」的对比（仅 ?compare=true 返回；无更早 run 时为 null，R43） */
   comparison?: RunProfileComparison | null;
+  /** 多 run 基线与趋势（仅 ?baseline_limit=N>0 返回，R50） */
+  baseline?: RunProfileBaseline | null;
 }
 
 /** 跨 run 对比的单阶段差值（后端 run_profile.compare_run_profiles，R43）。
@@ -811,6 +816,48 @@ export interface RunProfileComparison {
     comparable: boolean;
   };
   stages: RunProfileComparisonStage[];
+}
+
+/** 多 run 基线的时间序列点（后端 run_profile.compare_run_baseline，R50） */
+export interface RunProfileBaselinePoint {
+  run_id: string;
+  status: string;
+  started_at?: string | null;
+  attempts: number;
+  failed: number;
+  failure_rate?: number | null;
+  wall_seconds?: number | null;
+  is_current: boolean;
+}
+
+/** 相邻两次 run 的失败率差值（正值=退步，与 comparison 同款口径） */
+export interface RunProfileBaselineDelta {
+  from_run_id: string;
+  to_run_id: string;
+  failure_rate_from?: number | null;
+  failure_rate_to?: number | null;
+  delta_failure_rate?: number | null;
+  comparable: boolean;
+}
+
+/** 趋势结论：连续退步 / 连续改善 / 有涨有跌或持平 / 数据不足 */
+export type RunProfileTrend =
+  | "regressing"
+  | "improving"
+  | "stable"
+  | "insufficient";
+
+/** 多 run 基线块（GET .../run-profile?baseline_limit=N，R50）
+ *
+ *  与 `comparison` 互补：comparison 判「这一步比上一步退了没有」，
+ *  baseline 判「是否在连续变坏」。`insufficient` 表示历史 run 不足以构成
+ *  序列（无数据不冒充 stable）。 */
+export interface RunProfileBaseline {
+  points: RunProfileBaselinePoint[];
+  deltas: RunProfileBaselineDelta[];
+  trend: RunProfileTrend;
+  consecutive_required: number;
+  baseline_run_ids: string[];
 }
 
 /** 工作流参数变量定义（与后端 WorkflowVariable 对齐，参照 bk-sops） */

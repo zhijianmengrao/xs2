@@ -22,7 +22,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.workflow.run_profile import (build_run_profile, classify_error,
-                                      compare_run_profiles, pick_previous_run)
+                                      compare_run_baseline, compare_run_profiles,
+                                      pick_previous_run, pick_recent_runs)
 from src.web import workflow_routes
 
 
@@ -543,3 +544,126 @@ def test_run_profile_endpoint_compare_creates_nothing(tmp_path, monkeypatch):
         "/api/workflows/wf-x/tasks/task-1/run-profile?compare=true").status_code == 200
     after = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
     assert after == before, "compare 查询即建目录（B26/B28 同族复发）"
+
+
+# ---------- 多 run 基线（R50） ----------
+
+def _baseline_profile(run_id: str, attempts: int, failed: int, *,
+             started_at: str = "") -> dict:
+    """最小画像桩：只带 compare_run_baseline 用到的字段。"""
+    return {
+        "run_id": run_id,
+        "status": "completed",
+        "started_at": started_at or f"2026-10-{run_id[-1]:0>2}T00:00:00+08:00",
+        "wall_seconds": 1.0,
+        "totals": {"attempts": attempts, "failed": failed},
+        "stages": [],
+    }
+
+
+def test_baseline_flags_consecutive_regression():
+    """连续三次退步必须被识别成 regressing（R47 §8-5 要的那个形状）。"""
+    history = [_baseline_profile("run-a", 10, 0), _baseline_profile("run-b", 10, 2),
+               _baseline_profile("run-c", 10, 4)]
+    baseline = compare_run_baseline(_baseline_profile("run-d", 10, 6), history)
+    assert baseline["trend"] == "regressing"
+    assert [p["run_id"] for p in baseline["points"]] == [
+        "run-a", "run-b", "run-c", "run-d"]
+    assert baseline["points"][-1]["is_current"] is True
+    assert baseline["baseline_run_ids"] == ["run-a", "run-b", "run-c"]
+
+
+def test_baseline_is_not_fooled_by_a_spike_then_regression():
+    """尖峰之后连续退步要判成 regressing，不能被首个基线掩盖。
+
+    序列 50% → 0%（尖峰回落）→ 20% → 40%：与首个基线比是**改善**
+    （0.5 → 0.4），但最近两次相邻对比都是上升，方向明确是退步。这正是
+    「只与上一次比」（只看 20%→40%，一次变化看不出趋势）与「与首个基线比」
+    （觉得在改善）都会给错答案、而连续相邻判定要给对的形状。
+    """
+    history = [_baseline_profile("run-a", 10, 5), _baseline_profile("run-b", 10, 0),
+               _baseline_profile("run-c", 10, 2)]
+    baseline = compare_run_baseline(_baseline_profile("run-d", 10, 4), history)
+    assert baseline["trend"] == "regressing"
+    # 与首个基线比却是「改善」，证明两种判据确实不同
+    assert baseline["points"][0]["failure_rate"] == 0.5
+    assert baseline["points"][-1]["failure_rate"] == 0.4
+
+
+def test_baseline_reports_improving_and_stable():
+    improving = compare_run_baseline(
+        _baseline_profile("run-d", 10, 0),
+        [_baseline_profile("run-b", 10, 4), _baseline_profile("run-c", 10, 2)])
+    assert improving["trend"] == "improving"
+    # 有涨有跌 → stable（不硬套方向）
+    mixed = compare_run_baseline(
+        _baseline_profile("run-d", 10, 2),
+        [_baseline_profile("run-b", 10, 4), _baseline_profile("run-c", 10, 0)])
+    assert mixed["trend"] == "stable"
+
+
+def test_baseline_without_enough_history_is_insufficient_not_stable():
+    """没有序列就没有趋势。「无数据」不能冒充 stable。
+
+    只有 1 次相邻对比时能算出方向，但「连续」无从谈起——诚实结论是
+    insufficient，而不是把单次变化说成趋势。
+    """
+    assert compare_run_baseline(_baseline_profile("run-a", 10, 0), [])["trend"] == "insufficient"
+    assert compare_run_baseline(
+        _baseline_profile("run-b", 10, 2), [_baseline_profile("run-a", 10, 0)])["trend"] == "insufficient"
+
+
+def test_baseline_skips_non_comparable_pairs():
+    """任一侧无尝试的边不参与趋势判定（无数据不等于 0%）。"""
+    history = [_baseline_profile("run-a", 0, 0), _baseline_profile("run-b", 10, 2)]
+    baseline = compare_run_baseline(_baseline_profile("run-c", 10, 4), history)
+    # a→b 不可比，b→c 可比但只有 1 次 → insufficient
+    assert baseline["deltas"][0]["comparable"] is False
+    assert baseline["trend"] == "insufficient"
+
+
+def test_pick_recent_runs_returns_ascending_and_respects_limit():
+    """取最近 N 个且按时间升序——调用方拿到的直接就是时间序列。"""
+    current = {"run_id": "run-d", "started_at": "2026-10-04T00:00:00+08:00"}
+    candidates = [
+        {"run_id": "run-a", "started_at": "2026-10-01T00:00:00+08:00"},
+        {"run_id": "run-b", "started_at": "2026-10-02T00:00:00+08:00"},
+        {"run_id": "run-c", "started_at": "2026-10-03T00:00:00+08:00"},
+        {"run_id": "run-e", "started_at": "2026-10-05T00:00:00+08:00"},
+    ]
+    picked = pick_recent_runs(current, candidates, limit=2)
+    assert [p["run_id"] for p in picked] == ["run-b", "run-c"]
+    assert pick_recent_runs(current, candidates, limit=0) == []
+
+
+def test_baseline_endpoint_block_and_readonly(tmp_path, monkeypatch):
+    """?baseline_limit=N 返回 baseline 块，且仍是只读面（不建目录不写文件）。"""
+    _seed_compare_tree(tmp_path)
+    before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    client = _client(tmp_path, monkeypatch)
+    body = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?baseline_limit=5").json()
+    baseline = body["baseline"]
+    assert baseline is not None
+    assert [p["run_id"] for p in baseline["points"]] == ["run-old", "run-new"]
+    assert baseline["points"][-1]["is_current"] is True
+    assert baseline["trend"] == "insufficient"   # 只有 1 次相邻对比
+    after = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    assert after == before, "baseline 查询即建目录（B26/B28 同族复发）"
+
+
+def test_baseline_and_comparison_are_independent(tmp_path, monkeypatch):
+    """两个块互不依赖：只要一个、两个都要，各自都成立。"""
+    _seed_compare_tree(tmp_path)
+    client = _client(tmp_path, monkeypatch)
+    only_baseline = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile?baseline_limit=3").json()
+    assert "baseline" in only_baseline
+    assert "comparison" not in only_baseline
+    both = client.get(
+        "/api/workflows/wf-x/tasks/task-1/run-profile"
+        "?compare=true&baseline_limit=3").json()
+    assert both["comparison"]["previous_run_id"] == "run-old"
+    assert both["baseline"]["points"][-1]["run_id"] == "run-new"
+    neither = client.get("/api/workflows/wf-x/tasks/task-1/run-profile").json()
+    assert "baseline" not in neither and "comparison" not in neither

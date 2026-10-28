@@ -157,6 +157,9 @@ def record_attempt(
         "started_at": state.started_at,
         "completed_at": completed_at or state.completed_at,
         "error": state.error,
+        # R50：循环轮次。「第 2 轮」与「第 2 次重试」在 trigger 上都是
+        # "initial"，只看 trigger 无法区分（R41 §7 观察项）。0 = 非循环节点。
+        "loop_iteration": state.loop_iteration,
     }
     history = deepcopy(state.attempt_history)
     if history and history[-1].get("attempt_number") == state.attempt_count:

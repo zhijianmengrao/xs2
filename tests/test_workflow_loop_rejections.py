@@ -242,3 +242,28 @@ def test_loop_gateway_rejects_oversized_sequence_without_truncation():
 
     assert result == "failed"
     assert task.node_states == {}
+
+
+def test_loop_reset_stamps_the_iteration_for_attempt_history():
+    """循环重置必须把轮次写进 state，供 attempt_history 区分循环与重试。
+
+    R50：``_reset_node_for_loop_iteration`` 会把 ``next_attempt_trigger`` 打回
+    ``initial``，于是循环第 2 轮与一次重试在 attempt_history 里长得一样
+    （R41 §7 观察项）。轮次单独记在 ``loop_iteration`` 上，且**不影响**
+    trigger —— 重试语义仍由 trigger 表达。
+    """
+    state = NodeExecutionState(
+        node_id="loop_body",
+        status="failed",
+        attempt_count=2,
+        automatic_retry_count=1,
+        loop_iteration=0,
+    )
+    mixin = WorkflowLoopMixin()
+
+    asyncio.run(mixin._reset_node_for_loop_iteration(state, 2))
+
+    assert state.loop_iteration == 2
+    assert state.next_attempt_trigger == "initial"   # 既有语义不变
+    assert state.attempt_count == 2                  # 累计账本保留
+    assert state.automatic_retry_count == 0          # 每轮重试预算重置

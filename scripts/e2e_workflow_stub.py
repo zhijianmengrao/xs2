@@ -95,21 +95,30 @@ def _isolate_environment(data_root: Path) -> None:
     # 进程池启动会引入与判据无关的抖动（其自身行为由 pool 场景测试覆盖）。
     os.environ["DETERMINFLOW_WORKFLOW_EXECUTOR_MODE"] = "inline"
     os.environ["DETERMINFLOW_WORKFLOW_EXECUTOR_COUNT"] = "1"
+    # 流式停摆场景要用小超时：默认 120s 会让 CI 上这一步慢到不像话，而
+    # 判据（停摆是否被判失败、是否拒绝原地重试）与超时具体值无关。
+    os.environ["LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S"] = "2"
     (data_root / "data" / "workflows").mkdir(parents=True, exist_ok=True)
     (data_root / "logs").mkdir(parents=True, exist_ok=True)
 
 
-def _write_models_config(path: Path, base_url: str, model_id: str = "stub-model") -> None:
+def _write_models_config(path: Path, base_url: str, model_id: str = "stub-model",
+                         *, max_retries: int = 0,
+                         delays: list[float] | None = None) -> None:
     """写一份只含桩 provider 的模型配置。
 
     ``api_key`` 是字面量 ``stub-key``：桩不校验鉴权，真实凭据在这里没有任何
     位置——这正是本路线的全部意义（fork PR 无 secrets 也能跑）。
+
+    ``max_retries`` 默认 0：多数场景判的是编排语义，重试层会引入与判据无关的
+    等待。只有故障注入场景把它调大，好让「瞬时错误后被重试救回来」可观察。
     """
     path.write_text(
         json.dumps(
             {
                 "default_params": {"temperature": 0.7},
-                "retry": {"max_retries": 0, "delays": []},
+                "retry": {"max_retries": max_retries,
+                          "delays": list(delays or [])},
                 "providers": {
                     "stub": {
                         "name": "Stub Provider",
@@ -469,12 +478,154 @@ async def scenario_turn_terminates(runtime: Runtime, stub) -> ScenarioResult:
     )
 
 
+async def scenario_transient_error_is_retried(runtime: Runtime, stub) -> ScenarioResult:
+    """瞬时错误（503）一次后重试成功：证明瞬时失败最终能被救回来。
+
+    桩用 ``[stub:5xx][stub:fail_once]``：第一发返回真实的 HTTP 503 +
+    OpenAI 错误体，第二发起正常回复。断言落在「请求数 ≥ 2 且节点最终
+    completed」——只看 completed 无法区分「重试救回来了」与「根本没失败」。
+
+    **它判的是「重试总效果」，不是「Core 层重试」**（R50 实测）：关闭 Core 的
+    ``retry.max_retries`` 后场景仍然是 3 次请求，因为 LangChain 的 ChatOpenAI
+    自带 ``max_retries=2``。只有同时关掉两层才会红（实测 1 次请求、任务 failed）。
+    所以一条「Core 层重试失效」的回归，本场景抓不到——那是单测的地盘
+    （``tests/test_llm_client_params.py``）。把这一点写清楚，免得下一轮把它
+    当成 Core 层的守卫。
+    """
+    definition = {
+        "name": "transient retry",
+        "nodes": [_agent_node("flaky", "task [stub:5xx][stub:fail_once]")],
+        "edges": [],
+    }
+    status, nodes = await runtime.run_workflow("wf-e2e-retry", definition)
+    problems: list[str] = []
+    node = nodes.get("flaky")
+    if node is None:
+        problems.append("节点 flaky 没有状态")
+    elif node.status != "completed":
+        problems.append(f"节点 flaky 状态 {node.status}（error={node.error!r}）")
+    if status != "completed":
+        problems.append(f"任务状态 {status}，期望 completed")
+
+    injected = stub.error_requests()
+    if len(injected) < 1:
+        problems.append("桩没有收到注入请求——故障注入没生效，本场景失去意义")
+    total = len(stub.requests)
+    if total < 2:
+        problems.append(
+            f"模型请求只有 {total} 次：503 之后没有重试，重试层没接住瞬时错误"
+        )
+    return ScenarioResult(
+        "transient_error_is_retried",
+        not problems,
+        "; ".join(problems) or (
+            f"任务 completed，{total} 次请求（含 1 次注入 503），重试救回"
+        ),
+    )
+
+
+async def scenario_permanent_error_is_not_retried(runtime: Runtime, stub) -> ScenarioResult:
+    """永久错误（401）不重试：证明「不重试」这个决定也真的生效。
+
+    与上一个场景互为正反面。只验「会重试」而不验「该不重试时不重试」，
+    会让「把所有错误都重试一遍」这种退步一路绿灯。
+    """
+    definition = {
+        "name": "permanent error",
+        "nodes": [_agent_node("denied", "task [stub:401]")],
+        "edges": [],
+    }
+    status, nodes = await runtime.run_workflow("wf-e2e-denied", definition)
+    problems: list[str] = []
+    node = nodes.get("denied")
+    if node is None:
+        problems.append("节点 denied 没有状态")
+    elif node.status == "completed":
+        problems.append("节点 denied 被判 completed，401 被吞掉了")
+    if status == "completed":
+        problems.append("任务 completed，永久错误没有传导到任务层")
+
+    total = len(stub.requests)
+    if total < 1:
+        problems.append("桩没有收到请求")
+    elif total > 1:
+        problems.append(
+            f"模型请求 {total} 次：401 被当成瞬时错误重试了"
+            "（is_permanent_provider_error 判定失效）"
+        )
+    return ScenarioResult(
+        "permanent_error_is_not_retried",
+        not problems,
+        "; ".join(problems) or f"任务 {status}，{total} 次请求（401 未重试）",
+    )
+
+
+async def scenario_stream_stall_fails_fast(runtime: Runtime, stub) -> ScenarioResult:
+    """流式停摆必须被判失败，而不是挂到天荒地老。
+
+    ``[stub:stall]`` 让桩发完 SSE 头与一个 chunk 后停住。``stream_chunk_timeout``
+    （本脚本设 2s，见 ``_isolate_environment``）会在「解析出的 chunk 之间」超时，
+    抛 ``StreamChunkTimeoutError``。
+
+    断言三件事：
+    1. 节点 failed —— 停摆不能被当成成功收尾；
+    2. 任务在超时预算内到终态 —— 这正是「没有 stream_chunk_timeout 就会挂到
+       上游 6 小时上限」的那类失效的反面；
+    3. 桩只收到 1 次请求 —— 已经吐出部分流后**拒绝原地重试**是刻意的
+       （``llm_client`` 的 ``retry_suppressed=partial_stream``），因为重发会在
+       调用方已收到的半截响应后面再拼一段。
+    """
+    definition = {
+        "name": "stream stall",
+        "nodes": [_agent_node("stalled", "task [stub:stall]")],
+        "edges": [],
+    }
+    status, nodes = await runtime.run_workflow(
+        "wf-e2e-stall", definition, timeout_seconds=90.0
+    )
+    problems: list[str] = []
+    node = nodes.get("stalled")
+    if node is None:
+        problems.append("节点 stalled 没有状态")
+    elif node.status == "completed":
+        problems.append("节点 stalled 被判 completed：停摆被当成正常收尾")
+    if status == "completed":
+        problems.append("任务 completed，停摆没有传导到任务层")
+
+    total = len(stub.requests)
+    if total < 1:
+        problems.append("桩没有收到请求")
+    elif total > 1:
+        problems.append(
+            f"模型请求 {total} 次：部分流之后仍然重试，会在半截响应后面再拼一段"
+        )
+    error_text = (node.error if node is not None else "") or ""
+    if error_text and "streaming chunk" not in error_text.lower() \
+            and "stream" not in error_text.lower():
+        problems.append(f"错误文本看不出是流式停摆: {error_text[:120]!r}")
+    return ScenarioResult(
+        "stream_stall_fails_fast",
+        not problems,
+        "; ".join(problems) or f"任务 {status}，{total} 次请求（部分流后未重试）",
+    )
+
+
 SCENARIOS = {
     "happy_path": scenario_happy_path,
     "failure_propagates": scenario_failure_propagates,
     "turn_terminates": scenario_turn_terminates,
+    "transient_error_is_retried": scenario_transient_error_is_retried,
+    "permanent_error_is_not_retried": scenario_permanent_error_is_not_retried,
+    "stream_stall_fails_fast": scenario_stream_stall_fails_fast,
 }
-SCENARIO_ORDER = ["happy_path", "failure_propagates", "turn_terminates"]
+SCENARIO_ORDER = [
+    "happy_path",
+    "failure_propagates",
+    "turn_terminates",
+    "transient_error_is_retried",
+    "permanent_error_is_not_retried",
+    "stream_stall_fails_fast",
+]
 
 
 # ============================================================
@@ -491,7 +642,13 @@ async def _run(args) -> int:
     results: list[ScenarioResult] = []
     stub = StubProvider().start()
     try:
-        _write_models_config(data_root / "models_config.json", stub.base_url)
+        # 重试配置必须非零：故障注入场景要验「重试层接住了瞬时错误」。
+        # delays 全 0 是为了不让等待时间混进判据——本脚本判语义，不判退避策略
+        # （退避本身由 tests/test_llm_client_params.py 一类单测覆盖）。
+        _write_models_config(
+            data_root / "models_config.json", stub.base_url,
+            max_retries=2, delays=[0, 0],
+        )
         _write_agents_config(data_root / "agents_config.json", "stub:stub-model")
 
         runtime = Runtime(
@@ -507,8 +664,9 @@ async def _run(args) -> int:
         wanted = SCENARIO_ORDER if args.only is None else [args.only]
         try:
             for name in wanted:
-                # 每个场景清一次请求记录，断言里的计数才有意义
+                # 每个场景清一次请求记录与 fail_once 配额，断言里的计数才有意义
                 stub.requests.clear()
+                stub.reset_claims()
                 try:
                     result = await SCENARIOS[name](runtime, stub)
                 except Exception as exc:

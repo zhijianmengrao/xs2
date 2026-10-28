@@ -422,3 +422,126 @@ test("changes-only is only offered when a comparison exists", async () => {
   assert.ok(!document.querySelector('input[aria-label="只看有变化的阶段"]'),
     "no changes-only toggle when backend reports no earlier run");
 });
+
+// ---------------- R50：多 run 基线 + 循环轮次 ----------------
+
+const baselineProfile: RunProfile = {
+  ...r38ShapeProfile,
+  baseline: {
+    points: [
+      { run_id: "run-a", status: "completed", attempts: 10, failed: 0,
+        failure_rate: 0, is_current: false },
+      { run_id: "run-b", status: "completed", attempts: 10, failed: 2,
+        failure_rate: 0.2, is_current: false },
+      { run_id: "run-c", status: "completed", attempts: 10, failed: 4,
+        failure_rate: 0.4, is_current: true },
+    ],
+    deltas: [
+      { from_run_id: "run-a", to_run_id: "run-b", failure_rate_from: 0,
+        failure_rate_to: 0.2, delta_failure_rate: 0.2, comparable: true },
+      { from_run_id: "run-b", to_run_id: "run-c", failure_rate_from: 0.2,
+        failure_rate_to: 0.4, delta_failure_rate: 0.2, comparable: true },
+    ],
+    trend: "regressing",
+    consecutive_required: 2,
+    baseline_run_ids: ["run-a", "run-b"],
+  },
+};
+
+async function toggleBaseline() {
+  const box = document.querySelector<HTMLInputElement>('input[aria-label="显示多 run 连续趋势"]');
+  assert.ok(box, "baseline checkbox exists");
+  await act(async () => {
+    box!.click();
+  });
+}
+
+test("baseline toggle requests baseline_limit and keeps the viewed run", async () => {
+  const calls: Array<{ runId?: string; compare?: boolean; baseline?: number }> = [];
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, runId, compare, baselineLimit) => {
+      calls.push({ runId, compare, baseline: baselineLimit });
+      return baselineLimit ? baselineProfile : r38ShapeProfile;
+    },
+  }));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].baseline, 0, "baseline off by default");
+
+  await act(async () => {
+    document.querySelector<HTMLInputElement>('input[aria-label="按 run_id 查询历史 run"]')!.value = "";
+  });
+  await toggleBaseline();
+  assert.ok((calls.at(-1)!.baseline || 0) > 0, "baseline_limit forwarded when toggled on");
+});
+
+test("baseline renders the series and the regressing verdict", async () => {
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, _compare, baselineLimit) =>
+      baselineLimit ? baselineProfile : r38ShapeProfile,
+  }));
+  await toggleBaseline();
+
+  const points = document.querySelectorAll("[data-baseline-point]");
+  assert.equal(points.length, 3, "one chip per run in the baseline");
+  assert.equal(document.querySelectorAll('[data-current="true"]').length, 1,
+    "exactly one point marked as the current run");
+
+  const trend = document.querySelector("[data-trend]");
+  assert.ok(trend, "trend badge is rendered");
+  assert.equal(trend!.getAttribute("data-trend"), "regressing");
+  assert.ok((trend!.textContent || "").includes("连续退步"));
+  assert.ok(bodyText().includes("失败"), "failure rates are shown in the series");
+});
+
+test("baseline without enough history is labelled insufficient, not stable", async () => {
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async (_wf, _task, _runId, _compare, baselineLimit) =>
+      baselineLimit ? {
+        ...r38ShapeProfile,
+        baseline: {
+          points: [{ run_id: "run-only", status: "completed", attempts: 5,
+                     failed: 0, failure_rate: 0, is_current: true }],
+          deltas: [], trend: "insufficient", consecutive_required: 2,
+          baseline_run_ids: [],
+        },
+      } : r38ShapeProfile,
+  }));
+  await toggleBaseline();
+  const trend = document.querySelector("[data-trend]");
+  assert.equal(trend!.getAttribute("data-trend"), "insufficient");
+  assert.ok(!(trend!.textContent || "").includes("稳定"));
+});
+
+test("loop iterations are labelled so they are not read as retries", async () => {
+  // 同一 node 跑 2 轮循环：trigger 都是 initial（loop 重置的既有语义），
+  // 只有 loop_iteration 能区分。R41 §7 观察项。
+  const looped: RunProfile = {
+    ...r38ShapeProfile,
+    stages: [{
+      node_id: "loop_body", attempts: 2, completed: 2, failed: 0,
+      failure_rate: 0, automatic_retry_count: 0, output_repair_count: 0,
+      duration_seconds: 60, error_classes: {},
+      attempts_detail: [
+        { attempt_number: 1, trigger: "initial", loop_iteration: 1,
+          status: "completed", error: "", error_class: "", duration_seconds: 30 },
+        { attempt_number: 2, trigger: "initial", loop_iteration: 2,
+          status: "completed", error: "", error_class: "", duration_seconds: 30 },
+      ],
+    }],
+  };
+  await render(React.createElement(RunProfilePanel, {
+    workflowId: "wf-x", taskId: "task-1", open: true, onClose: () => {},
+    fetchProfile: async () => looped,
+  }));
+  await act(async () => {
+    document.querySelectorAll<HTMLButtonElement>("button")
+      .forEach((b) => { if ((b.textContent || "").includes("尝试记录")) b.click(); });
+  });
+  const badges = document.querySelectorAll("[data-loop-iteration]");
+  assert.equal(badges.length, 2, "both loop passes are labelled");
+  assert.ok((badges[0].textContent || "").includes("循环第 1 轮"));
+  assert.ok((badges[1].textContent || "").includes("循环第 2 轮"));
+});
