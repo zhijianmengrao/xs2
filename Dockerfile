@@ -65,9 +65,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # 生产启动：Gunicorn + UvicornWorker
 # --workers 1：项目有状态初始化（MCP/Session/Graph），不支持多 worker
 # --timeout 600：Agent 工作流节点最长可执行 10 分钟
+# worker class 用独立的 uvicorn-worker 包：uvicorn>=0.36 的 uvicorn.workers 已弃用，
+# 导入即发 DeprecationWarning（两者实现逐行相同，只是搬了家）。
 ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]
 CMD ["gunicorn", "src.web_server:app", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--worker-class", "uvicorn_worker.UvicornWorker", \
      "--bind", "0.0.0.0:8020", \
      "--workers", "1", \
      "--timeout", "600", \

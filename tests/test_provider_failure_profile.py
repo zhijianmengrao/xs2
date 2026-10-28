@@ -14,6 +14,7 @@ R41 起该脚本被写进「每轮收官固定跑」的流程（``--summary`` �
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -185,3 +186,69 @@ def test_gate_reason_states_both_numbers(mining):
     reason = mining.evaluate_gate(_rows(50, 5), 5.0)["reason"]
     assert "10.00%" in reason and "5.0%" in reason
     assert "超出" in reason
+
+
+# ------------------------------------------------- R45 --require-sample 空转防护
+def _run_main(mining, monkeypatch, tmp_path, argv, *, seed=True):
+    """用注入的 workflows 目录跑 main()，返回 (exit_code, stdout, stderr)。"""
+    if seed:
+        _seed(tmp_path)
+    else:
+        (tmp_path / "empty").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(mining, "WORKFLOWS_DIR", tmp_path)
+    # main() 走 argparse 默认读 sys.argv[1:]，这里只替换参数列表。
+    monkeypatch.setattr(sys, "argv", ["provider_failure_profile.py", *argv])
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    code = mining.main()
+    return code, out.getvalue(), err.getvalue()
+
+
+def test_require_sample_fails_when_no_runs_exist(mining, monkeypatch, tmp_path):
+    """CI 克隆没有 data/workflows：诚实放行会变成静默空转，必须用不同退出码暴露。"""
+    code, _, err = _run_main(
+        mining, monkeypatch, tmp_path,
+        ["--summary", "--fail-if-above", "5", "--require-sample"], seed=False,
+    )
+    assert code == mining.EXIT_NO_SAMPLE == 3
+    assert "闸门未生效" in err and "require-sample" in err
+
+
+def test_require_sample_passes_when_samples_exist(mining, monkeypatch, tmp_path):
+    """有数据且未超阈时照常 exit 0——不能把「有样本」也判成空转。"""
+    code, out, err = _run_main(
+        mining, monkeypatch, tmp_path,
+        ["--summary", "--fail-if-above", "90", "--require-sample"],
+    )
+    assert code == mining.EXIT_OK == 0
+    assert "TOTAL:" in out and "闸门未生效" not in err
+
+
+def test_require_sample_does_not_mask_a_real_breach(mining, monkeypatch, tmp_path):
+    """超阈时退出码必须是 1（不合格），不能被 3（空转）这个更「软」的语义顶替。"""
+    code, _, err = _run_main(
+        mining, monkeypatch, tmp_path,
+        ["--summary", "--fail-if-above", "0.1", "--require-sample"],
+    )
+    assert code == mining.EXIT_GATE_TRIGGERED == 1
+    assert "超出" in err
+
+
+def test_without_require_sample_empty_data_still_passes(mining, monkeypatch, tmp_path):
+    """默认行为不变：不加开关时无数据仍诚实放行（R42 语义保持）。"""
+    code, _, err = _run_main(
+        mining, monkeypatch, tmp_path,
+        ["--summary", "--fail-if-above", "5"], seed=False,
+    )
+    assert code == mining.EXIT_OK == 0
+    assert "无 run 样本" in err
+    assert "闸门未生效" not in err
+
+
+def test_require_sample_requires_the_gate(mining, monkeypatch, tmp_path):
+    """单独用 --require-sample 没有意义（不影响任何判定），由 argparse 拒绝。"""
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(mining, monkeypatch, tmp_path,
+                  ["--summary", "--require-sample"])
+    assert excinfo.value.code == 2

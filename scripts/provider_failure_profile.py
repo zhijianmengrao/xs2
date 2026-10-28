@@ -9,6 +9,7 @@
     python scripts/provider_failure_profile.py --limit 10 --json   # 机器可读输出
     python scripts/provider_failure_profile.py --summary           # 每 workflow 一行，供交接时间序列
     python scripts/provider_failure_profile.py --fail-if-above 5   # 总失败率 > 5% 时非零退出
+    python scripts/provider_failure_profile.py --fail-if-above 5 --require-sample  # 无数据也失败
 
 轮次收官固定动作（R41 起）：每轮收官跑一次 ``--summary``，把输出行贴进交接
 文档的「供应商失败率时间序列」表——同一口径逐轮累积即为时间序列。脚本自身
@@ -17,6 +18,13 @@
 告警闸门（R42）：``--fail-if-above PCT`` 把「人工比对」升级为可挂 CI 的硬闸门。
 判据是**总失败率**（全部入选 run 的 failed/attempts），严格大于阈值才失败；
 verdict 写 stderr，stdout 的表格/JSON 保持机器可读不变。
+
+空转防护（R45）：闸门在**无 run 样本**时按设计诚实放行（「无数据」既不等于 0%
+也不等于 100%），但这条诚实语义放进 CI 就成了静默空转——CI 克隆里没有
+``data/workflows``（该目录被 gitignore），闸门每次都会「通过」，看不出它其实
+一个样本都没判。``--require-sample`` 把这种情况变成退出码 **3**，与「阈值超出」
+的 **1** 分开：前者是「闸门没生效」，后者是「闸门判了且不合格」，CI 日志里
+一眼可分。本地有数据时该开关不影响任何判定。
 """
 
 from __future__ import annotations
@@ -174,6 +182,11 @@ def _gate_reason(rate: float | None, threshold_pct: float,
             f"（{attempts} 次尝试）")
 
 
+EXIT_OK = 0
+EXIT_GATE_TRIGGERED = 1
+EXIT_NO_SAMPLE = 3
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workflow", default="", help="只看指定 workflow id")
@@ -185,20 +198,34 @@ def main() -> int:
     parser.add_argument("--fail-if-above", type=float, default=None,
                         metavar="PCT",
                         help="总失败率严格大于 PCT 时以退出码 1 结束（CI 硬闸门）")
+    parser.add_argument("--require-sample", action="store_true",
+                        help="无 run 样本时以退出码 3 结束（防止闸门在 CI 上静默空转）")
     args = parser.parse_args()
     if args.fail_if_above is not None and not 0 <= args.fail_if_above <= 100:
         parser.error("--fail-if-above 需在 0..100 之间（单位是百分比）")
+    if args.require_sample and args.fail_if_above is None:
+        # 只在闸门语境下有意义：否则「无数据」既不影响输出也不影响结论。
+        parser.error("--require-sample 需与 --fail-if-above 一起使用")
 
     by_workflow = collect_profiles(WORKFLOWS_DIR, args.workflow, args.limit)
     rows = summarize(by_workflow)
 
-    exit_code = 0
+    exit_code = EXIT_OK
     if args.fail_if_above is not None:
         verdict = evaluate_gate(rows, args.fail_if_above)
         # 闸门结论写 stderr：stdout 的表格/JSON 是机器可读出口，不能被结论行污染。
         print(f"[gate] {verdict['reason']}", file=sys.stderr)
         if verdict["triggered"]:
-            exit_code = 1
+            exit_code = EXIT_GATE_TRIGGERED
+        elif args.require_sample and verdict["attempts"] == 0:
+            # 「诚实放行」在这里变成静默空转：CI 克隆没有 data/workflows，
+            # 没有这条就永远看不出闸门一个样本都没判。
+            print(
+                f"[gate] --require-sample: 一个 run 样本都没有，闸门未生效"
+                f"（退出码 {EXIT_NO_SAMPLE}，检查 data/workflows 是否存在）",
+                file=sys.stderr,
+            )
+            exit_code = EXIT_NO_SAMPLE
 
     if args.summary:
         if args.json:
