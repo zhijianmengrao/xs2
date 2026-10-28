@@ -245,3 +245,82 @@ R45 §8-2 描述 `replace-desktop-assets.yml` 时未点明 job 名，我在写�
   （三态已验证）。真实 runner 上的 yml 解析与环境变量展开交给推送后的 CI 日志。
 - **未重启 8021 服务**：改动面不含后端运行时代码。
 - **未跑 `docker build`**：本机仍无 docker/wsl（R43/R44/R45 复核仍不可用）。
+
+## 10. 补记：推送与 CI 全量核对（当轮执行）
+
+推送 `93c1e03..c8f7c13`，`origin/main` 已同步。
+
+### 10.1 xs2 `CI` run 40666712534（`c8f7c13`）五 job 全绿
+
+| job | 结果 | 数据 |
+|---|---|---|
+| `frontend` | success | 463 passed / 0 fail |
+| `container-config` | success | `docker compose config -q` |
+| `backend`（ubuntu-24.04） | success | **1916 passed / 64 skipped**（95.25s） |
+| `container-build` | success | 构建 + 冒烟全过 |
+| `windows-backend` | success | **1951 passed / 29 skipped**（209.16s） |
+
+**四口径总数均为 1980**：ubuntu 1916+64、windows 1951+29、本机 Low-IL 1884+96、
+High-IL 1969+11 —— 与 §4 双基线逐项对齐，零未解释差异。
+
+### 10.2 新 step 在真实 runner 上跑通，三态全部命中
+
+这是本轮**唯一**能在真实 CI 上验证的改动，日志取证（`backend` job 第 7 步
+`Provider failure-rate gate self-test (fixture)`，conclusion=success）：
+
+```
+[gate] 总失败率 11.67% 未超出阈值 15.0%（60 次尝试）
+OK  阈值 15 未超阈  exit=0
+[gate] 总失败率 11.67% 超出阈值 1.0%（60 次尝试）
+OK  阈值 1 触发闸门  exit=1
+[gate] 无 run 样本（attempts=0），跳过失败率闸门（阈值 15.0%）
+[gate] --require-sample: 一个 run 样本都没有，闸门未生效（退出码 3，检查 data/workflows 是否存在）
+OK  无样本时闸门显式失败  exit=3
+```
+
+`${{ github.workspace }}` 展开、`env` 传递、fixture 路径命中（60 次尝试说明
+`DETERMINFLOW_DATA_DIR` 确实指到了入库 fixture）全部成立——§5-1 记录的未验证面
+已闭合。
+
+### 10.3 `Desktop Windows` run 40666712618（同 sha）：首跑 Full 失败，重跑全绿
+
+首跑结果：`Build core NSIS installer` success，**`Build full NSIS installer` failure**。
+
+**排除本轮回归**：`desktop-windows.yml` 的改动只落在 `release` job 的 env
+（`R2_PUBLIC_BASE_URL`），而该 job 在本 run 里是 skip 的；`Build full NSIS
+installer` 完全不读这个变量。逐行 diff 见 §6 改动表。
+
+**真实根因**（诊断 artifact `installer-diagnostics-full` 的 `backend-console.log`）：
+
+```
+[src.web_server] INFO: Web 服务 初始化完成，主会话: ac02b561
+[uvicorn.error] INFO: Application startup complete.
+[uvicorn.error] ERROR: [Errno 10048] error while attempting to bind on address
+    ('127.0.0.1', 55786): only one usage of each socket address (protocol/network
+    address/port) is normally permitted
+[uvicorn.error] INFO: Waiting for application shutdown.
+```
+
+即后端**初始化全部完成、在最后 bind 端口时失败**，随后自行关闭；而
+`smoke_installer.ps1:214` 的就绪探测（180 秒窗口、每次 2 秒超时）因此一直读不到
+200，抛出 `Installed DeterminFlow backend did not become ready`。
+
+**机制**：`desktop/src-tauri/src/backend.rs:244` 的 `reserve_local_port()` 是
+「`TcpListener::bind(("127.0.0.1", 0))` 拿到一个空闲端口号 → **listener 随函数
+返回被 drop（端口释放）** → 把号码通过 `--port` 传给后端 → 后端重新 bind」的
+**TOCTOU** 设计。两步之间任何进程占走该端口，后端就 bind 失败。该函数出自
+`96b0a3c`（v1.0.2 之前），**不是本轮引入**。
+
+**判定为 flake 而非确定性缺陷**：① 同 run 的 Core 版通过（Core 与 Full 走同一份
+后端启动路径）；② 重跑同一 job（`run_attempt=2`）**success**，未改任何代码。
+
+**留下的问题（下一轮候选）**：这个 TOCTOU 窗口在 CI runner 上命中率不低
+（同日 `f9a1340` 那次 Full 也失败，但根因是插件锁，不同问题）。彻底修法是让
+Rust 端用 `SO_REUSEADDR` + 重试，或把端口分配改为「后端自己选并在 stdout 上报
+实际端口」，从根上消掉「先释放再复用」的两步。
+
+### 10.4 本轮未复现的历史失败
+
+`f9a1340`（01:21）的 Full 失败日志显示是另一回事：`50 passed, 1 skipped` 后
+进入 `refresh_official_plugin_lock.py --check` 阶段——即 R42 记录的插件锁脱钩，
+与本轮无关，也未在本轮出现。
