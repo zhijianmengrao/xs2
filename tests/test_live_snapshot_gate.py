@@ -620,6 +620,25 @@ def test_windows_sample_size_step_reads_last_exit_code_not_stop_preference() -> 
     )
 
 
+def test_windows_sample_size_step_ends_with_exit_zero() -> None:
+    """末尾必须显式 ``exit 0``（R52 实测踩到）。
+
+    GHA 的 pwsh 包装器在脚本末尾追加 ``exit $LASTEXITCODE``，而脚本里最后一条
+    原生命令正是那次**故意**以 7 退出的反向验证。于是判据两个分支都对、日志也
+    打印了 OK，步骤仍然红——CI run **40801653541** 的 `windows-backend` 就是这么
+    红的。`exit 0` 是让「提前 exit 的失败路径」与「走到末尾的成功路径」分开。
+
+    这条测试不是风格检查：删掉它这一步就会在每次跑的时候红，而红的原因与判据
+    毫无关系。
+    """
+    run = str(_windows_sample_size_step()["run"])
+    tail = [line.strip() for line in run.strip().splitlines() if line.strip()]
+    assert tail[-1] == "exit 0", (
+        f"Windows 步骤没有以 exit 0 收尾（末行是 {tail[-1]!r}）："
+        "pwsh 包装器会把最后一次故意非零的退出码透传出去"
+    )
+
+
 def test_windows_step_does_not_reintroduce_stale_or_coverage() -> None:
     """同一条纪律在 Windows job 上同样成立。"""
     for step in _windows_backend_steps():

@@ -175,10 +175,17 @@ jobs:
       - name: Snapshot sample-size gate
         shell: pwsh
         run: |
-          # 反向验证那一步**故意**让脚本以 7 退出。pwsh 的非零退出码原生命令在
-          # $ErrorActionPreference='Stop' 下会被包成 NativeCommandError，让这一步
-          # 在「判据正常工作」时反而红。所以这里用 Continue：退出码由
-          # $LASTEXITCODE 显式读，错误由下面的 ::error:: 显式发。
+          # 两处 pwsh 特有的坑，都只在 GHA 上显形（本机 PowerShell 5.1 复现不到）：
+          #
+          # 1. 反向验证那一步**故意**让脚本以 7 退出。pwsh 的非零退出码原生命令在
+          #    $ErrorActionPreference='Stop' 下会被包成 NativeCommandError，让这一步
+          #    在「判据正常工作」时反而红。所以先降成 Continue：退出码由
+          #    $LASTEXITCODE 显式读，错误由 ::error:: 显式发。
+          # 2. GHA 的 pwsh 包装器在脚本末尾追加 `exit $LASTEXITCODE`，而最后一条
+          #    原生命令正是那次故意以 7 退出的调用——于是全部分支都判对、日志也
+          #    打了 OK，步骤仍然红（R52 实测踩到）。所以末尾必须显式 `exit 0`。
+          #
+          # 真正的失败在上面用 `exit $code` / `exit 1` 提前退出，不受末尾影响。
           $ErrorActionPreference = 'Continue'
           $snapshot = "tests/fixtures/live_snapshot"
           python scripts/check_live_snapshot_gate.py --check-sample-size --data-dir $snapshot
@@ -194,6 +201,7 @@ jobs:
             exit 1
           }
           Write-Host "OK  样本量判据双向生效（Windows/Python 3.14）：默认余量通过，余量 2 触发 7"
+          exit 0
       # 存储名只读巡检（R23）：Windows 权威基线跑完后对仓库做一次设备名遗留
       # 体检，防新数据回归。CI 克隆不含运行期 data/，此步主要锚定配置面与
       # 未来可能入库的数据面；本地权威巡检仍以 PROJECT_INFO 维护入口为准。
