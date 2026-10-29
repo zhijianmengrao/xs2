@@ -186,3 +186,38 @@ export function describeStageChanges(summary: StageChangeSummary): string {
   if (parts.length === 0) return "无阶段变化";
   return parts.join(" · ");
 }
+
+/** 趋势文案（R50 抽屉 + R51 列表徽章共用一处，避免两处漂移）。
+ *
+ *  `insufficient` 自成一档：「没有足够历史」不等于「稳定」，混进 stable
+ *  会把「判不了」显示成「没问题」。 */
+export const TREND_LABELS: Record<string, string> = {
+  regressing: "连续退步",
+  improving: "连续改善",
+  stable: "有涨有跌 / 持平",
+  insufficient: "历史不足",
+};
+
+export const TREND_CLASSES: Record<string, string> = {
+  regressing: "bg-destructive/10 text-destructive border-destructive/20",
+  improving: "bg-success/10 text-success border-success/20",
+  stable: "bg-muted text-muted-foreground border-border/20",
+  insufficient: "bg-muted text-muted-foreground border-border/20",
+};
+
+export function trendLabel(trend: string | undefined): string {
+  return TREND_LABELS[trend || ""] || trend || "";
+}
+
+export function trendClass(trend: string | undefined): string {
+  return TREND_CLASSES[trend || ""] || TREND_CLASSES.insufficient;
+}
+
+/** 列表徽章要不要显示：只有「连续退步」值得在列表里警示。
+ *
+ *  为什么不在列表上显示 improving/stable：列表是扫描界面，每个任务都挂一个
+ *  「稳定」徽章只是噪声。真正需要一眼看到的是「这个 workflow 在持续变坏」。
+ *  insufficient 同理不显示——它是「判不了」，不是结论。 */
+export function shouldFlagTrend(trend: string | undefined): boolean {
+  return trend === "regressing";
+}

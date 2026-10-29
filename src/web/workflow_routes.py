@@ -441,7 +441,9 @@ async def list_tasks(workflow_id: str, request: Request,
                      sort_by: str = "created_at",
                      sort_order: str = "desc",
                      page: int = 1,
-                     page_size: int = 20):
+                     page_size: int = 20,
+                     with_trend: bool = False,
+                     baseline_limit: int = 5):
     """列出工作流的所有任务（支持筛选/排序/搜索/分页）。
 
     Query params:
@@ -451,9 +453,16 @@ async def list_tasks(workflow_id: str, request: Request,
         sort_order: asc 或 desc
         page: 页码（从 1 开始）
         page_size: 每页条数（新参数，替代旧的 limit）
+        with_trend: 是否给每条任务附 ``trend`` 块（R51，默认关）
+        baseline_limit: 趋势要回溯多少个历史 run（默认 5，上限 20）
+
+    为什么 ``with_trend`` 默认关：要算趋势就必须扫 workflow 的 ``runs/``
+    目录并解析 run JSON，是列表端点里最重的一段 I/O。列表本身的用途（找任务、
+    点进去）不需要它，默认关上让常见路径保持轻量；要标注「连续退步」的视图
+    才显式打开。
     """
     mgr = _get_manager(request)
-    return mgr.list_tasks(
+    result = mgr.list_tasks(
         workflow_id,
         limit=limit,
         status=status,
@@ -463,6 +472,17 @@ async def list_tasks(workflow_id: str, request: Request,
         page=page,
         page_size=page_size,
     )
+    if with_trend and isinstance(result, dict) and result.get("tasks"):
+        limit_n = max(1, min(int(baseline_limit), 20))
+        trends = _collect_workflow_trends(
+            workflow_id,
+            [{"task_id": t.get("task_id"), "run_id": t.get("run_id")}
+             for t in result["tasks"]],
+            limit_n,
+        )
+        for task in result["tasks"]:
+            task["trend"] = trends.get(str(task.get("task_id") or ""))
+    return result
 
 
 @router.get("/{workflow_id}/tasks/{task_id}")
@@ -822,6 +842,70 @@ def _load_run_profile(runs_dir: Path, meta: dict | None,
         started_at=run_data.get("started_at"),
         completed_at=run_data.get("completed_at"),
     )
+
+
+def _collect_workflow_trends(workflow_id: str, entries: list[dict],
+                             limit: int) -> dict[str, dict]:
+    """给同一 workflow 的一批任务各算 trend（R51 批量，非逐任务扫目录）。
+
+    ``entries`` 是 ``[{task_id, run_id}]``。返回 ``{task_id: trend_block}``，
+    其中 trend_block 只保留趋势判定需要的字段——列表视图不需要每阶段明细，
+    把完整 baseline 塞进列表响应会让一页 20 条变成几十 MB。
+
+    为什么按 workflow 分组：``runs/`` 目录的扫描与 JSON 解析是这里的主开销。
+    逐任务扫一遍等于把同一个目录读 20 次（N+1）。分组后每目录只扫一次，
+    run 画像按 run_id 缓存复用——多个任务常常指向同一批 run。
+    """
+    from src.workflow.run_profile import (
+        compare_run_baseline,
+        pick_recent_runs,
+    )
+
+    runs_dir = WORKFLOWS_DIR / workflow_id / "runs"
+    metas = _iter_run_metadata(runs_dir)
+    if not metas:
+        return {}
+    metas_by_id = {m["run_id"]: m for m in metas}
+    profile_cache: dict[str, dict | None] = {}
+
+    def profile_of(run_id: str) -> dict | None:
+        if run_id in profile_cache:
+            return profile_cache[run_id]
+        loaded = _load_run_profile(runs_dir, metas_by_id.get(run_id), workflow_id)
+        profile_cache[run_id] = loaded
+        return loaded
+
+    results: dict[str, dict] = {}
+    for entry in entries:
+        run_id = str(entry.get("run_id") or "")
+        task_id = str(entry.get("task_id") or "")
+        if not run_id or not task_id:
+            continue
+        meta = metas_by_id.get(run_id)
+        if meta is None:
+            # 任务引用的 run 文件不在 runs/ 里：不猜，不给趋势（诚实缺席）。
+            continue
+        current = profile_of(run_id)
+        if current is None:
+            continue
+        history: list[dict] = []
+        for older in pick_recent_runs(
+                {"run_id": run_id, "started_at": meta.get("started_at"),
+                 "mtime": meta.get("mtime", 0.0)}, metas, limit):
+            loaded = profile_of(older["run_id"])
+            if loaded is not None:
+                history.append(loaded)
+        baseline = compare_run_baseline(current, history)
+        results[task_id] = {
+            "run_id": run_id,
+            "trend": baseline["trend"],
+            "consecutive_required": baseline["consecutive_required"],
+            "points_considered": len(baseline["points"]),
+            "comparisons": len([d for d in baseline["deltas"] if d["comparable"]]),
+            "delta_failure_rate": (baseline["deltas"][-1]["delta_failure_rate"]
+                                   if baseline["deltas"] else None),
+        }
+    return results
 
 
 @router.post("/{workflow_id}/tasks/{task_id}/stop")
@@ -1287,7 +1371,9 @@ async def list_all_tasks(request: Request,
                          page: int = 1,
                          page_size: int = 20,
                          workflow_id: str = "",
-                         main_session_id: str = ""):
+                         main_session_id: str = "",
+                         with_trend: bool = False,
+                         baseline_limit: int = 5):
     """列出全部工作流的所有任务（全局任务历史），支持筛选/排序/搜索/分页。
 
     Query params:
@@ -1298,9 +1384,11 @@ async def list_all_tasks(request: Request,
         page / page_size: 分页
         workflow_id: 按工作流过滤（可选）
         main_session_id: 按任务所属 Main 会话过滤（可选）
+        with_trend: 是否给每条任务附 ``trend`` 块（R51，默认关）
+        baseline_limit: 趋势要回溯多少个历史 run（默认 5，上限 20）
     """
     mgr = _get_manager(request)
-    return mgr.list_all_tasks(
+    result = mgr.list_all_tasks(
         status=status,
         search=search,
         sort_by=sort_by,
@@ -1310,3 +1398,25 @@ async def list_all_tasks(request: Request,
         workflow_id=workflow_id,
         main_session_id=main_session_id,
     )
+    if with_trend and isinstance(result, dict) and result.get("tasks"):
+        limit_n = max(1, min(int(baseline_limit), 20))
+        # 按 workflow 分组：一页 20 条可能跨十几个 workflow，逐条扫目录是
+        # N 次全目录解析；分组后每个 workflow 只扫一次（``_collect_workflow_trends``
+        # 内部还按 run_id 缓存画像，因为多个任务常指向同一批 run）。
+        grouped: dict[str, list[dict]] = {}
+        by_key: dict[tuple[str, str], dict] = {}
+        for task in result["tasks"]:
+            wf = str(task.get("workflow_id") or "")
+            task_id = str(task.get("task_id") or "")
+            if not wf:
+                continue
+            grouped.setdefault(wf, []).append(
+                {"task_id": task_id, "run_id": task.get("run_id")})
+            by_key[(wf, task_id)] = task
+        for wf, entries in grouped.items():
+            trends = _collect_workflow_trends(wf, entries, limit_n)
+            for task_id, block in trends.items():
+                task = by_key.get((wf, task_id))
+                if task is not None:
+                    task["trend"] = block
+    return result

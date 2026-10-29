@@ -860,6 +860,19 @@ export interface RunProfileBaseline {
   baseline_run_ids: string[];
 }
 
+/** 列表视图用的精简趋势块（GET .../tasks?with_trend=true，R51）
+ *
+ *  刻意比 `RunProfileBaseline` 窄：列表一页 20 条，把每阶段明细塞进来只会让
+ *  响应膨胀。这里只保留「画徽章需要的」——趋势、当前 run、可比次数。 */
+export interface TaskTrendBlock {
+  run_id: string;
+  trend: RunProfileTrend;
+  consecutive_required: number;
+  points_considered: number;
+  comparisons: number;
+  delta_failure_rate?: number | null;
+}
+
 /** 工作流参数变量定义（与后端 WorkflowVariable 对齐，参照 bk-sops） */
 export interface WorkflowVariableOption {
   name: string;   // 展示名
@@ -952,6 +965,8 @@ export interface WorkflowTask {
   workspace_ref?: string | null;
   progress?: { completed: number; total: number };
   workflow_name?: string;  // 仅全局任务历史接口附带
+  /** 连续退步趋势（仅 ?with_trend=true 附带，R51） */
+  trend?: TaskTrendBlock | null;
 }
 
 /** 任务列表分页响应 */

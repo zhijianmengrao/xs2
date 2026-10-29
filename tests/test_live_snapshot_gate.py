@@ -42,10 +42,32 @@ def _backend_steps() -> list[dict]:
 
 
 def _live_gate_step() -> dict:
-    hits = [s for s in _backend_steps()
-            if "check_live_snapshot_gate.py" in str(s.get("run", ""))]
+    """失败率闸门那一步（R47）。按「不带判据开关」定位，不按名字。
+
+    R51 给同一脚本加了 ``--check-sample-size`` 的第二处调用，所以不能再按
+    「有几个 step 调了这个脚本」来定位——那样每加一条判据都要改一处测试。
+    这里按「调了脚本但没带任何 ``--check-*`` 开关」找失败率闸门本身。
+    """
+    hits = [
+        s for s in _backend_steps()
+        if "check_live_snapshot_gate.py" in str(s.get("run", ""))
+        and "--check-" not in str(s.get("run", ""))
+    ]
     assert len(hits) == 1, (
-        "ci.yml 的 backend job 必须且只能有一处调用真实快照闸门"
+        "ci.yml 的 backend job 必须且只能有一处调用失败率闸门（不带 --check-*）"
+        f"（实际 {len(hits)} 处）"
+    )
+    return hits[0]
+
+
+def _sample_size_step() -> dict:
+    """样本量闸门那一步（R51）。"""
+    hits = [
+        s for s in _backend_steps()
+        if "--check-sample-size" in str(s.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "ci.yml 的 backend job 必须且只能有一处跑 --check-sample-size"
         f"（实际 {len(hits)} 处）"
     )
     return hits[0]
@@ -381,3 +403,154 @@ def test_coverage_check_is_not_wired_into_ci() -> None:
         assert "--check-coverage" not in str(step.get("run", "")), (
             "快照覆盖度是轮次收官动作，不该作为 CI step：CI 里没有 data/workflows"
         )
+
+
+# ------------------------------------------------- 样本量厚度（R51）
+def _write_snapshot_with_totals(root: Path, attempts: int, failed: int) -> None:
+    """造一份「内容与元数据一致」的快照：单 workflow、单 run、attempts 次尝试。
+
+    内容必须真的产生 ``attempts`` 次尝试，否则 ``check_sample_size`` 会以退出码
+    4（元数据漂移）拒绝——那正是它该有的行为，所以这里的 helper 必须造对。
+    """
+    runs = root / "workflows" / "wf-a" / "runs"
+    runs.mkdir(parents=True)
+    nodes = []
+    for index in range(attempts):
+        status = "failed" if index < failed else "completed"
+        nodes.append({
+            "node_id": f"n{index}",
+            "status": status,
+            "attempt_history": [{
+                "attempt_number": 1, "trigger": "initial", "status": status,
+            }],
+        })
+    (runs / "run-x.json").write_text(
+        json.dumps({"run_id": "run-x", "status": "completed",
+                    "node_executions": nodes}), encoding="utf-8")
+    (root / "snapshot-meta.json").write_text(
+        json.dumps({"totals": {"attempts": attempts, "failed": failed},
+                    "exported_at": "2026-02-01T00:00:00+00:00"}),
+        encoding="utf-8")
+
+
+def test_sample_size_passes_on_the_committed_snapshot() -> None:
+    """入库快照自己必须过——否则 CI 一接就红。"""
+    code, message = live_gate.check_sample_size(SNAPSHOT_ROOT, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_sample_size_rejects_a_thin_snapshot(tmp_path: Path) -> None:
+    """14 次尝试 1 次失败：失败率 7.1% 的半宽 ~13.8 个百分点，超过 10 的余量。
+
+    这正是 R49 §7-6 挂账的那个失效形状：``--check-coverage`` 会说「都覆盖了」，
+    而这份快照的失败率其实粗到不能当基线。
+    """
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=14, failed=1)
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_THIN_SAMPLE, message
+    assert "14" in message
+
+
+def test_sample_size_judges_precision_not_run_count(tmp_path: Path) -> None:
+    """一次 run 里 200 次尝试，精度不该比 5 次 run 共 10 次尝试差。
+
+    若判据写成「要有 N 条 run」，这条会红——那正是把「样本量」误当「run 数」
+    的回归形状。
+    """
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=200, failed=1)
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_sample_size_does_not_let_zero_failures_pass_for_free(tmp_path: Path) -> None:
+    """零失败时比例点估计恒为 0，正态近似会给「半宽 0」——那是恒绿的坑。
+
+    2 次尝试 0 失败的真实单侧 95% 上界高达 ~78%，绝不能判合格。
+    """
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=2, failed=0)
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_THIN_SAMPLE, message
+    assert "77" in message or "78" in message, (
+        f"零失败分支没有给出单侧上界，实际说明：{message!r}"
+    )
+
+
+def test_sample_size_accepts_enough_zero_failure_attempts(tmp_path: Path) -> None:
+    """60 次尝试 0 失败：单侧上界 ~4.9% ≤ 10，应当通过。
+
+    与上一条互为正反面：只验「薄的要拒」会让「一律拒绝」也绿灯。
+    """
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=60, failed=0)
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_sample_size_detects_metadata_drift(tmp_path: Path) -> None:
+    """改了内容没重导元数据 → 退出码 4，不是拿旧数字判新内容。"""
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=60, failed=0)
+    # 往内容里塞一个带尝试的 run，元数据不变 → 复算 61 次 ≠ 记录 60 次
+    extra = snap / "workflows" / "wf-a" / "runs" / "run-y.json"
+    extra.write_text(json.dumps({
+        "run_id": "run-y", "status": "completed",
+        "node_executions": [{
+            "node_id": "n-extra", "status": "completed",
+            "attempt_history": [{"attempt_number": 1, "trigger": "initial",
+                                 "status": "completed"}],
+        }],
+    }), encoding="utf-8")
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+
+
+def test_sample_size_reports_no_sample_when_snapshot_empty(tmp_path: Path) -> None:
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "snapshot-meta.json").write_text(
+        json.dumps({"totals": {"attempts": 0, "failed": 0}}), encoding="utf-8")
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+
+
+def test_sample_size_is_wired_into_ci() -> None:
+    """R51 唯一一条能进 CI 的判据：只读快照自身，CI 检出里可判。"""
+    step = _sample_size_step()
+    assert "python scripts/check_live_snapshot_gate.py" in str(step["run"])
+    assert "tests/fixtures/live_snapshot" in str(step["run"])
+
+
+def test_sample_size_ci_step_is_not_permanently_green() -> None:
+    """这一步必须能红：只跑「当前快照该过」会得到一个恒绿步骤。
+
+    「0/n 与任何 margin 都通过」是这一族判据的默认失效形状，所以要反向跑一次
+    收紧余量、期望退出码 7。
+    """
+    run = str(_sample_size_step()["run"])
+    assert "--margin 2" in run, "CI 步骤没有反向验证（收紧余量应触发 7）"
+    assert "-ne 7" in run or "-eq 7" in run, (
+        "CI 步骤没有断言退出码 7，收紧余量后判据失去判定力也不会被发现"
+    )
+    assert "exit 0" not in run.replace('"$code" -ne 0', ""), (
+        "样本量步骤不得以无条件 exit 0 收尾"
+    )
+
+
+def test_stale_and_coverage_still_stay_out_of_ci() -> None:
+    """R51 只放了 sample-size 进去，另两条仍必须留在 CI 外。
+
+    这条守着「别顺手把两条需要真实数据的判据也接上」——那会让它们永远无法判定。
+    """
+    for step in _backend_steps():
+        run = str(step.get("run", ""))
+        assert "--check-stale" not in run
+        assert "--check-coverage" not in run

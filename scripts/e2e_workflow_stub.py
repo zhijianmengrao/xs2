@@ -104,7 +104,8 @@ def _isolate_environment(data_root: Path) -> None:
 
 def _write_models_config(path: Path, base_url: str, model_id: str = "stub-model",
                          *, max_retries: int = 0,
-                         delays: list[float] | None = None) -> None:
+                         delays: list[float] | None = None,
+                         sdk_max_retries: int | None = None) -> None:
     """写一份只含桩 provider 的模型配置。
 
     ``api_key`` 是字面量 ``stub-key``：桩不校验鉴权，真实凭据在这里没有任何
@@ -112,13 +113,20 @@ def _write_models_config(path: Path, base_url: str, model_id: str = "stub-model"
 
     ``max_retries`` 默认 0：多数场景判的是编排语义，重试层会引入与判据无关的
     等待。只有故障注入场景把它调大，好让「瞬时错误后被重试救回来」可观察。
+
+    ``sdk_max_retries``（R51）默认不写进配置——不写就是沿用 SDK 自有策略
+    （ChatOpenAI 默认 2 次）。退避场景必须显式写 0：否则 SDK 层会抢在 Core
+    之前用自身指数退避救回，量到的间隔是 SDK 的，不是 Core ``delays`` 的
+    （R50 §3.4 的「关掉 Core 重试仍绿」就是这个原因）。
     """
+    retry: dict = {"max_retries": max_retries, "delays": list(delays or [])}
+    if sdk_max_retries is not None:
+        retry["sdk_max_retries"] = sdk_max_retries
     path.write_text(
         json.dumps(
             {
                 "default_params": {"temperature": 0.7},
-                "retry": {"max_retries": max_retries,
-                          "delays": list(delays or [])},
+                "retry": retry,
                 "providers": {
                     "stub": {
                         "name": "Stub Provider",
@@ -610,6 +618,91 @@ async def scenario_stream_stall_fails_fast(runtime: Runtime, stub) -> ScenarioRe
     )
 
 
+def _request_gaps(stub) -> list[float]:
+    """相邻两次模型请求的到达间隔（秒）。桩在收包时打 monotonic 时间戳。"""
+    stamps = [r.get("received_at") for r in stub.requests
+              if isinstance(r.get("received_at"), (int, float))]
+    return [round(b - a, 3) for a, b in zip(stamps, stamps[1:])]
+
+
+async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> ScenarioResult:
+    """退避时长必须真的被等过（R51）。
+
+    判据用**差分**：同一场景跑两次，一次 ``delays=[0]``、一次 ``delays=[1.2]``，
+    比较两次的请求间隔。差分法绕开了「固定开销有多少」这个不可知量——真正的
+    判据是「多出来的等待 ≈ 配置的退避」，而不是「总时长 ≥ 某个绝对值」。
+
+    为什么必须显式关掉 SDK 重试（``sdk_max_retries=0``）：ChatOpenAI 自带
+    ``max_retries=2``，它会抢在 Core 包装之前用自身的指数退避救回瞬时错误。
+    实测 sdk=2 + core delays=[3.0] 时间隔只有 0.48s——量到的是 SDK 的退避，
+    Core 的 3 秒完全不可见。这正是 R50 §3.4「关掉 Core max_retries 后场景仍绿」
+    的根因：两层当时不可分。
+
+    本场景因此判的是「**Core 层的** delays」，不是「重试总效果」——
+    ``transient_error_is_retried`` 判的是后者，两者互补。
+    """
+    definition = {
+        "name": "retry backoff",
+        "nodes": [_agent_node("slow", "task [stub:5xx][stub:fail_once]")],
+        "edges": [],
+    }
+    problems: list[str] = []
+
+    def configure(delay: float) -> None:
+        _write_models_config(
+            runtime.data_root / "models_config.json", stub.base_url,
+            max_retries=1, delays=[delay], sdk_max_retries=0,
+        )
+        # ModelManager 在 import 期读配置，改文件后必须重建单例才能生效。
+        from src.core.model_manager import ModelManager
+        import src.core.model_manager as model_manager_module
+
+        model_manager_module._model_manager = ModelManager(
+            str(runtime.data_root / "models_config.json"))
+
+    samples: dict[str, float] = {}
+    for label, delay in (("zero", 0.0), ("configured", 1.2)):
+        configure(delay)
+        stub.requests.clear()
+        stub.reset_claims()
+        status, nodes = await runtime.run_workflow(f"wf-e2e-backoff-{label}", definition)
+        node = nodes.get("slow")
+        if status != "completed" or (node is not None and node.status != "completed"):
+            problems.append(
+                f"[{label}] 任务未 completed（status={status}），退避场景前提不成立")
+            continue
+        gaps = _request_gaps(stub)
+        if not gaps:
+            problems.append(f"[{label}] 只收到 1 次请求，没有重试，量不到间隔")
+            continue
+        samples[label] = max(gaps)
+
+    if len(samples) == 2:
+        extra = samples["configured"] - samples["zero"]
+        # 容差 0.5s：覆盖进程内调度抖动与日志开销；配置的 1.2s 远大于它。
+        if extra < 0.7:
+            problems.append(
+                f"配置 1.2s 退避后间隔只多了 {extra:.2f}s（zero={samples['zero']:.2f}s, "
+                f"configured={samples['configured']:.2f}s）：Core 的 delays 没被等过")
+
+    # 本场景改写了全局重试配置；恢复成 e2e 的基准配置，避免影响后续场景。
+    _write_models_config(
+        runtime.data_root / "models_config.json", stub.base_url,
+        max_retries=2, delays=[0, 0],
+    )
+    from src.core.model_manager import ModelManager
+    import src.core.model_manager as model_manager_module
+
+    model_manager_module._model_manager = ModelManager(
+        str(runtime.data_root / "models_config.json"))
+
+    detail = "; ".join(problems) or (
+        f"退避生效：delays=0 → {samples['zero']:.2f}s，"
+        f"delays=1.2 → {samples['configured']:.2f}s"
+        f"（多 {samples['configured'] - samples['zero']:.2f}s）")
+    return ScenarioResult("retry_backoff_is_honoured", not problems, detail)
+
+
 SCENARIOS = {
     "happy_path": scenario_happy_path,
     "failure_propagates": scenario_failure_propagates,
@@ -617,6 +710,7 @@ SCENARIOS = {
     "transient_error_is_retried": scenario_transient_error_is_retried,
     "permanent_error_is_not_retried": scenario_permanent_error_is_not_retried,
     "stream_stall_fails_fast": scenario_stream_stall_fails_fast,
+    "retry_backoff_is_honoured": scenario_retry_backoff_is_honoured,
 }
 SCENARIO_ORDER = [
     "happy_path",
@@ -625,6 +719,7 @@ SCENARIO_ORDER = [
     "transient_error_is_retried",
     "permanent_error_is_not_retried",
     "stream_stall_fails_fast",
+    "retry_backoff_is_honoured",
 ]
 
 

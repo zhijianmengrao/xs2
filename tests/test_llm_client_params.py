@@ -424,3 +424,126 @@ def test_ainvoke_retry_preserves_implicit_parent_callbacks():
 
     assert calls == 1
     assert tokens == ["partial"]
+
+
+# ---------------------------------------------------- 重试分层（R51）
+def _retry_config_manager(tmp_path, retry: dict) -> ModelManager:
+    """造一个只带 retry 块的 ModelManager（其余字段取最小可加载形状）。"""
+    config_path = tmp_path / "models_config.json"
+    config_path.write_text(
+        json.dumps({
+            "default_params": {"temperature": 0.7},
+            "retry": retry,
+            "providers": {
+                "stub": {
+                    "name": "Stub",
+                    "provider_type": "openai_compatible",
+                    "api_format": "openai",
+                    "base_url": "http://127.0.0.1:1/v1",
+                    "api_key": "k",
+                    "models": ["m"],
+                    "hyperparameter_values": {},
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    return ModelManager(str(config_path))
+
+
+def test_retry_config_shape_is_unchanged_when_sdk_retries_are_not_configured(tmp_path):
+    """默认形状必须与既往逐字节一致：多一个 None 键会让在途任务 resume 被判身份漂移。
+
+    ``build_effective_agent_definition`` 把 get_retry_config() 的返回值纳入
+    ``model_runtime_sha256``，那是 fail-closed 的守卫（不匹配即拒绝启动新
+    session）。所以「加了一个新配置项」不能改变默认返回值。
+    """
+    manager = _retry_config_manager(tmp_path, {"max_retries": 3, "delays": [5, 15, 30]})
+    assert manager.get_retry_config() == {
+        "max_retries": 3,
+        "delays": [5, 15, 30],
+    }
+
+
+def test_retry_config_carries_sdk_max_retries_only_when_configured(tmp_path):
+    manager = _retry_config_manager(
+        tmp_path, {"max_retries": 1, "delays": [0], "sdk_max_retries": 0})
+    assert manager.get_retry_config() == {
+        "max_retries": 1,
+        "delays": [0],
+        "sdk_max_retries": 0,
+    }
+
+
+def test_create_llm_disables_the_sdk_retry_layer_when_configured(tmp_path, monkeypatch):
+    """``sdk_max_retries=0`` 必须真的落到 ChatOpenAI 上。
+
+    这是「Core 的退避可被观察」的前提：SDK 层若仍开着，它会先用自己的指数
+    退避把瞬时错误救回，Core 的 ``delays`` 一次都不会被等到（R50 §3.4 实测
+    sdk=2 + core delays=[3.0] 时间隔只有 0.48s）。
+    """
+    manager = _retry_config_manager(
+        tmp_path, {"max_retries": 1, "delays": [0], "sdk_max_retries": 0})
+    monkeypatch.setattr("src.core.model_manager.get_model_manager", lambda: manager)
+
+    llm = create_llm(model_override="stub:m")
+
+    assert llm.max_retries == 0, "SDK 重试层没有被关掉，Core 退避无法被观察"
+
+
+def test_create_llm_leaves_the_sdk_retry_layer_alone_by_default(tmp_path, monkeypatch):
+    """不配置该项时不得改动 SDK 策略。
+
+    ChatOpenAI 的 ``max_retries`` 默认是 ``None``（= 沿用 openai 客户端自带的
+    2 次），所以「没动它」的正确形状是**仍为 None**，而不是某个具体数字。
+    """
+    manager = _retry_config_manager(tmp_path, {"max_retries": 1, "delays": [0]})
+    monkeypatch.setattr("src.core.model_manager.get_model_manager", lambda: manager)
+
+    llm = create_llm(model_override="stub:m")
+
+    assert llm.max_retries is None, (
+        "默认配置下 SDK 重试策略被我们改写了：既有行为应保持不变"
+    )
+
+
+def test_core_retry_sleeps_for_the_configured_delays(monkeypatch):
+    """Core 层必须按 ``delays`` 真的 sleep —— 而不是只把值记在日志里。
+
+    这里把 ``asyncio.sleep`` 换成记录器：断言的是「传给 sleep 的秒数序列」，
+    与真实墙钟无关，因此不会给测试引入等待。
+    """
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def recording_sleep(delay, *args, **kwargs):
+        slept.append(float(delay))
+        return await real_sleep(0)
+
+    import src.core.llm_client as llm_client_module
+
+    monkeypatch.setattr(llm_client_module.asyncio, "sleep", recording_sleep)
+
+    class AlwaysFails:
+        calls = 0
+
+        async def ainvoke(self, _input, *args, **kwargs):
+            self.calls += 1
+            raise RuntimeError("transient")
+
+        async def astream(self, _input, *args, **kwargs):
+            raise RuntimeError("transient")
+            yield  # pragma: no cover
+
+    async def run():
+        llm = AlwaysFails()
+        wrapped = _wrap_llm_with_retry(
+            llm, {"max_retries": 2, "delays": [0.7, 1.9]})
+        with pytest.raises(RuntimeError, match="transient"):
+            await wrapped.ainvoke("input")
+        return llm.calls
+
+    calls = asyncio.run(run())
+
+    assert calls == 3
+    assert slept == [0.7, 1.9], f"Core 没有按 delays 等待，实际 {slept}"

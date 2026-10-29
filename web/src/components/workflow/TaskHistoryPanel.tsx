@@ -19,6 +19,7 @@ import {
   Settings, RotateCcw,
 } from "lucide-react";
 import { listTasks, listAllTasks } from "../../lib/api";
+import { shouldFlagTrend, trendClass, trendLabel } from "./runProfileView";
 import type { WorkflowTask } from "../../types";
 
 // ============ 常量 ============
@@ -119,6 +120,16 @@ function nodeCount(t: WorkflowTask): number {
 
 // ============ 组件 ============
 
+/** 列表数据源（R51）：默认走 api.listTasks / listAllTasks，测试可注入。 */
+export type TaskListFetcher = (
+  workflowId: string | null,
+  params: {
+    status?: string; search?: string; sort_by?: string; sort_order?: string;
+    page?: number; page_size?: number;
+    with_trend?: boolean; baseline_limit?: number;
+  },
+) => Promise<{ tasks: WorkflowTask[]; total: number }>;
+
 interface TaskHistoryPanelProps {
   /** 工作流 ID：null/skip 表示全局模式，传入表示单工作流模式 */
   workflowId?: string | null;
@@ -126,12 +137,18 @@ interface TaskHistoryPanelProps {
   /** 重做任务回调（仅终态任务可用） */
   onRedoTask?: (taskId: string, workflowId: string) => void;
   refreshTrigger?: number;
+  /** 测试注入；缺省走 api 的 listTasks / listAllTasks */
+  fetchTasks?: TaskListFetcher;
 }
+
+const defaultFetcher: TaskListFetcher = async (workflowId, params) => (
+  workflowId == null ? listAllTasks(params) : listTasks(workflowId, params)
+);
 
 /** 终态状态集合（可重做） */
 const TERMINAL_STATUSES = new Set(["completed", "failed", "stopped"]);
 
-export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, refreshTrigger }: TaskHistoryPanelProps) {
+export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, refreshTrigger, fetchTasks: fetcher }: TaskHistoryPanelProps) {
   const isGlobal = workflowId == null;
 
   // 查询参数
@@ -141,6 +158,9 @@ export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, 
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  // 连续退步标注（R51）：默认关。打开会多扫一遍每个 workflow 的 runs/ 目录，
+  // 所以做成显式开关而不是默认行为——找任务、点进去不需要这段 I/O。
+  const [showTrend, setShowTrend] = useState(false);
 
   // 数据
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
@@ -185,11 +205,11 @@ export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, 
       sort_order: sortOrder,
       page,
       page_size: pageSize,
+      with_trend: showTrend || undefined,
+      baseline_limit: showTrend ? 5 : undefined,
     };
     try {
-      const data = isGlobal
-        ? await listAllTasks(params)
-        : await listTasks(workflowId!, params);
+      const data = await (fetcher ?? defaultFetcher)(isGlobal ? null : workflowId!, params);
       setTasks(data.tasks);
       setTotal(data.total);
     } catch (e) {
@@ -197,7 +217,7 @@ export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, 
     } finally {
       setLoading(false);
     }
-  }, [workflowId, isGlobal, statusFilter, search, sortBy, sortOrder, page, pageSize]);
+  }, [workflowId, isGlobal, statusFilter, search, sortBy, sortOrder, page, pageSize, showTrend, fetcher]);
 
   useEffect(() => {
     fetchTasks();
@@ -250,8 +270,19 @@ export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, 
       case "name":
         return (
           <div>
-            <div className="text-sm text-foreground font-medium truncate max-w-[280px]">
-              {t.name || "未命名任务"}
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-foreground font-medium truncate max-w-[280px]">
+                {t.name || "未命名任务"}
+              </span>
+              {t.trend && shouldFlagTrend(t.trend.trend) && (
+                <span
+                  data-trend={t.trend.trend}
+                  title={`最近 ${t.trend.consecutive_required} 次相邻 run 的失败率全部上升`}
+                  className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10px] ${trendClass(t.trend.trend)}`}
+                >
+                  {trendLabel(t.trend.trend)}
+                </span>
+              )}
             </div>
             <div className="text-xs text-muted-foreground font-mono mt-0.5">{t.task_id}</div>
           </div>
@@ -324,6 +355,16 @@ export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, 
               className="w-full pl-9 pr-3 py-2 rounded-lg bg-card border border-primary/10 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary/40 transition-colors"
             />
           </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none min-h-[44px]">
+            <input
+              type="checkbox"
+              checked={showTrend}
+              onChange={(e) => { setShowTrend(e.target.checked); setPage(1); }}
+              aria-label="标注连续退步"
+              className="accent-destructive cursor-pointer"
+            />
+            标注连续退步
+          </label>
           <span className="text-xs text-muted-foreground">共 {total} 条记录</span>
         </div>
       </div>

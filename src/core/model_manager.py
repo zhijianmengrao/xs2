@@ -512,12 +512,29 @@ class ModelManager:
         }
 
     def get_retry_config(self) -> dict:
-        """获取 LLM 调用重试配置"""
+        """获取 LLM 调用重试配置。
+
+        ``sdk_max_retries``（R51）是**独立**于 ``max_retries`` 的一层开关：
+        LangChain 的 ChatOpenAI 自带 SDK 重试（默认 2 次），它会抢在 Core 包装
+        之前把瞬时错误吃掉。两层的差别在于**退避时长由谁决定**——SDK 用
+        openai 客户端的指数退避，Core 用这里的 ``delays``。
+
+        缺省（配置里没有这一项）时**不出现该键**，返回形状与既往完全一致。
+        这一点不是风格问题：``build_effective_agent_definition`` 会把本函数的
+        返回值纳入 ``model_runtime_sha256``，那是 fail-closed 的运行身份守卫——
+        无条件多一个 ``None`` 键会让所有在途任务 resume 时判「身份漂移」而被拒。
+        显式设 0 时 SDK 层关闭，重试完全由 Core 的 ``max_retries``/``delays``
+        决定，Core 的退避才可被观察与断言（这是 R50 §3.4 记录「关掉 Core
+        max_retries 后场景仍绿」——两层当时不可分——的解法）。
+        """
         retry = self.config.get("retry", {})
-        return {
+        config = {
             "max_retries": retry.get("max_retries", 3),
             "delays": retry.get("delays", [5, 15, 30]),
         }
+        if "sdk_max_retries" in retry:
+            config["sdk_max_retries"] = retry["sdk_max_retries"]
+        return config
 
     def get_provider_type(self, provider_id: str) -> str:
         """Resolve request behavior from Provider configuration, not its ID."""

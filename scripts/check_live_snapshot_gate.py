@@ -28,6 +28,14 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
 ``data/workflows``，接进去只会永远「无法判定」，那是又一个永远绿的防护。它们
 是轮次收官动作，不是 CI 步骤。
 
+``--check-sample-size``（R51）与上面两个不同：它**只读快照自身**，不需要真实
+数据面，所以能在 CI 检出里真判。它补的是 R49 §7-6 明确挂账的那一问——
+``--check-coverage`` 只判集合差（哪个 workflow 缺样本），判不到「这个 workflow
+的样本薄到看不出失败率」。两者判的是同一个方向的深浅两面：缺整个 workflow 是 6，
+有 workflow 但样本不足以支撑判断是 7。退出码单列而不并入 6，原因是处置不同：
+6 是「新工作流没进样本」，7 是「进了但太薄」——后者可能要调 ``--limit`` 重导。**CI 接的就是它**，见
+``.github/workflows/ci.yml`` 的 ``Snapshot sample-size gate`` 一步。
+
 用法（仓库根执行）::
 
     python scripts/check_live_snapshot_gate.py
@@ -40,12 +48,16 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
 
     # 快照覆盖度（轮次收官跑；真实跑过的工作流缺样本即报缺口）
     python scripts/check_live_snapshot_gate.py --check-coverage
+
+    # 样本量厚度（CI 跑；只读快照自身，不需要真实数据面）
+    python scripts/check_live_snapshot_gate.py --check-sample-size
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -75,6 +87,7 @@ EXIT_NO_SAMPLE = 3
 EXIT_META_DRIFT = 4
 EXIT_STALE = 5
 EXIT_COVERAGE_GAP = 6
+EXIT_THIN_SAMPLE = 7
 
 
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
@@ -277,6 +290,97 @@ def check_coverage(data_dir: Path, source_dir: Path) -> tuple[int, str]:
         f"（快照含 {len(snapshot_names)} 个）")
 
 
+# 样本量的判据不是「attempts ≥ 某个数」这类经验阈值，而是问一个更窄、更诚实的
+# 问题：**这份快照的失败率估计，精度够不够支撑闸门拿它当基线？**
+#
+# 闸门（``evaluate``）用「实测失败率 + margin 个百分点」当阈值。如果快照只有
+# 14 次尝试、1 次失败，实测 7.1% 也只是一个粗估——重导一次就可能变 0% 或 21%，
+# 阈值跟着漂。样本量判据要抓的正是这件事，所以它判的是**估计量的精度**，
+# 与「有多少条 run」无关：一次 run 里有 50 次尝试，精度并不比 5 次 run 共 10 次
+# 尝试差。
+#
+# 两种情形分开判，因为「有失败」与「零失败」的估计量形状不同：
+#
+# - 有失败：用正态近似的 95% 置信区间半宽 ``1.96 * sqrt(p(1-p)/n)``。要求它
+#   不超过闸门余量 ``margin``——也就是「取样误差不该大到把 margin 吃干净」。
+# - 零失败：比例的点估计恒为 0，正态近似退化（半宽恒 0，永远合格）。这正是
+#   「永远绿」的陷阱：2 次尝试 0 失败也会判合格，而零失败的 95% 上界其实是
+#   ``1 - 0.05**(1/n)``，n=2 时高达 78%。所以零失败时要求**单侧上界** ≤ margin。
+#
+# 阈值因此没有常量：它完全由快照自身的 ``attempts/failed`` 与 margin 决定，
+# 重导后自动跟着变，不存在「数字对了才怪」的失准。
+Z_95 = 1.959963984540054  # 双侧 95% 正态分位数
+
+
+def _failure_rate_precision(attempts: int, failed: int,
+                            margin_pct: float) -> tuple[bool, str]:
+    """样本量是否足以支撑闸门用这个失败率当基线。返回 (是否足够, 说明)。"""
+    if attempts <= 0:
+        return False, "attempts=0"
+    margin = margin_pct / 100.0
+    if failed > 0:
+        p = failed / attempts
+        half_width = Z_95 * (p * (1 - p) / attempts) ** 0.5
+        ok = half_width <= margin
+        detail = (
+            f"失败率 {p * 100:.2f}% 的 95% 半宽 {half_width * 100:.2f} 个百分点"
+            f"{'≤' if ok else '>'} 余量 {margin_pct:.1f}（n={attempts}, 失败 {failed}）")
+        return ok, detail
+    # 零失败：用 Clopper-Pearson 的单侧 95% 上界，避免「0/n 永远合格」的空转。
+    upper = 1 - 0.05 ** (1.0 / attempts)
+    ok = upper <= margin
+    detail = (
+        f"零失败时 95% 上界 {upper * 100:.2f} 个百分点"
+        f"{'≤' if ok else '>'} 余量 {margin_pct:.1f}（n={attempts}）")
+    if not ok and margin > 0:
+        # 所需样本量只在判不合格时给：判合格时它只是一个无关的门槛数字。
+        detail += f"，达到余量需要约 {math.ceil(math.log(0.05) / math.log(1 - margin))} 次尝试"
+    return ok, detail
+
+
+def check_sample_size(data_dir: Path, margin: float) -> tuple[int, str]:
+    """快照本身的样本厚度是否足以支撑失败率判定（R51）。
+
+    与 ``--check-stale`` / ``--check-coverage`` 的根本差别：**它不读真实数据面**，
+    只读快照内容与它自己的元数据。因此它能在 CI 检出里真判——那条「CI 里没有
+    ``data/workflows``，接进去只会永远无法判定」的限制对它不成立。
+
+    为什么单列退出码 7 而不并入 1（超阈）或 6（覆盖缺口）：
+    - 1 是「判了且失败率太高」，处置是查供应商；
+    - 6 是「某个工作流整个没进样本」，处置是重导并确认新工作流确实该进；
+    - 7 是「样本进来了但太薄，失败率估计不可靠」，处置是调 ``--limit`` 重导
+     更多 run。三者混在一起会让人对着一个只差精度的快照去查供应商。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判样本量：{meta_path}"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+
+    recorded = meta.get("totals") or {}
+    attempts = int(recorded.get("attempts") or 0)
+    failed = int(recorded.get("failed") or 0)
+    if attempts <= 0:
+        return EXIT_NO_SAMPLE, "快照元数据 attempts=0，没有可判的样本量"
+
+    # 与 ``evaluate`` 同一条纪律：内容必须与元数据复算一致，否则判的是别的数字。
+    actual_attempts, actual_failed = recompute_totals(data_dir / "workflows")
+    if (actual_attempts, actual_failed) != (attempts, failed):
+        return EXIT_META_DRIFT, (
+            f"快照内容与元数据不一致：元数据 {failed}/{attempts}，"
+            f"内容复算 {actual_failed}/{actual_attempts}。改过快照就要重导")
+
+    ok, detail = _failure_rate_precision(attempts, failed, margin)
+    if not ok:
+        return EXIT_THIN_SAMPLE, (
+            f"快照样本太薄，失败率估计不足以当闸门基线：{detail}。"
+            "重导更多 run：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 5")
+    return EXIT_OK, f"快照样本量足够支撑失败率判定：{detail}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -288,6 +392,9 @@ def main() -> int:
                         help="改判快照新鲜度：真实数据比快照新多少天（不判失败率）")
     parser.add_argument("--check-coverage", action="store_true",
                         help="改判快照覆盖度：真实数据跑过的工作流是否都在快照内")
+    parser.add_argument("--check-sample-size", action="store_true",
+                        help="改判样本量厚度：失败率估计的精度是否够当闸门基线"
+                             "（只读快照自身，CI 可跑）")
     parser.add_argument("--source", type=Path, default=None,
                         help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
                              "仅 --check-stale / --check-coverage 使用")
@@ -298,8 +405,23 @@ def main() -> int:
         parser.error("--margin 不能为负")
     if options.max_lag_days < 0:
         parser.error("--max-lag-days 不能为负")
-    if options.check_stale and options.check_coverage:
-        parser.error("--check-stale 与 --check-coverage 是两种判据，不能同时使用")
+    # 三种判据互斥：一次调用判一件事，混判会让人看不出是哪种不合格。
+    chosen = [
+        flag for flag, on in (
+            ("--check-stale", options.check_stale),
+            ("--check-coverage", options.check_coverage),
+            ("--check-sample-size", options.check_sample_size),
+        ) if on
+    ]
+    if len(chosen) > 1:
+        parser.error(f"{' 与 '.join(chosen)} 是不同的判据，不能同时使用")
+
+    if options.check_sample_size:
+        # 只读快照自身，不需要 --source：这是它能进 CI 的全部原因。
+        code, message = check_sample_size(
+            options.data_dir or _default_data_dir(), options.margin)
+        print(f"[live-gate] {message}", file=sys.stderr)
+        return code
 
     if options.check_stale or options.check_coverage:
         source = options.source

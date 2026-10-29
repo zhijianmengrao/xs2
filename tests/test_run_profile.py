@@ -226,10 +226,13 @@ def _seed_run_tree(tmp_path: Path, *, task_payload: dict | None,
     return wf_dir
 
 
-def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+            manager=None) -> TestClient:
     monkeypatch.setattr(workflow_routes, "WORKFLOWS_DIR", tmp_path)
     app = FastAPI()
     app.include_router(workflow_routes.router)
+    # 列表类端点经 _get_manager 取 manager；run-profile 不经过它。
+    app.state.workflow_manager = manager
     with TestClient(app) as test_client:
         return test_client
 
@@ -667,3 +670,168 @@ def test_baseline_and_comparison_are_independent(tmp_path, monkeypatch):
     assert both["baseline"]["points"][-1]["run_id"] == "run-new"
     neither = client.get("/api/workflows/wf-x/tasks/task-1/run-profile").json()
     assert "baseline" not in neither and "comparison" not in neither
+
+
+# ---------- 列表批量趋势（R51） ----------
+
+def _seed_trend_tree(tmp_path: Path) -> None:
+    """种子：同一 workflow 两个任务，各自指向一条连续退步序列的末端。
+
+    run-a(0 失败) → run-b(2) → run-c(4)：最近两次相邻对比都上升，trend 应为
+    ``regressing``。两个任务分别指向 run-b 与 run-c，用来验「同一批 run 被复用」
+    与「不同任务拿到各自的序列末端」。
+    """
+    wf_dir = tmp_path / "wf-x"
+    (wf_dir / "tasks").mkdir(parents=True)
+    (wf_dir / "runs").mkdir()
+    (wf_dir / "tasks" / "task-1.json").write_text(json.dumps({
+        "task_id": "task-1", "name": "newest", "run_id": "run-c",
+        "status": "failed", "created_at": "2026-10-03T00:00:00+08:00",
+    }), encoding="utf-8")
+    (wf_dir / "tasks" / "task-2.json").write_text(json.dumps({
+        "task_id": "task-2", "name": "middle", "run_id": "run-b",
+        "status": "completed", "created_at": "2026-10-02T00:00:00+08:00",
+    }), encoding="utf-8")
+    for name, day, failed in (("run-a", "01", 0), ("run-b", "02", 2),
+                              ("run-c", "03", 4)):
+        nodes = [{"node_id": "build", "status": "completed", "attempt_history": [
+            {"attempt_number": 1, "trigger": "initial",
+             "status": "failed" if index < failed else "completed"}
+            for index in range(10)
+        ]}]
+        (wf_dir / "runs" / f"{name}.json").write_text(json.dumps({
+            "run_id": name, "status": "completed",
+            "started_at": f"2026-10-{day}T00:00:00+08:00",
+            "node_executions": nodes,
+        }), encoding="utf-8")
+
+
+class _ListManager:
+    """最小 WorkflowManager 替身：只提供 list_tasks（列表端点用得上的那一个）。
+
+    走 app.state.workflow_manager 注入而不是 patch ``_get_manager``：前者与真实
+    请求路径一致（依赖注入点不变），后者会把被测代码里的接取方式也绕过去。
+    """
+
+    def __init__(self, tasks: list[dict]):
+        self._tasks = tasks
+
+    def list_tasks(self, workflow_id, **_kwargs):
+        return {"tasks": [dict(t) for t in self._tasks],
+                "total": len(self._tasks), "page": 1, "page_size": 20}
+
+    def list_all_tasks(self, **_kwargs):
+        return {"tasks": [dict(t) for t in self._tasks],
+                "total": len(self._tasks), "page": 1, "page_size": 20}
+
+
+_TREND_TASKS = [
+    {"task_id": "task-1", "workflow_id": "wf-x", "name": "newest",
+     "run_id": "run-c", "status": "failed"},
+    {"task_id": "task-2", "workflow_id": "wf-x", "name": "middle",
+     "run_id": "run-b", "status": "completed"},
+]
+
+
+def test_list_tasks_trend_block_flags_consecutive_regression(tmp_path, monkeypatch):
+    """列表端点 with_trend=true 给每条任务附 trend，值与该 run 的基线判定一致。"""
+    _seed_trend_tree(tmp_path)
+    client = _client(tmp_path, monkeypatch, _ListManager(_TREND_TASKS))
+    body = client.get(
+        "/api/workflows/wf-x/tasks?with_trend=true&baseline_limit=5").json()
+    by_id = {t["task_id"]: t for t in body["tasks"]}
+    assert by_id["task-1"]["trend"]["trend"] == "regressing"
+    assert by_id["task-1"]["trend"]["run_id"] == "run-c"
+    # task-2 指向 run-b：只有 1 次相邻对比（a→b），不足以判连续 → insufficient
+    assert by_id["task-2"]["trend"]["trend"] == "insufficient"
+
+
+def test_list_tasks_without_with_trend_has_no_trend_key(tmp_path, monkeypatch):
+    """默认不带 with_trend：不返回 trend，也不多扫一遍 runs/。
+
+    这条守的是「批量趋势是 opt-in」——把它默认打开会让列表端点每次请求都
+    解析整个 runs/ 目录。
+    """
+    _seed_trend_tree(tmp_path)
+    client = _client(tmp_path, monkeypatch, _ListManager(_TREND_TASKS))
+    body = client.get("/api/workflows/wf-x/tasks").json()
+    assert all("trend" not in t for t in body["tasks"])
+
+
+def test_list_tasks_trend_is_readonly(tmp_path, monkeypatch):
+    """带 with_trend 仍属 GET 只读面（B26/B28 同族）。"""
+    _seed_trend_tree(tmp_path)
+    before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    client = _client(tmp_path, monkeypatch, _ListManager(_TREND_TASKS))
+    assert client.get(
+        "/api/workflows/wf-x/tasks?with_trend=true").status_code == 200
+    after = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    assert after == before, "with_trend 查询即建目录（B26/B28 同族复发）"
+
+
+def test_trend_collection_scans_each_workflow_directory_once(tmp_path, monkeypatch):
+    """同一 workflow 的 N 个任务只扫一次 runs/ 目录，且画像按 run_id 复用。
+
+    这是批量端点存在的理由：逐任务调 run-profile 等于把同一目录读 N 次。
+    这里统计 ``_iter_run_metadata`` 的调用次数与 run 文件读取次数。
+    """
+    _seed_trend_tree(tmp_path)
+    monkeypatch.setattr(workflow_routes, "WORKFLOWS_DIR", tmp_path)
+    calls = {"metadata": 0, "loads": 0}
+    real_metadata = workflow_routes._iter_run_metadata
+    real_load = workflow_routes._load_run_profile
+
+    def counting_metadata(runs_dir):
+        calls["metadata"] += 1
+        return real_metadata(runs_dir)
+
+    def counting_load(runs_dir, meta, workflow_id):
+        calls["loads"] += 1
+        return real_load(runs_dir, meta, workflow_id)
+
+    monkeypatch.setattr(workflow_routes, "_iter_run_metadata", counting_metadata)
+    monkeypatch.setattr(workflow_routes, "_load_run_profile", counting_load)
+
+    trends = workflow_routes._collect_workflow_trends(
+        "wf-x",
+        [{"task_id": "task-1", "run_id": "run-c"},
+         {"task_id": "task-2", "run_id": "run-b"}],
+        limit=5,
+    )
+    assert len(trends) == 2
+    assert calls["metadata"] == 1, (
+        f"runs/ 目录被扫了 {calls['metadata']} 次；两个任务应共用一次扫描"
+    )
+    # 3 个 run 的画像各载入一次：run-c 的 history 含 a、b，run-b 的 history 含 a，
+    # 缓存让 run-a 不被重复解析。
+    assert calls["loads"] <= 3, (
+        f"run 画像被重复解析（{calls['loads']} 次 > 3 个不同 run）"
+    )
+
+
+def test_trend_collection_skips_tasks_without_a_run_file(tmp_path, monkeypatch):
+    """任务引用的 run 不在 runs/ 里 → 不给趋势（诚实缺席，不猜）。"""
+    _seed_trend_tree(tmp_path)
+    monkeypatch.setattr(workflow_routes, "WORKFLOWS_DIR", tmp_path)
+    trends = workflow_routes._collect_workflow_trends(
+        "wf-x",
+        [{"task_id": "ghost", "run_id": "run-missing"},
+         {"task_id": "task-1", "run_id": "run-c"}],
+        limit=5,
+    )
+    assert "ghost" not in trends
+    assert "task-1" in trends
+
+
+def test_global_task_list_supports_trend(tmp_path, monkeypatch):
+    """全局任务历史（/api/tasks）也支持 with_trend，且按 workflow 分组扫描。"""
+    _seed_trend_tree(tmp_path)
+    monkeypatch.setattr(workflow_routes, "WORKFLOWS_DIR", tmp_path)
+    app = FastAPI()
+    app.include_router(workflow_routes.tasks_router)
+    app.state.workflow_manager = _ListManager(_TREND_TASKS)
+    with TestClient(app) as client:
+        body = client.get("/api/tasks?with_trend=true").json()
+    by_id = {t["task_id"]: t for t in body["tasks"]}
+    assert by_id["task-1"]["trend"]["trend"] == "regressing"
+    assert by_id["task-2"]["trend"]["trend"] == "insufficient"

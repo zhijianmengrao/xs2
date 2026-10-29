@@ -518,10 +518,17 @@ def create_llm(
     provider_id, model_name, api_key, base_url, provider_config = _resolve_provider_config(
         resolved, model_manager
     )
+    retry_config = model_manager.get_retry_config()
     if not provider_retries_enabled:
         # LangChain clients have their own SDK retry policy in addition to the
         # Core wrapper below. One-shot callers must disable both layers.
         kwargs["max_retries"] = 0
+    elif retry_config.get("sdk_max_retries") is not None:
+        # R51：SDK 层可单独关掉（config 的 retry.sdk_max_retries）。默认不设
+        # 该项时沿用 SDK 自有策略；设成 0 后重试完全由 Core 的 delays 决定，
+        # Core 的退避时长才可被观察——两层不可分是 R50 §3.4「关掉 Core 重试
+        # 仍绿」的根因。
+        kwargs.setdefault("max_retries", int(retry_config["sdk_max_retries"]))
     try:
         api_format = model_manager.get_provider_api_format(provider_id, model_name)
         client_base_url = model_manager.get_provider_client_base_url(
@@ -573,7 +580,6 @@ def create_llm(
         )
 
     if provider_retries_enabled:
-        retry_config = model_manager.get_retry_config()
         _wrap_llm_with_retry(llm, retry_config)
 
     logger.info(

@@ -242,6 +242,9 @@ class _Handler(BaseHTTPRequestHandler):
             "path": self.path,
             "headers": {k.lower(): v for k, v in self.headers.items()},
             "payload": payload,
+            # 到达时刻（monotonic）。退避断言要量「两次请求之间等了多久」，
+            # 只能由服务端在收包时打——被测进程侧量到的是含调度抖动的时间。
+            "received_at": time.monotonic(),
         }
         server.record(record)
 

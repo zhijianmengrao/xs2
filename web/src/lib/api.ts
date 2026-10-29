@@ -418,9 +418,13 @@ export async function listTasks(
     sort_order?: string;
     page?: number;
     page_size?: number;
+    /** 附连续退步趋势块（R51，默认关：要多扫一遍 runs/） */
+    with_trend?: boolean;
+    baseline_limit?: number;
   }
 ) {
-  const qs = buildListQuery(params);
+  const query = { ...params, with_trend: params?.with_trend ? "true" : undefined };
+  const qs = buildListQuery(query);
   return request<import("../types").TaskListResponse>(
     `/workflows/${workflowId}/tasks${qs}`
   );
@@ -467,8 +471,12 @@ export async function listAllTasks(params?: {
   page_size?: number;
   workflow_id?: string;
   main_session_id?: string;
+  /** 附连续退步趋势块（R51，默认关：要多扫一遍 runs/） */
+  with_trend?: boolean;
+  baseline_limit?: number;
 }) {
-  const qs = buildListQuery(params);
+  const query = { ...params, with_trend: params?.with_trend ? "true" : undefined };
+  const qs = buildListQuery(query);
   return request<import("../types").TaskListResponse>(`/tasks${qs}`);
 }
 

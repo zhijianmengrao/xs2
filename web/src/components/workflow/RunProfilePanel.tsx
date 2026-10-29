@@ -28,6 +28,8 @@ import {
   sortedAttempts,
   stageChangeOf,
   summarizeStageChanges,
+  TREND_CLASSES,
+  TREND_LABELS,
 } from "./runProfileView";
 
 export type RunProfileFetcher =
@@ -57,21 +59,6 @@ const RUN_STATUS_CLASSES: Record<string, string> = {
   failed: "bg-destructive/10 text-destructive border-destructive/20",
   stopped: "bg-warning/10 text-warning border-warning/20",
   retry_waiting: "bg-warning/10 text-warning border-warning/20",
-};
-
-/** 趋势标签（R50）。insufficient 必须自成一档：没有序列不等于「稳定」。 */
-const TREND_LABELS: Record<string, string> = {
-  regressing: "连续退步",
-  improving: "连续改善",
-  stable: "有涨有跌 / 持平",
-  insufficient: "历史不足",
-};
-
-const TREND_CLASSES: Record<string, string> = {
-  regressing: "bg-destructive/10 text-destructive border-destructive/20",
-  improving: "bg-success/10 text-success border-success/20",
-  stable: "bg-muted text-muted-foreground border-border/20",
-  insufficient: "bg-muted text-muted-foreground border-border/20",
 };
 
 function BaselineSummary({ baseline, limit }: {

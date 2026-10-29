@@ -84,6 +84,38 @@ jobs:
           EOF
           exit $code
 
+      # 快照样本量（R51）：前三步都在判「这个数字合不合格」，没有一步判
+      # 「这个数字的精度够不够当基线」。快照只有 14 次尝试、1 次失败时，实测
+      # 7.1% 只是粗估——重导一次就可能变 0% 或 21%，阈值跟着漂。
+      #
+      # 为什么这一步能进 CI 而 --check-stale / --check-coverage 不能：它**只读
+      # 快照自身**，不需要 data/workflows。那两条判据要跟真实数据比，接进 CI
+      # 只会永远「无法判定」，是又一个恒绿的防护（R47 §2.3 的教训）。
+      #
+      # 判据没有写死的样本量常量：有失败时要求失败率 95% 半宽 ≤ margin，零失败
+      # 时要求单侧 95% 上界 ≤ margin。所以它判的是精度，不是条数——一次 run 里
+      # 50 次尝试不比 5 次 run 共 10 次尝试差。
+      - name: Snapshot sample-size gate
+        run: |
+          snapshot=tests/fixtures/live_snapshot
+          # 先验「当前快照该过」——阈值收紧到 2 个百分点时必须红。
+          # 只跑前者会得到一个恒绿步骤：0/n 与任何 margin 都能通过。
+          code=0
+          python scripts/check_live_snapshot_gate.py --check-sample-size \
+            --data-dir "$snapshot" || code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::快照样本量不足（退出码 $code，7=样本太薄 3=无样本 4=元数据漂移）"
+            exit "$code"
+          fi
+          strict=0
+          python scripts/check_live_snapshot_gate.py --check-sample-size \
+            --data-dir "$snapshot" --margin 2 > /dev/null 2>&1 || strict=$?
+          if [ "$strict" -ne 7 ]; then
+            echo "::error::收紧余量到 2 后仍判合格（退出码 $strict，期望 7）：判据失去判定力"
+            exit 1
+          fi
+          echo "OK  样本量判据双向生效：默认余量通过，余量 2 触发 7"
+
       # 工作流编排 e2e（R49）：前三轮（R45/R46/R47）反复记录的「最有价值缺口」。
       # 它一直没做，卡的不是工作量而是凭据——真实 e2e 要一家供应商的 key，而 key
       # 不能进 CI（fork PR 拿不到 secrets），也不该为了跑测试烧额度。

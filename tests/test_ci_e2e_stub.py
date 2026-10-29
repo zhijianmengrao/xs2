@@ -350,6 +350,7 @@ def test_e2e_scenarios_cover_success_failure_and_termination() -> None:
         "transient_error_is_retried",
         "permanent_error_is_not_retried",
         "stream_stall_fails_fast",
+        "retry_backoff_is_honoured",
     ]
 
 
@@ -374,3 +375,42 @@ def test_e2e_sets_a_small_stream_chunk_timeout() -> None:
     """
     source = (REPO_ROOT / "scripts" / "e2e_workflow_stub.py").read_text(encoding="utf-8")
     assert "LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S" in source
+
+
+# ------------------------------------------------------- 退避场景（R51）
+def test_backoff_scenario_disables_the_sdk_retry_layer() -> None:
+    """退避场景必须显式 ``sdk_max_retries=0``，否则量到的不是 Core 的 delays。
+
+    ChatOpenAI 自带 ``max_retries=2``，会抢在 Core 包装之前用自身指数退避救回
+    瞬时错误。实测 sdk=2 + core delays=[3.0] 时请求间隔只有 0.48s —— Core 的
+    3 秒一次都没被等到，场景会量到一个与配置无关的数字然后判定「退避生效」。
+    这正是 R50 §3.4「关掉 Core max_retries 后仍绿」的同一个坑。
+    """
+    source = (REPO_ROOT / "scripts" / "e2e_workflow_stub.py").read_text(encoding="utf-8")
+    assert "sdk_max_retries=0" in source, (
+        "退避场景没有关掉 SDK 重试层：量到的间隔可能来自 SDK 而非 Core delays"
+    )
+
+
+def test_backoff_scenario_uses_a_differential_measurement() -> None:
+    """退避判据必须是差分（0 vs 配置值），不能是绝对阈值。
+
+    绝对阈值要吞掉进程启动、日志、调度等不可知开销，只能取很松的数，于是
+    「退避被删掉一半」这种回归也能绿。差分比的正是「多出来的等待」。
+    """
+    source = (REPO_ROOT / "scripts" / "e2e_workflow_stub.py").read_text(encoding="utf-8")
+    assert "_request_gaps" in source, "退避场景没有量取请求间隔"
+    assert '"zero"' in source and '"configured"' in source, (
+        "退避场景没有做两次配置的对照"
+    )
+
+
+def test_backoff_scenario_restores_the_baseline_config() -> None:
+    """退避场景改写了全局重试配置，必须恢复——否则影响后续场景的判据。"""
+    source = (REPO_ROOT / "scripts" / "e2e_workflow_stub.py").read_text(encoding="utf-8")
+    start = source.index("async def scenario_retry_backoff_is_honoured")
+    end = source.index("SCENARIOS = {")
+    body = source[start:end]
+    assert "max_retries=2, delays=[0, 0]" in body, (
+        "退避场景结束后没有恢复 e2e 基准重试配置"
+    )
