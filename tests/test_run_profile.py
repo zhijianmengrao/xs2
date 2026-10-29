@@ -998,3 +998,176 @@ def test_failure_streak_threshold_is_reported_so_callers_do_not_hardcode_it():
 
     result = failure_streak([{"status": "failed"}] * 3)
     assert result["required"] == FAILURE_STREAK_REQUIRED
+
+
+# ---------- workflow 级健康度聚合（R54） ----------
+
+def test_workflow_health_counts_runs_across_tasks_not_within_one():
+    """workflow 级聚合能看见任务级看不见的连续失败（R54 的核心动机）。
+
+    三个任务各跑过一次、各失败一次。任务级每条只看得到 1 连败（判不出
+    ``all_failed``），而 workflow 整体已经连续输 3 次——这正是需要被看见的
+    那一类。同一条判据（``failure_streak``）在两种粒度上给出不同结论，
+    差别在输入范围而不是算术。
+    """
+    from src.workflow.run_profile import failure_streak, workflow_health
+
+    runs = [
+        {"run_id": "r1", "status": "failed", "started_at": "2026-10-01T00:00:00+08:00"},
+        {"run_id": "r2", "status": "failed", "started_at": "2026-10-02T00:00:00+08:00"},
+        {"run_id": "r3", "status": "failed", "started_at": "2026-10-03T00:00:00+08:00"},
+    ]
+    # 任务级：任一条任务只看得到自己那次失败。
+    assert failure_streak([{"status": "failed"}])["all_failed"] is False
+    # workflow 级：三条合起来是连续 3 次全失败。
+    health = workflow_health(runs, required=3)
+    assert health["consecutive_failed"] == 3
+    assert health["all_failed"] is True
+    assert health["run_count"] == 3
+    assert health["latest_run_id"] == "r3"
+
+
+def test_workflow_health_sorts_by_time_not_input_order():
+    """输入顺序不影响结论：内部按 started_at 排序后再从尾部数。
+
+    调用方若按文件名字典序传进来（``run-10`` 排在 ``run-9`` 前面），不排序就
+    会把「最早那次」当成最新，于是「最近是否全挂」判的是错的哪一端。
+    """
+    from src.workflow.run_profile import workflow_health
+
+    unordered = [
+        {"run_id": "r2", "status": "failed", "started_at": "2026-10-02T00:00:00+08:00"},
+        {"run_id": "r3", "status": "completed", "started_at": "2026-10-03T00:00:00+08:00"},
+        {"run_id": "r1", "status": "failed", "started_at": "2026-10-01T00:00:00+08:00"},
+    ]
+    health = workflow_health(unordered, required=2)
+    # 最新是 completed → 连续失败 0，不是「2 次失败」。
+    assert health["consecutive_failed"] == 0
+    assert health["all_failed"] is False
+    assert health["latest_run_id"] == "r3"
+    assert health["latest_status"] == "completed"
+
+
+def test_workflow_health_without_runs_is_not_all_failed():
+    """没有 run 记录不等于全失败：诚实缺席（与 failure_streak 同一纪律）。"""
+    from src.workflow.run_profile import workflow_health
+
+    health = workflow_health([])
+    assert health["run_count"] == 0
+    assert health["latest_run_id"] is None
+    assert health["consecutive_failed"] == 0
+    assert health["all_failed"] is False
+
+
+def test_workflow_health_honours_required_zero():
+    """门槛 0 永不成立，与 failure_streak 一致。"""
+    from src.workflow.run_profile import workflow_health
+
+    runs = [{"run_id": f"r{i}", "status": "failed",
+             "started_at": f"2026-10-0{i}T00:00:00+08:00"} for i in range(1, 6)]
+    assert workflow_health(runs, required=0)["all_failed"] is False
+
+
+def test_workflow_health_ignores_stopped_runs_like_failure_streak():
+    """人工停止不是失败证据——workflow 级不能比任务级宽松。"""
+    from src.workflow.run_profile import workflow_health
+
+    runs = [
+        {"run_id": "r1", "status": "failed", "started_at": "2026-10-01T00:00:00+08:00"},
+        {"run_id": "r2", "status": "failed", "started_at": "2026-10-02T00:00:00+08:00"},
+        {"run_id": "r3", "status": "stopped", "started_at": "2026-10-03T00:00:00+08:00"},
+    ]
+    assert workflow_health(runs, required=3)["all_failed"] is False
+
+
+class _HealthManager:
+    """最小 manager 替身：只提供 list_workflows（列表端点用得上的那一个）。"""
+
+    def __init__(self, workflows: list[dict]):
+        self._workflows = workflows
+
+    def list_workflows(self, **_kwargs):
+        return [dict(w) for w in self._workflows]
+
+
+def _seed_health_runs(tmp_path: Path, workflow_id: str,
+                      statuses: list[tuple[str, str, str]]) -> None:
+    """在 ``tmp_path/<workflow_id>/runs`` 下种 run 文件（name, day, status）。
+
+    文件名必须是 ``run-*.json``——``_iter_run_metadata`` 按这个模式 glob。
+    """
+    runs_dir = tmp_path / workflow_id / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    for run_id, day, status in statuses:
+        (runs_dir / f"run-{run_id}.json").write_text(json.dumps({
+            "run_id": f"run-{run_id}", "status": status,
+            "started_at": f"2026-10-{day}T00:00:00+08:00",
+            "node_executions": [],
+        }), encoding="utf-8")
+
+
+def test_list_workflows_health_is_opt_in(tmp_path, monkeypatch):
+    """默认不扫 runs/：``with_health`` 关着时响应里没有 health 块。
+
+    与 ``with_trend`` 同一取舍——默认路径（资源选择器）只要定义概要。
+    """
+    _seed_health_runs(tmp_path, "wf-a",
+                      [("r1", "01", "failed"), ("r2", "02", "failed")])
+    manager = _HealthManager([{"workflow_id": "wf-a", "name": "A"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    body = client.get("/api/workflows").json()
+    assert "health" not in body[0]
+
+
+def test_list_workflows_health_aggregates_per_workflow(tmp_path, monkeypatch):
+    """``?with_health=true`` 给每个 workflow 附 health，且各自独立聚合。"""
+    _seed_health_runs(tmp_path, "wf-a",
+                      [("r1", "01", "failed"), ("r2", "02", "failed"),
+                       ("r3", "03", "failed")])
+    _seed_health_runs(tmp_path, "wf-b",
+                      [("r1", "01", "failed"), ("r2", "02", "completed")])
+    manager = _HealthManager([
+        {"workflow_id": "wf-a", "name": "A"},
+        {"workflow_id": "wf-b", "name": "B"},
+    ])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    body = client.get("/api/workflows?with_health=true").json()
+    by_id = {w["workflow_id"]: w for w in body}
+    assert by_id["wf-a"]["health"]["all_failed"] is True
+    assert by_id["wf-a"]["health"]["consecutive_failed"] == 3
+    assert by_id["wf-b"]["health"]["all_failed"] is False
+    assert by_id["wf-b"]["health"]["consecutive_failed"] == 0
+
+
+def test_list_workflows_health_limit_takes_the_newest_runs(tmp_path, monkeypatch):
+    """``health_limit`` 裁的是**最新**那段，不是最早那段。
+
+    裁错端会把全失败序列的头部留下、把最新结果丢掉——正好判反。
+    """
+    _seed_health_runs(tmp_path, "wf-a",
+                      [("r1", "01", "failed"), ("r2", "02", "failed"),
+                       ("r3", "03", "failed"), ("r4", "04", "completed")])
+    manager = _HealthManager([{"workflow_id": "wf-a", "name": "A"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    # 全部 4 条：最新是 completed → 0 连败。
+    full = client.get("/api/workflows?with_health=true").json()[0]["health"]
+    assert full["run_count"] == 4 and full["consecutive_failed"] == 0
+    # 只取最近 2 条（r3 failed, r4 completed）→ 仍是 0 连败，run_count=2。
+    limited = client.get(
+        "/api/workflows?with_health=true&health_limit=2").json()[0]["health"]
+    assert limited["run_count"] == 2
+    assert limited["latest_run_id"] == "run-r4"
+
+
+def test_list_workflows_health_is_absent_and_honest_for_unknown_workflow(
+        tmp_path, monkeypatch):
+    """扫不到 runs/ 的 workflow 拿到 run_count=0 且 all_failed=False。
+
+    不猜、不报错：没有证据不等于全失败。
+    """
+    manager = _HealthManager([{"workflow_id": "wf-empty", "name": "E"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    health = client.get("/api/workflows?with_health=true").json()[0]["health"]
+    assert health["run_count"] == 0
+    assert health["latest_run_id"] is None
+    assert health["all_failed"] is False

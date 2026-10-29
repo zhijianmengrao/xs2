@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { List, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, List, Plus, Trash2, X } from "lucide-react";
 
 import type { WorkflowSummary } from "../../types";
 
@@ -142,6 +142,18 @@ export function WorkflowTemplatePanel({
                   </span>
                   {!!workflow.running_tasks && <span className="text-info">({workflow.running_tasks} 任务)</span>}
                 </div>
+                {workflow.health?.all_failed && (
+                  // R54：与任务级徽标同一个信号，只是聚合到 workflow 维度。
+                  // 门槛用后端给的 required，不写死 N——后端改门槛时文案要跟着变。
+                  <div
+                    role="status"
+                    title={`这个工作流最近 ${workflow.health.consecutive_failed} 次 run 全部失败（最新一次：${workflow.health.latest_run_id ?? "未知"}）。失败率趋势判据看不到这种情况：每次都 100% 失败时相邻差值恒为 0。`}
+                    className="inline-flex items-center gap-1 px-2 py-1 mb-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-xs"
+                  >
+                    <AlertTriangle size={12} aria-hidden="true" />
+                    连续 {workflow.health.consecutive_failed} 次全失败
+                  </div>
+                )}
                 <div className="mt-3 text-xs text-muted-foreground mb-3">
                   更新于 {new Date(workflow.updated_at).toLocaleDateString("zh-CN")}
                 </div>

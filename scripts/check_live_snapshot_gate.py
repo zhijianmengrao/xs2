@@ -417,6 +417,138 @@ def check_sample_size(data_dir: Path, margin: float) -> tuple[int, str]:
     return EXIT_OK, f"快照样本量足够支撑失败率判定：{detail}"
 
 
+def recompute_per_workflow(workflows_dir: Path) -> dict[str, dict]:
+    """按 workflow 复算 ``(runs, attempts, failed)``——``recompute_totals`` 的分组版。
+
+    为什么需要分组复算而不是只信全局合计：``recompute_totals`` 只比总数。
+    一次「把 A 工作流的一次失败改成 B 工作流的」改动不会改变全局 attempts/failed，
+    于是全局漂移校验通过，而 ``snapshot-meta.json`` 的 ``per_workflow`` 块已经
+    在说谎。R54 补的正是这一层（见 ``check_per_workflow``）。
+
+    坏 JSON 与读失败一律跳过，与 ``recompute_totals`` 同一取舍。
+    """
+    buckets: dict[str, dict] = {}
+    if not workflows_dir.is_dir():
+        return buckets
+    for wf_dir in sorted(workflows_dir.iterdir()):
+        runs_dir = wf_dir / "runs"
+        if not wf_dir.is_dir() or not runs_dir.is_dir():
+            continue
+        for run_file in sorted(runs_dir.glob("run-*.json")):
+            try:
+                run = json.loads(run_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            profile = build_run_profile(
+                run.get("node_executions") or [],
+                run_id=str(run.get("run_id") or run_file.stem),
+                workflow_id=wf_dir.name,
+                status=str(run.get("status", "")),
+                started_at=run.get("started_at"),
+                completed_at=run.get("completed_at"),
+            )
+            bucket = buckets.setdefault(
+                wf_dir.name, {"runs": 0, "attempts": 0, "failed": 0})
+            bucket["runs"] += 1
+            bucket["attempts"] += profile["totals"]["attempts"]
+            bucket["failed"] += profile["totals"]["failed"]
+    return buckets
+
+
+def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
+    """按 workflow 分别判「失败率估计精度够不够」（R54）。
+
+    补的是 R51 §12-2 挂账的那一问：全局厚度合格时，单个 workflow 可能薄到
+    看不出失败率，而全局判据对它完全失明（全局 255 次尝试掩盖了某个只有 5 次
+    尝试的 workflow）。
+
+    **它判的不是「任一 workflow 太薄就失败」**。这样做会得到一个恒红的步骤：
+    真实快照里 ``xs2-novel-flywheel-export`` 只有 5 次尝试、零失败，零失败时
+    95% 上界高达 45 个百分点，而要把它压到 margin=10 需要 29 次尝试——真实数据
+    里那个 workflow 总共只有 10 个 run，物理上补不到。把「补不到的东西」做成
+    门槛，等于把一个永远红的步骤冒充成防护，这与 R45-R53 反复批评的「永远绿
+    的防护」是同一个错误的两面。
+
+    所以本函数有两件事，只有第一件能红：
+
+    1. **``per_workflow`` 元数据必须与内容一致**（不做就无法判 2）→ 不一致时
+       退出码 4（``EXIT_META_DRIFT``），与全局漂移同一处置：重导。
+       这是比全局校验更严的一层：把一次失败从 A 工作流挪到 B 工作流，全局
+       attempts/failed 分毫不动，全局校验通过，而 per-workflow 元数据已经在说谎。
+    2. **逐 workflow 报告精度**，薄的那些列出来，说明「这些 workflow 级的失败率
+       不可信」，全局闸门不受影响（闸门用的是全局合计当基线）。这一部分恒退出 0
+       ——它是诊断信息，不是判据。叫它判据就会变成第二个恒绿/恒红的假防护。
+
+    真要按 workflow 判失败率，得先让闸门本身改成 per-workflow 基线，那是另一
+    次改动（HANDOVER_ROUND53 §12-3 明确列为候选而非本轮范围）。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判 per-workflow 样本量：{meta_path}"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+
+    recorded = meta.get("per_workflow") or {}
+    if not isinstance(recorded, dict) or not recorded:
+        return EXIT_NO_SAMPLE, (
+            "快照元数据缺 per_workflow 块，无法判 per-workflow 样本量。"
+            "重导一次即可补上：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+
+    actual = recompute_per_workflow(data_dir / "workflows")
+    if not actual:
+        return EXIT_NO_SAMPLE, (
+            f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
+
+    drifts: list[str] = []
+    for name in sorted(set(recorded) | set(actual)):
+        rec = recorded.get(name) or {}
+        act = actual.get(name)
+        if act is None:
+            drifts.append(f"{name}: 元数据有、内容无")
+            continue
+        rec_key = (int(rec.get("runs") or 0), int(rec.get("attempts") or 0),
+                   int(rec.get("failed") or 0))
+        act_key = (act["runs"], act["attempts"], act["failed"])
+        if rec_key != act_key:
+            drifts.append(
+                f"{name}: 元数据 runs/attempts/failed={rec_key}，"
+                f"内容复算={act_key}")
+    if drifts:
+        return EXIT_META_DRIFT, (
+            "per-workflow 元数据与内容不一致（全局合计可能仍然相等，所以全局校验"
+            "看不出来）：" + "；".join(drifts) +
+            "。重导：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+
+    thin: list[str] = []
+    thick: list[str] = []
+    for name in sorted(actual):
+        bucket = actual[name]
+        needed = sample_size_margin_needed(bucket["attempts"], bucket["failed"])
+        if needed is None:
+            thin.append(f"{name}（样本形状无效：{bucket['failed']}/{bucket['attempts']}）")
+            continue
+        if needed <= margin:
+            thick.append(f"{name}（{needed:.2f} ≤ {margin:g}）")
+        else:
+            thin.append(
+                f"{name}（需 {needed:.2f} > {margin:g}，"
+                f"n={bucket['attempts']}, 失败 {bucket['failed']}）")
+
+    summary = (f"per-workflow 样本量：{len(thick)} 个 workflow 的失败率估计"
+               f"精度达标，{len(thin)} 个不达标")
+    if thin:
+        summary += (
+            "。不达标的这些 workflow **不该**被当作逐 workflow 的失败率基线"
+            "（全局闸门用全局合计，不受影响）：" + "；".join(thin))
+    if thick:
+        summary += "。达标的：" + "；".join(thick)
+    return EXIT_OK, summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -431,6 +563,9 @@ def main() -> int:
     parser.add_argument("--check-sample-size", action="store_true",
                         help="改判样本量厚度：失败率估计的精度是否够当闸门基线"
                              "（只读快照自身，CI 可跑）")
+    parser.add_argument("--check-per-workflow", action="store_true",
+                        help="按 workflow 分别报告失败率估计精度，并校验 per_workflow "
+                             "元数据与内容一致（只读快照自身，CI 可跑）")
     parser.add_argument("--source", type=Path, default=None,
                         help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
                              "仅 --check-stale / --check-coverage 使用")
@@ -447,10 +582,18 @@ def main() -> int:
             ("--check-stale", options.check_stale),
             ("--check-coverage", options.check_coverage),
             ("--check-sample-size", options.check_sample_size),
+            ("--check-per-workflow", options.check_per_workflow),
         ) if on
     ]
     if len(chosen) > 1:
         parser.error(f"{' 与 '.join(chosen)} 是不同的判据，不能同时使用")
+
+    if options.check_per_workflow:
+        # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
+        code, message = check_per_workflow(
+            options.data_dir or _default_data_dir(), options.margin)
+        print(f"[live-gate] {message}", file=sys.stderr)
+        return code
 
     if options.check_sample_size:
         # 只读快照自身，不需要 --source：这是它能进 CI 的全部原因。

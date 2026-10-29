@@ -254,10 +254,37 @@ def _validate_variable_keys(variables: list[dict]) -> None:
 # ============================================================
 
 @router.get("")
-async def list_workflows(request: Request):
-    """列出所有工作流。"""
+async def list_workflows(request: Request,
+                         with_health: bool = False,
+                         health_limit: int = 0):
+    """列出所有工作流。
+
+    Query params:
+        with_health: 是否给每个 workflow 附 ``health`` 块（R54，默认关）
+        health_limit: 每个 workflow 回溯多少个 run（0 = 全部；正数取最近 N 个）
+
+    为什么 ``with_health`` 默认关：默认路径（资源选择器、侧栏）只要定义概要，
+    这个开关要逐 workflow 扫 ``runs/`` 并解析 JSON，是列表端点里最重的一段
+    与 ``list_tasks`` 的 ``with_trend`` 取舍完全相同。
+
+    ``health_limit`` 默认 0（全部）而 ``baseline_limit`` 默认 5，是因为两者问的
+    问题不同：``baseline_limit`` 是「够不够判趋势」，样本少了趋势判不出来；
+    这里问「这个 workflow 最近是不是一直在挂」，样本越少越可能误判成「没有
+    连续失败」——把窗口裁短正好会把全失败序列的头部截掉，反而不安全。所以
+    默认看全量，需要限流时由调用方显式给 N。
+    """
     mgr = _get_manager(request)
-    return mgr.list_workflows()
+    workflows = mgr.list_workflows()
+    if with_health and isinstance(workflows, list):
+        limit_n = max(0, int(health_limit))
+        for summary in workflows:
+            if not isinstance(summary, dict):
+                continue
+            workflow_id = str(summary.get("workflow_id") or "")
+            if not workflow_id:
+                continue
+            summary["health"] = _collect_workflow_health(workflow_id, limit_n)
+    return workflows
 
 
 @router.get("/{workflow_id}")
@@ -818,6 +845,9 @@ def _iter_run_metadata(runs_dir: Path) -> list[dict]:
             "run_id": str(data.get("run_id") or run_file.stem),
             "started_at": data.get("started_at"),
             "mtime": mtime,
+            # status 供 workflow 级健康度聚合用（R54）。同一次 JSON 解析顺手取，
+            # 不额外读一遍文件。
+            "status": str(data.get("status", "")),
         })
     return metas
 
@@ -842,6 +872,40 @@ def _load_run_profile(runs_dir: Path, meta: dict | None,
         started_at=run_data.get("started_at"),
         completed_at=run_data.get("completed_at"),
     )
+
+
+def _collect_workflow_health(workflow_id: str, limit: int = 0) -> dict:
+    """单个 workflow 的运行健康度（R54）：最近是不是一直在挂。
+
+    与 ``_collect_workflow_trends`` 的分工：
+    - ``trends`` 是**任务级**，按 ``task_id`` 返回，回答「这条任务在退步吗」；
+    - ``health`` 是**workflow 级**，回答「这个 workflow 整体最近全挂了吗」。
+
+    后者不能由前者合并出来：任务级只覆盖当前页的任务（``page_size`` 默认 20），
+    跨页任务与被删任务引用的 run 都不在其中，而「三个任务各失败一次」在任务级
+    看着是三条 1 连败、在 workflow 级才是连续 3 次全失败。
+
+    ``limit <= 0`` 表示不裁剪（全部 run）。裁剪取最近 N 个**之后**再数连续失败，
+    这与 ``pick_recent_runs`` 的「取尾部 N 个」同向：保留最新的一段，正是判
+    「最近是否全挂」需要的那一端。
+
+    扫不到 run 目录 / 无 run 记录时返回 ``run_count=0`` 且 ``all_failed=False``
+    ——没有证据不等于全失败，这与 ``failure_streak`` 的诚实缺席同一条纪律。
+    """
+    from src.workflow.run_profile import workflow_health
+
+    runs_dir = WORKFLOWS_DIR / workflow_id / "runs"
+    metas = _iter_run_metadata(runs_dir)
+    if limit and limit > 0:
+        # 与 run_profile 的排序键一致：先按时间升序，再取尾部 N 个。
+        from src.workflow.run_profile import _order_key
+
+        metas = sorted(
+            metas,
+            key=lambda m: (_order_key(m.get("started_at"), m.get("mtime", 0.0)),
+                           str(m.get("run_id", ""))),
+        )[-limit:]
+    return workflow_health(metas)
 
 
 def _collect_workflow_trends(workflow_id: str, entries: list[dict],

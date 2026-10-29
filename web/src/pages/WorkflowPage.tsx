@@ -181,7 +181,9 @@ export default function WorkflowPage() {
   const fetchWorkflows = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/workflows");
+      // with_health（R54）：模板列表要标出「这个工作流最近是不是一直在挂」。
+      // 21 个工作流全量扫 runs/ 实测约 28ms，直接打开，不做按需展开。
+      const res = await fetch("/api/workflows?with_health=true");
       if (res.ok) setWorkflows(await res.json());
     } catch {
       setErrorMessage("工作流列表加载失败，请重试");

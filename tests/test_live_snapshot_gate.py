@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from scripts import check_live_snapshot_gate as live_gate
@@ -719,3 +720,205 @@ def test_windows_step_does_not_reintroduce_stale_or_coverage() -> None:
         run = str(step.get("run", ""))
         assert "--check-stale" not in run
         assert "--check-coverage" not in run
+
+
+# --------------------------------------- per-workflow 样本量（R54）
+def _write_per_workflow_snapshot(root: Path, spec: dict[str, tuple[int, int]],
+                                 declare_meta: bool = True) -> None:
+    """造一份带 ``per_workflow`` 块的快照。
+
+    ``spec`` 是 ``{workflow: (attempts, failed)}``，每个 workflow 一个 run，
+    attempt 数就是 attempts。``declare_meta=False`` 时省掉 ``per_workflow``
+    块，用来验「元数据缺这一块」的挂号路径。
+    """
+    per_workflow: dict[str, dict] = {}
+    total_attempts = total_failed = 0
+    for wf_name, (attempts, failed) in spec.items():
+        runs = root / "workflows" / wf_name / "runs"
+        runs.mkdir(parents=True)
+        nodes = []
+        for index in range(attempts):
+            status = "failed" if index < failed else "completed"
+            nodes.append({
+                "node_id": f"n{index}",
+                "status": status,
+                "attempt_history": [{
+                    "attempt_number": 1, "trigger": "initial", "status": status,
+                }],
+            })
+        (runs / "run-x.json").write_text(
+            json.dumps({"run_id": "run-x", "status": "completed",
+                        "node_executions": nodes}), encoding="utf-8")
+        per_workflow[wf_name] = {"runs": 1, "attempts": attempts,
+                                 "failed": failed}
+        total_attempts += attempts
+        total_failed += failed
+    meta: dict = {"totals": {"attempts": total_attempts, "failed": total_failed},
+                  "exported_at": "2026-02-01T00:00:00+00:00"}
+    if declare_meta:
+        meta["per_workflow"] = per_workflow
+    (root / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_per_workflow_passes_on_the_committed_snapshot() -> None:
+    """入库快照自己必须过——否则 CI 一接就红。"""
+    code, message = live_gate.check_per_workflow(SNAPSHOT_ROOT, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_per_workflow_catches_drift_the_global_totals_miss(tmp_path: Path) -> None:
+    """R54 的全部动机：把一次失败从一个 workflow 挪到另一个。
+
+    两个 workflow 各 10 次尝试、各 1 次失败。全局 attempts/failed 都是
+    (20, 2)，分毫不动——所以 ``recompute_totals`` 的全局校验通过；而
+    ``per_workflow`` 元数据里 a 已写成 2 次失败，与内容不一致。
+    全局判据看不出来的洞，只能由分组复算补。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    # 先确认基线：全局与 per-workflow 都一致时双绿。
+    assert live_gate.evaluate(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
+    assert live_gate.check_per_workflow(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
+
+    meta = json.loads((tmp_path / "snapshot-meta.json").read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-a"]["failed"] = 2
+    meta["per_workflow"]["wf-b"]["failed"] = 0
+    (tmp_path / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    # 全局合计未变 → 全局判据仍然绿（这正是缺口本身）。
+    assert live_gate.evaluate(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
+    # 分组复算必须抓到。
+    code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "wf-a" in message and "wf-b" in message
+
+
+def test_per_workflow_detects_run_count_drift(tmp_path: Path) -> None:
+    """runs 数也在校验范围内：删掉一个 run 文件同样要被抓到。"""
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1)})
+    meta = json.loads((tmp_path / "snapshot-meta.json").read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-a"]["runs"] = 5
+    (tmp_path / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+
+
+def test_per_workflow_reports_workflow_present_in_meta_but_absent_in_content(
+        tmp_path: Path) -> None:
+    """元数据里有、内容里没有：也要判漂移，不是静默跳过。"""
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1)})
+    meta = json.loads((tmp_path / "snapshot-meta.json").read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-ghost"] = {"runs": 1, "attempts": 5, "failed": 0}
+    (tmp_path / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "wf-ghost" in message
+
+
+def test_per_workflow_thin_workflow_is_reported_but_not_a_hard_failure(
+        tmp_path: Path) -> None:
+    """薄 workflow 只被报告，不判失败——这是本判据的设计核心（R54）。
+
+    真实快照里 ``xs2-novel-flywheel-export`` 只有 5 次尝试、零失败，零失败时
+    95% 上界 45 个百分点，压到 margin=10 要 29 次尝试，而真实数据里那个
+    workflow 总共只有 10 个 run——物理上补不到。把它做成硬门槛，会得到一个
+    **永远红**的步骤，与历轮反复批评的「永远绿的防护」是同一个错误的两面。
+
+    所以判据只有两件事能红：元数据漂移、无样本。薄只进报告。
+    """
+    # 5 次尝试零失败：所需余量约 45 个百分点，远超 margin=10。
+    _write_per_workflow_snapshot(tmp_path, {"wf-thin": (5, 0)})
+    code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "wf-thin" in message
+    assert "不达标" in message
+
+
+def test_per_workflow_requires_the_per_workflow_block(tmp_path: Path) -> None:
+    """元数据缺 ``per_workflow`` 块时报无样本（3），不是静默通过。"""
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1)}, declare_meta=False)
+    code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+    assert "per_workflow" in message
+
+
+def test_per_workflow_reports_no_sample_when_snapshot_has_no_workflows(
+        tmp_path: Path) -> None:
+    """快照里一个 workflow 都没有时报无样本（3）。"""
+    (tmp_path / "workflows").mkdir()
+    (tmp_path / "snapshot-meta.json").write_text(
+        json.dumps({"per_workflow": {"wf-a": {"runs": 1, "attempts": 1,
+                                              "failed": 0}}}),
+        encoding="utf-8")
+    code, _ = live_gate.check_per_workflow(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_NO_SAMPLE
+
+
+def _per_workflow_step() -> dict:
+    """ubuntu backend 上的 per-workflow 步骤（R54）。"""
+    hits = [
+        s for s in _backend_steps()
+        if "--check-per-workflow" in str(s.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "ci.yml 的 backend job 必须且只能有一处跑 --check-per-workflow"
+        f"（实际 {len(hits)} 处）"
+    )
+    return hits[0]
+
+
+def test_per_workflow_is_wired_into_ci() -> None:
+    """只读快照自身，所以同样能进 CI 检出。"""
+    run = str(_per_workflow_step()["run"])
+    assert "python scripts/check_live_snapshot_gate.py" in run
+    assert "tests/fixtures/live_snapshot" in run
+
+
+def test_per_workflow_ci_step_is_not_permanently_green() -> None:
+    """这一步必须能红：它唯一的红路径是元数据漂移，所以 CI 要注入一处。
+
+    不注入的话，这一步在判据完全失效时也会绿——因为「薄」本身不判失败。
+    """
+    run = str(_per_workflow_step()["run"])
+    assert "per_workflow" in run, "CI 步骤没有注入漂移样本"
+    assert "-ne 4" in run or "-eq 4" in run, (
+        "CI 步骤没有断言退出码 4，判据失去判定力也不会被发现"
+    )
+
+
+def test_per_workflow_does_not_reintroduce_single_global_checks() -> None:
+    """新步骤不得顺手把 --check-stale/--check-coverage 拉进 CI。"""
+    run = str(_per_workflow_step()["run"])
+    assert "--check-stale" not in run
+    assert "--check-coverage" not in run
+
+
+def test_windows_runner_also_judges_per_workflow() -> None:
+    """Windows job 上有同一段（与 sample-size 同样的理由：判据看似平台无关）。"""
+    hits = [
+        s for s in _windows_backend_steps()
+        if "--check-per-workflow" in str(s.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "ci.yml 的 windows-backend job 必须且只能有一处跑 --check-per-workflow"
+        f"（实际 {len(hits)} 处）"
+    )
+    run = str(hits[0]["run"])
+    assert "per_workflow" in run
+    assert "-ne 4" in run or "-eq 4" in run
+
+
+def test_judgement_flags_are_mutually_exclusive(monkeypatch) -> None:
+    """四条判据互斥：混判会让人看不出是哪种不合格。
+
+    ``argparse`` 的 ``parser.error`` 以退出码 2 结束进程，所以这里断言
+    ``SystemExit(2)``——不是在测 argparse 本身，而是钉住「新判据也被纳入了
+    互斥列表」。漏纳入时两个判据会串着判，第二个的结果覆盖第一个。
+    """
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py",
+        "--check-sample-size", "--check-per-workflow"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2

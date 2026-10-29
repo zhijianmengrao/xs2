@@ -930,6 +930,21 @@ export interface WorkflowDefinition {
   end_position?: { x: number; y: number };
 }
 
+/** 单个工作流最近若干次运行的健康度（R54，仅 `?with_health=true` 时返回） */
+export interface WorkflowHealth {
+  /** 参与判定的 run 条数（0 表示这个 workflow 还没有运行记录） */
+  run_count: number;
+  latest_run_id: string | null;
+  latest_status: string | null;
+  latest_started_at: string | null;
+  /** 从最新往回数，连续 status=failed 的 run 条数 */
+  consecutive_failed: number;
+  /** 后端给的判定门槛；文案用它，不要写死 N */
+  required: number;
+  /** 是否达到「最近 N 次全失败」门槛 */
+  all_failed: boolean;
+}
+
 /** 工作流列表摘要 */
 export interface WorkflowSummary {
   workflow_id: string;
@@ -940,6 +955,8 @@ export interface WorkflowSummary {
   updated_at: string;
   status: string;
   running_tasks?: number;
+  /** 仅当请求带 with_health=true 时存在 */
+  health?: WorkflowHealth;
 }
 
 /** 单个工作流完整响应（定义 + 状态） */

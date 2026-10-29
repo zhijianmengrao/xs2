@@ -403,6 +403,51 @@ def failure_streak(points: list[dict[str, Any]],
     }
 
 
+def workflow_health(runs: list[dict[str, Any]],
+                    required: int = FAILURE_STREAK_REQUIRED) -> dict[str, Any]:
+    """把一个 workflow 的 run 序列聚合成「这个 workflow 现在健康吗」（R54）。
+
+    ``runs`` 是 ``[{run_id, status, started_at, mtime}]``，顺序不限——内部按
+    ``_order_key`` 排序后再从尾部数连续失败，调用方不必自己保证升序。
+
+    为什么不能在任务级解决：``failure_streak`` 判的是「**这一条任务**引用的
+    run 序列」。工作流列表要回答的是另一个问题——「**这个 workflow** 最近是不是
+    一直在挂」。两者的差集正是本函数存在的理由：
+
+    - 任务级只在当前页任务（``page_size`` 默认 20）范围内聚合，跨页、已删任务
+      引用的 run 都不在其中；
+    - 三个任务各跑过一次、各失败一次，任务级每条只看得到 1 连败，而 workflow
+      整体已经连续输了 3 次 —— 这正是需要被看见的那一类。
+
+    与 ``failure_streak`` 共用同一份判据（只认 ``failed``，``stopped`` /
+    ``running`` / ``pending`` 都不算失败证据），不另写一份，否则两条路径迟早
+    对「什么算失败」产生分歧。
+
+    ``required <= 0`` 时永不判成立，与 ``failure_streak`` 一致：配置成 0 不该
+    等于「一律告警」。
+    """
+    ordered = sorted(
+        (r for r in (runs or []) if isinstance(r, dict)),
+        key=lambda r: (_order_key(r.get("started_at"), r.get("mtime", 0.0)),
+                       str(r.get("run_id", ""))),
+    )
+    # failure_streak 读 ``status``；这里把 run 元数据映射成它要的形状，避免
+    # 在 run_profile 里出现第二套「连续失败」计数逻辑。
+    points = [{"run_id": r.get("run_id", ""), "status": r.get("status", "")}
+              for r in ordered]
+    streak = failure_streak(points, required=required)
+    latest = ordered[-1] if ordered else {}
+    return {
+        "run_count": len(ordered),
+        "latest_run_id": latest.get("run_id") if ordered else None,
+        "latest_status": latest.get("status") if ordered else None,
+        "latest_started_at": latest.get("started_at") if ordered else None,
+        "consecutive_failed": streak["consecutive_failed"],
+        "required": streak["required"],
+        "all_failed": streak["all_failed"],
+    }
+
+
 def compare_run_baseline(current: dict[str, Any],
                          previous_runs: list[dict[str, Any]]) -> dict[str, Any]:
     """把「本次 run」与一串历史 run 排成时间序列，判趋势（R50）。

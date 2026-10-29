@@ -615,8 +615,23 @@ export async function getNovelReaderReport(workflowId: string, workspace: string
   return request<{report: Record<string, unknown>; chapter: string}>(`/novel-console/reader-report?${query}`);
 }
 
-export async function listWorkflows() {
-  return request<Array<{ workflow_id: string; name: string; node_count: number; version: number; status?: string }>>("/workflows");
+/**
+ * 工作流列表。
+ *
+ * `withHealth` 打开后每条摘要会带 `health` 块（R54）：后端要逐 workflow 扫
+ * `runs/` 才算得出「最近是不是一直在挂」。默认关着，因为资源选择器之类的
+ * 调用方只要 id 和名字。
+ */
+export async function listWorkflows(options: { withHealth?: boolean; healthLimit?: number } = {}) {
+  const query = new URLSearchParams();
+  if (options.withHealth) {
+    query.set("with_health", "true");
+    if (options.healthLimit && options.healthLimit > 0) {
+      query.set("health_limit", String(options.healthLimit));
+    }
+  }
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<Array<{ workflow_id: string; name: string; node_count: number; version: number; status?: string; health?: import("../types").WorkflowHealth }>>(`/workflows${suffix}`);
 }
 
 export async function listWorkspaceFiles(

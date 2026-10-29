@@ -116,6 +116,37 @@ jobs:
           fi
           echo "OK  样本量判据双向生效：默认余量通过，余量 2 触发 7"
 
+      # per-workflow 样本量（R54）。判据与上一步相反：上一步问「这份快照够不够
+      # 厚」，这一步问「单个 workflow 太薄时能不能被看出来」。它**不**因为薄而
+      # 失败——真实快照里 5 个 workflow 物理上补不到 margin=10，做成硬门槛就是
+      # 一个恒红步骤。这一步能红的唯一路径是 per-workflow 元数据与内容不一致，
+      # 所以反向验证注入一处漂移，必须判 4。
+      - name: Snapshot per-workflow sample-size report
+        run: |
+          python scripts/check_live_snapshot_gate.py --check-per-workflow \
+            --data-dir tests/fixtures/live_snapshot
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::per-workflow 判据失败（退出码 $code，4=元数据漂移 3=无样本）"
+            exit "$code"
+          fi
+          # 反向验证：把一处 per-workflow 失败数改错，全局合计不变，必须判 4。
+          # 用单行 python -c 而不是 heredoc：heredoc 体必须顶格，会提前终止
+          # YAML 块标量，整份 workflow 变成非法 YAML。
+          tmp=$(mktemp -d)
+          cp -r tests/fixtures/live_snapshot/. "$tmp/"
+          python -c "import json,pathlib,sys;r=pathlib.Path(sys.argv[1]);m=json.loads((r/'snapshot-meta.json').read_text(encoding='utf-8'));pw=m['per_workflow'];k=sorted(pw)[0];pw[k]['failed']=int(pw[k].get('failed',0))+1;(r/'snapshot-meta.json').write_text(json.dumps(m),encoding='utf-8')" "$tmp" \
+            || { echo "::error::无法构造漂移样本"; rm -rf "$tmp"; exit 1; }
+          drift=0
+          python scripts/check_live_snapshot_gate.py --check-per-workflow \
+            --data-dir "$tmp" > /dev/null 2>&1 || drift=$?
+          rm -rf "$tmp"
+          if [ "$drift" -ne 4 ]; then
+            echo "::error::注入 per-workflow 漂移后仍判 $drift（期望 4）：判据失去判定力"
+            exit 1
+          fi
+          echo "OK  per-workflow 判据双向生效：真实快照通过，注入漂移触发 4"
+
       # 工作流编排 e2e（R49）：前三轮（R45/R46/R47）反复记录的「最有价值缺口」。
       # 它一直没做，卡的不是工作量而是凭据——真实 e2e 要一家供应商的 key，而 key
       # 不能进 CI（fork PR 拿不到 secrets），也不该为了跑测试烧额度。
@@ -201,6 +232,32 @@ jobs:
             exit 1
           }
           Write-Host "OK  样本量判据双向生效（Windows/Python 3.14）：默认余量通过，余量 2 触发 7"
+
+          # per-workflow 样本量（R54）：与 ubuntu 那段一一对应。它**不**因某个
+          # workflow 太薄而失败（真实快照里 5 个物理上补不到 margin=10），能红的
+          # 唯一路径是 per-workflow 元数据与内容不一致 → 注入一处漂移必须判 4。
+          python scripts/check_live_snapshot_gate.py --check-per-workflow --data-dir $snapshot
+          $wfCode = $LASTEXITCODE
+          if ($wfCode -ne 0) {
+            Write-Host "::error::per-workflow 判据失败（退出码 $wfCode，4=元数据漂移 3=无样本）"
+            exit $wfCode
+          }
+          $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("wfdrift-" + [guid]::NewGuid().ToString("N"))
+          Copy-Item -Recurse -Force $snapshot $tmp
+          python -c "import json,pathlib,sys;r=pathlib.Path(sys.argv[1]);m=json.loads((r/'snapshot-meta.json').read_text(encoding='utf-8'));pw=m['per_workflow'];k=sorted(pw)[0];pw[k]['failed']=int(pw[k].get('failed',0))+1;(r/'snapshot-meta.json').write_text(json.dumps(m),encoding='utf-8')" $tmp
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::无法构造漂移样本"
+            Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $null = python scripts/check_live_snapshot_gate.py --check-per-workflow --data-dir $tmp 2>&1
+          $drift = $LASTEXITCODE
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          if ($drift -ne 4) {
+            Write-Host "::error::注入 per-workflow 漂移后仍判 $drift（期望 4）：判据失去判定力"
+            exit 1
+          }
+          Write-Host "OK  per-workflow 判据双向生效（Windows/Python 3.14）：真实快照通过，注入漂移触发 4"
           exit 0
       # 存储名只读巡检（R23）：Windows 权威基线跑完后对仓库做一次设备名遗留
       # 体检，防新数据回归。CI 克隆不含运行期 data/，此步主要锚定配置面与
