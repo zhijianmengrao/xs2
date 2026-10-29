@@ -953,3 +953,48 @@ def test_list_trend_block_carries_the_all_failed_signal(tmp_path, monkeypatch):
     assert block["all_failed_required"] >= 1
     # 同时钉住动机：趋势判据在这里判不出问题。
     assert block["trend"] == "stable"
+
+
+# ------------------------------- FAILURE_STREAK_REQUIRED 的取值依据（R53）
+def test_failure_streak_threshold_fits_inside_the_default_baseline_window():
+    """门槛必须能被默认回溯窗口满足，否则这条信号在默认配置下永不触发。
+
+    「最近 N 次全失败」的时间序列长度由调用方的 ``baseline_limit`` 决定
+    （列表视图默认 5，上限 20）。序列里最多有 ``limit + 1`` 个点，所以
+    ``N`` 必须 ≤ ``limit + 1`` 才可能成立。R52 取 3 而 ``limit`` 默认 5，
+    有余量；但这两个数在**不同文件**里（``run_profile.py`` 与
+    ``workflow_routes.py`` 的 ``baseline_limit`` 默认值），谁改都不会碰到
+    另一处——这条测试把约束写下来。
+
+    取 3 而不是 2 的理由：2 意味着「上一次 + 这一次都失败」就报警，而单次
+    失败在这类长流程里是常态（一次节点超时就让 run failed）。3 至少要求
+    「连续两次重试机会都没救回来」，与 ``TREND_STREAK_REQUIRED=2``（趋势要
+    两次相邻差值）同量级但语义不同：趋势判方向，这条判当前状态。
+    """
+    from src.workflow.run_profile import (
+        FAILURE_STREAK_REQUIRED, failure_streak)
+
+    default_baseline_limit = 5
+    max_points = default_baseline_limit + 1  # 历史 limit 条 + 当前一条
+    assert FAILURE_STREAK_REQUIRED <= max_points, (
+        f"门槛 {FAILURE_STREAK_REQUIRED} 大于默认窗口能提供的 {max_points} 个点："
+        "默认配置下这条信号永远不触发"
+    )
+    # 端到端：窗口塞满、全部失败时必须成立。
+    result = failure_streak([{"status": "failed"}] * max_points)
+    assert result["all_failed"] is True
+    assert result["consecutive_failed"] == max_points
+
+
+def test_failure_streak_threshold_is_reported_so_callers_do_not_hardcode_it():
+    """门槛随结果一起返回，调用方（前端文案）不该自己写死 N。
+
+    R52 的前端 ``allFailedLabel`` 用的是 ``consecutive_failed``、阈值用后端
+    给的 ``all_failed_required``。如果后端改了 N 而前端还在文案里写「3」，
+    徽章会显示「连续 3 次全失败」而实际门槛是 5——两处阈值漂移的典型形状。
+    """
+    from src.workflow.run_profile import (
+        FAILURE_STREAK_REQUIRED, failure_streak)
+
+    result = failure_streak([{"status": "failed"}] * 3)
+    assert result["required"] == FAILURE_STREAK_REQUIRED

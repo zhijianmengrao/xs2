@@ -306,10 +306,43 @@ def check_coverage(data_dir: Path, source_dir: Path) -> tuple[int, str]:
 # - 零失败：比例的点估计恒为 0，正态近似退化（半宽恒 0，永远合格）。这正是
 #   「永远绿」的陷阱：2 次尝试 0 失败也会判合格，而零失败的 95% 上界其实是
 #   ``1 - 0.05**(1/n)``，n=2 时高达 78%。所以零失败时要求**单侧上界** ≤ margin。
+# - 全部失败（R53 补）：``p=1`` 时 ``p(1-p)=0``，正态近似同样退化成半宽 0——
+#   这零失败那条的镜像，之前漏了。一个「每次尝试都失败」的快照会在样本量判据
+#   下判「样本足够」，而它恰好是最需要被看见的运维状况。这里要求**单侧下界到
+#   1 的距离** ``1 - 0.05**(1/n)`` ≤ margin，与零失败那条完全对称。
+#
+# 第三次修同一个坑（R52 §4 的 ``trend`` 对全失败序列判 ``stable`` 是同一家族
+# 的另一个形状）说明：**比例类判据的退化点在两端，只补一端就会留下另一个
+# 永远绿的角**。
 #
 # 阈值因此没有常量：它完全由快照自身的 ``attempts/failed`` 与 margin 决定，
 # 重导后自动跟着变，不存在「数字对了才怪」的失准。
 Z_95 = 1.959963984540054  # 双侧 95% 正态分位数
+
+
+def sample_size_margin_needed(attempts: int, failed: int) -> float | None:
+    """这段样本的失败率估计「需要多宽的余量」才可信（百分点）。
+
+    返回的是**必须 ≤ margin 的那个量**，三种形状各取各的估计算：
+
+    - ``0 < p < 1``：双侧 95% 正态近似半宽。
+    - ``p == 0``：零失败时 95% 单侧上界 ``1 - 0.05**(1/n)``。正态近似在这里
+      退化成 0，直接用它会让「0/n」永远合格。
+    - ``p == 1``：全部失败时到 1 的单侧距离 ``1 - 0.05**(1/n)``。正态近似同样
+      退化成 0，与上一条是镜像关系（R53 补）。
+
+    单独抽成函数是为了让**导出脚本**能复用同一份算术
+    （``scripts/export_run_samples.py`` 用它判「CI 反向验证还能不能触发退出码
+    7」）。两处各写一份公式，迟早出现「导出说没事、CI 说太薄」的分裂。
+    """
+    if attempts <= 0 or failed < 0 or failed > attempts:
+        return None
+    if failed == 0 or failed == attempts:
+        # 两端都用 Clopper-Pearson 的单侧 95% 界：0.05**(1/n) 是「全成功时 p 的
+        # 下界」，也是「全失败时 p 的上界」，取到边界 0/1 的距离即所需余量。
+        return (1 - 0.05 ** (1.0 / attempts)) * 100
+    p = failed / attempts
+    return Z_95 * (p * (1 - p) / attempts) ** 0.5 * 100
 
 
 def _failure_rate_precision(attempts: int, failed: int,
@@ -317,24 +350,27 @@ def _failure_rate_precision(attempts: int, failed: int,
     """样本量是否足以支撑闸门用这个失败率当基线。返回 (是否足够, 说明)。"""
     if attempts <= 0:
         return False, "attempts=0"
-    margin = margin_pct / 100.0
-    if failed > 0:
-        p = failed / attempts
-        half_width = Z_95 * (p * (1 - p) / attempts) ** 0.5
-        ok = half_width <= margin
+    needed = sample_size_margin_needed(attempts, failed)
+    if needed is None:
+        return False, f"样本形状无效（failed={failed}, attempts={attempts}）"
+    ok = needed <= margin_pct
+    if failed == 0:
         detail = (
-            f"失败率 {p * 100:.2f}% 的 95% 半宽 {half_width * 100:.2f} 个百分点"
+            f"零失败时 95% 上界 {needed:.2f} 个百分点"
+            f"{'≤' if ok else '>'} 余量 {margin_pct:.1f}（n={attempts}）")
+    elif failed == attempts:
+        detail = (
+            f"全部失败时到 100% 的 95% 单侧距离 {needed:.2f} 个百分点"
+            f"{'≤' if ok else '>'} 余量 {margin_pct:.1f}（n={attempts}）")
+    else:
+        detail = (
+            f"失败率 {failed / attempts * 100:.2f}% 的 95% 半宽 {needed:.2f} 个百分点"
             f"{'≤' if ok else '>'} 余量 {margin_pct:.1f}（n={attempts}, 失败 {failed}）")
-        return ok, detail
-    # 零失败：用 Clopper-Pearson 的单侧 95% 上界，避免「0/n 永远合格」的空转。
-    upper = 1 - 0.05 ** (1.0 / attempts)
-    ok = upper <= margin
-    detail = (
-        f"零失败时 95% 上界 {upper * 100:.2f} 个百分点"
-        f"{'≤' if ok else '>'} 余量 {margin_pct:.1f}（n={attempts}）")
-    if not ok and margin > 0:
+    if not ok and margin_pct > 0:
         # 所需样本量只在判不合格时给：判合格时它只是一个无关的门槛数字。
-        detail += f"，达到余量需要约 {math.ceil(math.log(0.05) / math.log(1 - margin))} 次尝试"
+        detail += (
+            f"，达到余量需要约 "
+            f"{math.ceil(math.log(0.05) / math.log(1 - margin_pct / 100))} 次尝试")
     return ok, detail
 
 

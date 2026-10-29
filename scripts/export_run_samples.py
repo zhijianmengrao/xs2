@@ -28,12 +28,31 @@ R46 §2.1 的 fixture 是**手工**裁剪出来的，做法只写在交接文档
 裁剪纪律（与 R46 §2.1 同表）：保留画像读取的字段，删掉内容载荷（小说正文、
 迭代轨迹、token 明细）。载荷字段名见 ``_FORBIDDEN_NODE_FIELDS``，导出后会
 再扫一遍，命中即失败。
+
+## 半宽预算检查（R53）
+
+``check_live_snapshot_gate.py --check-sample-size`` 要求失败率的 95% 半宽
+≤ margin 才算样本够厚，而 CI 里还跑一次 ``--margin 2`` 的**反向验证**：它
+期望那一步以退出码 7 结束，证明判据真的能红。这两个要求方向相反——
+
+- 快照越薄，半宽越大，反向验证越容易触发 7；
+- 快照越厚，半宽越小，**半宽一旦 ≤ 2，反向验证就不再触发 7**，那一步从
+  「能红的判据」退化成恒绿。
+
+R52 重导时踩到过这个耦合（limit 3 的半宽 2.10 已贴门）。当时的补救是「选
+一个余量够的 limit 并把它记进文档」，但那要求下一个人也记得算。本脚本在
+**导出时**就把这笔账算出来：半宽 ≤ ``REVERSE_VALIDATION_MARGIN`` 时告警，
+因为此时该改的是 ``--limit``，而不是去查闸门代码——CI 那时会红在那一步上，
+日志却写着「判据失去判定力」，指向的是错误的东西。
+
+``--strict-half-width`` 把这条告警升级为退出码 1，供想把它当硬闸门用的场合。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -41,6 +60,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.config import WORKFLOWS_DIR  # noqa: E402
 from src.workflow.run_profile import build_run_profile  # noqa: E402
+
+# CI 反向验证用的 margin（``ci.yml`` 的 ``--margin 2``）。半宽必须**严格大于**
+# 它，收紧到该值的判定才会以退出码 7 结束。两者是这个脚本里唯一的一对耦合
+# 常量：改 CI 的 margin 就要改这里，反之亦然。
+REVERSE_VALIDATION_MARGIN = 2.0
+# 双侧 95% 正态分位数，与 check_live_snapshot_gate.py 同值。
+_Z_95 = 1.959963984540054
+# 余量低于这个值就提示「偏薄」——还没失效，但一次重导就可能越线。
+_THIN_HEADROOM = 0.5
 
 # 画像（build_run_profile）真正读的字段。裁剪只保留这些。
 _KEEP_RUN_FIELDS = ("run_id", "workflow_id", "status", "started_at", "completed_at")
@@ -79,6 +107,43 @@ def trim_run(payload: dict) -> dict:
         nodes.append(kept)
     trimmed["node_executions"] = nodes
     return trimmed
+
+
+def half_width_budget(attempts: int, failed: int,
+                      margin: float = REVERSE_VALIDATION_MARGIN) -> tuple[bool, str]:
+    """CI 反向验证是否还能触发退出码 7。返回 (是否仍有效, 说明)。
+
+    判据不是自己算一遍半宽，而是**直接问闸门**：``sample_size_margin_needed``
+    是 ``--check-sample-size`` 判合格时用的那个量，两者必须一致。各写一份
+    公式，迟早出现「导出说还有余量、CI 说太薄」的分裂。
+
+    结论是「所需余量 > margin」——**严格大于**。等于 margin 时闸门判合格
+    （``needed <= margin``），收紧到 margin 的那一步就不会以 7 退出。
+
+    这里刻意不判「样本够不够厚」（那是 ``--check-sample-size`` 的职责）：
+    两个判据方向相反，混在一起会让人看不懂该调大还是调小 limit。本函数只
+    回答一个问题：**收紧到 margin 时，这一步还能红吗？**
+    """
+    from scripts.check_live_snapshot_gate import sample_size_margin_needed
+
+    needed = sample_size_margin_needed(attempts, failed)
+    if needed is None:
+        return False, "样本量为 0 或形状无效，所需余量无从计算，反向验证无从触发"
+    # 两边都是**百分点**：needed 由闸门按百分点给，margin 也按百分点给
+    # （CI 里是 2）。不要在这里乘 100。
+    headroom = needed - margin
+    if headroom <= 0:
+        return False, (
+            f"所需余量 {needed:.2f} 个百分点 ≤ 反向验证余量 {margin:.1f}："
+            f"重导后 --margin {margin:g} 不再触发退出码 7，CI 那一步会退化成恒绿。"
+            f"加大 --limit 重导（所需余量需要 > {margin:g}）")
+    if headroom < _THIN_HEADROOM:
+        return True, (
+            f"所需余量 {needed:.2f} 个百分点，距反向验证余量 {margin:.1f} 只剩 "
+            f"{headroom:.2f}：仍能触发 7，但一次重导就可能越线")
+    return True, (
+        f"所需余量 {needed:.2f} 个百分点 > 反向验证余量 {margin:.1f}"
+        f"（余量 {headroom:.2f}），CI 反向验证仍有判定力")
 
 
 def _profile(payload: dict, fallback_run_id: str) -> dict:
@@ -179,7 +244,8 @@ def build_snapshot_meta(workflows_dir: Path, dest_root: Path,
 
 
 def export(workflows_dir: Path, dest_root: Path, workflow_filter: str,
-           run_filter: set[str], limit: int, dry_run: bool) -> int:
+           run_filter: set[str], limit: int, dry_run: bool,
+           strict_half_width: bool = False) -> int:
     exported_runs: list[tuple[str, str, dict]] = []
     failures: list[str] = []
     for wf_name, run_file, payload in _iter_source_runs(
@@ -223,6 +289,14 @@ def export(workflows_dir: Path, dest_root: Path, workflow_filter: str,
     rate = "-" if totals["failure_rate"] is None else f"{totals['failure_rate'] * 100:.2f}%"
     print(f"共导出 {len(exported_runs)} 个 run 到 {dest_root}"
           f"（{totals['attempts']} 次尝试 / {totals['failed']} 失败 / {rate}）")
+
+    # 半宽预算（R53）：这一句要在**落盘之后**打印，因为结论描述的是刚写下去
+    # 的那份快照。dry-run 时同样打——它的价值在于「先看会怎样」。
+    ok, message = half_width_budget(totals["attempts"], totals["failed"])
+    print(f"[half-width] {message}", file=sys.stderr if not ok else sys.stdout)
+    if not ok and strict_half_width:
+        print("[half-width] --strict-half-width 生效：按不合格退出", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -241,9 +315,13 @@ def main() -> int:
                         help="每个 workflow 最多导 N 个 run（默认 3）")
     parser.add_argument("--dry-run", action="store_true",
                         help="只打印将写入的内容，不落盘")
+    parser.add_argument("--strict-half-width", action="store_true",
+                        help="半宽不足以支撑 CI 反向验证时按退出码 1 结束"
+                             "（默认只告警）")
     options = parser.parse_args()
     return export(options.source, options.dest, options.workflow,
-                  set(options.run), options.limit, options.dry_run)
+                  set(options.run), options.limit, options.dry_run,
+                  options.strict_half_width)
 
 
 if __name__ == "__main__":

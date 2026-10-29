@@ -217,6 +217,64 @@ def test_stub_provider_fails_twice_then_succeeds() -> None:
     assert codes == [503, 503, 200], f"fail_twice 配额不对：{codes}"
 
 
+def test_fail_thrice_marker_grants_a_three_request_budget() -> None:
+    """``[stub:fail_thrice]`` 的配额是 3（R53）。
+
+    三段形状要三个退避段，因此要三次失败。配额与标记必须一一对应：写 3 段
+    ``delays`` 却只失败两次，第三段永远不存在，判据会退化成「段数不够」——
+    那时红的是判据而不是配置，最容易误判成实现 bug。
+    """
+    decision = decide(_payload(
+        [{"role": "user", "content": "x [stub:5xx][stub:fail_thrice]"}],
+        tools=["complete_task"],
+    ))
+    assert decision["kind"] == "error"
+    assert decision["fail_budget"] == 3
+
+
+def test_stub_provider_fails_thrice_then_succeeds() -> None:
+    """真端口上验 fail_thrice：前三次 503，第四次 200。"""
+    import urllib.error
+    import urllib.request
+
+    def post(base_url: str, text: str) -> int:
+        body = json.dumps({
+            "model": "stub-model",
+            "stream": True,
+            "messages": [{"role": "user", "content": text}],
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            base_url, data=body,
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                return resp.status
+        except urllib.error.HTTPError as err:
+            return err.code
+
+    with stub_module.StubProvider() as stub:
+        url = stub.base_url + "/chat/completions"
+        codes = [post(url, "x [stub:5xx][stub:fail_thrice]") for _ in range(4)]
+
+    assert codes == [503, 503, 503, 200], f"fail_thrice 配额不对：{codes}"
+
+
+def test_combined_fail_markers_take_the_largest_budget() -> None:
+    """同时写多个 fail_* 标记时取**最大**配额，而不是字典序第一个。
+
+    ``[stub:fail_once][stub:fail_thrice]`` 这种组合是复制粘贴的常见残留。若取
+    到 1，场景只失败一次，形状判据看到「段数不够」——那是在报告一个与真实
+    原因（配额被写小了）不同的缺陷。取最大值让组合至少满足最长的那个要求，
+    不会把配置笔误伪装成实现回归。
+    """
+    decision = decide(_payload(
+        [{"role": "user",
+          "content": "x [stub:5xx][stub:fail_once][stub:fail_thrice]"}],
+        tools=["complete_task"],
+    ))
+    assert decision["fail_budget"] == 3
+
+
 def test_stub_provider_fails_once_then_succeeds() -> None:
     """真端口上验 fail_once：第一次 503，第二次 200 且带 SSE 收尾。"""
     import urllib.error
@@ -399,6 +457,7 @@ def test_e2e_scenarios_cover_success_failure_and_termination() -> None:
         "stream_stall_fails_fast",
         "retry_backoff_is_honoured",
         "retry_backoff_shape_is_honoured",
+        "retry_backoff_long_chain_shape_is_honoured",
     ]
 
 
@@ -465,10 +524,28 @@ def test_backoff_scenario_restores_the_baseline_config() -> None:
 
 
 # ------------------------------------------------------- 退避形状（R52）
-def _shape_scenario_body() -> str:
+def _scenario_body(func_name: str, *, until: str) -> str:
+    """截取一个场景函数的源码正文。
+
+    用显式的 ``until`` 而不是「到下一个 def 为止」：场景函数之间没有稳定的
+    分隔标记，靠名字猜边界正是这类契约测试最容易写歪的地方——切多了会让
+    「这条断言只钉这个场景」变成「覆盖半个文件」，切少了则断言永远为真。
+    """
     source = (REPO_ROOT / "scripts" / "e2e_workflow_stub.py").read_text(encoding="utf-8")
-    start = source.index("async def scenario_retry_backoff_shape_is_honoured")
-    return source[start:source.index("SCENARIOS = {")]
+    start = source.index(f"async def {func_name}")
+    return source[start:source.index(until, start)]
+
+
+def _shape_scenario_body() -> str:
+    return _scenario_body(
+        "scenario_retry_backoff_shape_is_honoured",
+        until="async def scenario_retry_backoff_long_chain_shape_is_honoured")
+
+
+def _long_chain_scenario_body() -> str:
+    return _scenario_body(
+        "scenario_retry_backoff_long_chain_shape_is_honoured",
+        until="SCENARIOS = {")
 
 
 def test_shape_scenario_configures_a_rising_backoff() -> None:
@@ -498,10 +575,15 @@ def test_shape_scenario_compares_a_ratio_not_an_absolute_gap() -> None:
 
     绝对差值会被一层不可知开销吞掉，只能取很松的阈值，于是「递减一半」也能绿。
     比值对共模偏移不敏感，而恒定（1.0）与递减（0.5）仍被 1.5 的门槛分开。
+
+    R53 把判据收进共享的 ``_rising_shape_violations``（两段/三段同一份实现），
+    所以这里改钉**该函数的存在与调用**，比值本身的行为由
+    ``test_rising_shape_violations_*`` 直接测那个纯函数——断言放在能被穷举的
+    地方，比在源码字符串里找表达式稳。
     """
     body = _shape_scenario_body()
-    assert "second < first * 1.5" in body, (
-        "形状判据没有用「第二段 ≥ 第一段的 1.5 倍」这种比值形式"
+    assert "_rising_shape_violations" in body, (
+        "形状场景没有走共享的比值判据"
     )
 
 
@@ -517,3 +599,109 @@ def test_shape_scenario_restores_the_baseline_config() -> None:
     assert "max_retries=2, delays=[0, 0]" in body, (
         "形状场景结束后没有恢复 e2e 基准重试配置"
     )
+
+
+# ------------------------------------------------- 三段退避形状（R53）
+def test_long_chain_scenario_uses_three_rising_delays() -> None:
+    """三段场景的配置必须是可判别的递增序列。
+
+    ``[0.4, 0.8, 1.6]`` 的相邻比值恒为 2.0，与恒定（1.0）分开；若写成
+    ``[0.4, 0.8, 0.8]``，第三段就与「第二段对了但第三段没跟上」这个真实缺陷
+    同形——判据再也分不清是配置还是实现。
+    """
+    body = _long_chain_scenario_body()
+    assert "[0.4, 0.8, 1.6]" in body or "[0.4,0.8,1.6]" in body, (
+        "三段场景没有配置三段递增的 delays"
+    )
+    assert "max_retries=3" in body, "三段场景需要三次重试才产生三个退避段"
+
+
+def test_long_chain_scenario_uses_the_three_failure_marker() -> None:
+    """必须用 ``fail_thrice``：失败两次只产生两个退避段，第三段不存在。"""
+    body = _long_chain_scenario_body()
+    assert "[stub:fail_thrice]" in body, (
+        "三段场景没有让三次请求都失败：只有两个退避段时判不了第三段"
+    )
+
+
+def test_long_chain_scenario_shares_the_shape_judge() -> None:
+    """两段与三段必须共用同一个判据函数。
+
+    各写一份「第二段 ≥ 第一段 1.5 倍」的拷贝，短期没差别，长期必然漂移：
+    有人调了门槛只改一处，两套阈值就同时生效，而测试都还是绿的。
+    """
+    body = _long_chain_scenario_body()
+    assert "_rising_shape_violations" in body, (
+        "三段场景没有复用共享的形状判据，阈值会与两段场景漂移"
+    )
+    assert "sdk_max_retries=0" in body, "三段场景没有关掉 SDK 重试层"
+    assert "max_retries=2, delays=[0, 0]" in body, (
+        "三段场景结束后没有恢复 e2e 基准重试配置"
+    )
+
+
+
+# ----------------------------------------- 形状判据本身（R53，纯函数）
+# 上面那些源码契约只钉「场景用了哪个函数」。判据真的能分辨对错，由这里直接
+# 测 ``_rising_shape_violations``——它没有 I/O、没有时钟，可以穷举。
+def test_rising_shape_accepts_a_correctly_rising_chain() -> None:
+    assert e2e._rising_shape_violations([0.41, 0.82, 1.63], [0.4, 0.8, 1.6]) == []
+
+
+def test_rising_shape_rejects_a_constant_backoff() -> None:
+    """恒定退避（运维上是轮询而非退避）必须被拒。
+
+    这是 R52/R53 判据存在的首要理由：恒定配置下「某个值被等过」仍然成立，
+    单点判据完全看不出问题。
+    """
+    problems = e2e._rising_shape_violations([0.4, 0.42, 0.41], [0.4, 0.8, 1.6])
+    assert len(problems) == 2, problems
+    assert all("未递增" in p for p in problems)
+
+
+def test_rising_shape_rejects_a_decreasing_chain() -> None:
+    """递减（配置写反了）必须被拒，且每对都要报。"""
+    problems = e2e._rising_shape_violations([1.6, 0.8, 0.4], [0.4, 0.8, 1.6])
+    assert len(problems) == 2, problems
+
+
+def test_rising_shape_catches_a_stale_last_segment() -> None:
+    """**R53 的全部价值**：前两段对、第三段没跟上时，只有 2→3 那一对报错。
+
+    这类回归只在三段以上的链上显形——两段判据下第三段根本不存在，它永远绿。
+    断言「恰好 1 条问题、且指向 2→3」，而不是「有问题」：若判据把前两段也
+    误判成问题，说明它比的是绝对差值而非比值，噪声一进来就会假红。
+    """
+    problems = e2e._rising_shape_violations([0.41, 0.82, 0.85], [0.4, 0.8, 1.6])
+    assert len(problems) == 1, problems
+    assert "2→3" in problems[0], problems[0]
+
+
+def test_rising_shape_requires_one_segment_per_configured_delay() -> None:
+    """段数不足时明确报「判不了」，而不是默默通过。
+
+    这是「永远绿的防护」的入口：少一段却返回空列表，判据会在数据不足时
+    判合格。
+    """
+    problems = e2e._rising_shape_violations([0.41, 0.82], [0.4, 0.8, 1.6])
+    assert len(problems) == 1
+    assert "只量到 2 个退避段" in problems[0]
+
+
+def test_rising_shape_tolerates_common_mode_offset_at_configured_scale() -> None:
+    """在**本场景的配置量级**上，共模偏移不该让判据假红。
+
+    配置 0.4→0.8，每段都多 0.15s：实测 0.55→0.95，比值 1.73 仍 > 1.5。
+    这是用比值的理由——绝对差值判据在这里只看「多等了 0.40s」就放行，而
+    实际形状已被压缩。
+
+    同时钉下它的**边界**（下一个断言）：偏移不变、配置缩小到 0.1→0.2 时，
+    实测 0.25→0.35 的比值只有 1.40，判据会红。比值对共模偏移的不敏感性是
+    有限的——偏移相对配置越大，判别力越弱。本场景把量级放在数百毫秒，正是
+    为了让偏移始终是小量；改成 0.1s 级配置时这条判据会变脆，那时该调大配置
+    而不是放松门槛。
+    """
+    assert e2e._rising_shape_violations([0.55, 0.95], [0.4, 0.8]) == []
+    # 边界：同样的偏移在更小的配置量级上会吃掉判别力。这不是回归，是判据的
+    # 已知适用范围；钉下来免得将来有人把 delays 改成 0.1 级后困惑于假红。
+    assert e2e._rising_shape_violations([0.25, 0.35], [0.1, 0.2]) != []

@@ -516,6 +516,80 @@ def test_sample_size_accepts_enough_zero_failure_attempts(tmp_path: Path) -> Non
     assert code == live_gate.EXIT_OK, message
 
 
+# ------------------------------------------------- 全部失败（R53）
+def test_sample_size_does_not_let_all_failures_pass_for_free(tmp_path: Path) -> None:
+    """全部失败（p=1.0）是零失败的**镜像退化点**，之前漏了（R53）。
+
+    ``p(1-p)`` 在 p=0 与 p=1 时都等于 0，正态近似在两端都会给出「半宽 0 →
+    永远合格」。零失败那条在 R51 就补了单侧上界，全部失败这一端直到 R53 才
+    被发现——而它恰好是最需要被看见的运维状况：一个「每次尝试都失败」的
+    快照被判「样本量足够」，闸门于是拿 100% 当基线，阈值封顶成 100%，
+    永远不触发。
+    """
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=2, failed=2)
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_THIN_SAMPLE, message
+    assert "77" in message or "78" in message, (
+        f"全部失败分支没有给出单侧距离，实际说明：{message!r}"
+    )
+
+
+def test_sample_size_accepts_enough_all_failed_attempts(tmp_path: Path) -> None:
+    """30 次尝试全失败：单侧距离 9.50 ≤ 10，应当通过。
+
+    与上一条互为正反面：只验「薄的要拒」会让「一律拒绝全失败样本」也绿灯，
+    而那会把一个确实够厚的全失败画像挡在门外——它的结论（100% 失败）是
+    可信的。
+    """
+    snap = tmp_path / "snap"
+    _write_snapshot_with_totals(snap, attempts=30, failed=30)
+
+    code, message = live_gate.check_sample_size(snap, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_both_degenerate_ends_use_the_same_closed_form() -> None:
+    """两端用的是同一个单侧界，不该一边一个公式。
+
+    ``1 - 0.05**(1/n)`` 同时是「全成功时 p 的上界」与「全失败时 p 下界到 1
+    的距离」。如果将来有人把其中一端换成别的估计（比如 Wilson），两端就会
+    对同一个 n 给出不同的「所需余量」，而两处都还绿着。
+    """
+    for attempts in (2, 5, 10, 30, 100):
+        zero_failed = live_gate.sample_size_margin_needed(attempts, 0)
+        all_failed = live_gate.sample_size_margin_needed(attempts, attempts)
+        assert zero_failed is not None and all_failed is not None
+        assert abs(zero_failed - all_failed) < 1e-9, (
+            f"n={attempts}：零失败 {zero_failed} 与全部失败 {all_failed} 不对称"
+        )
+
+
+def test_degenerate_ends_are_not_treated_as_zero_width() -> None:
+    """两端都**不得**回落到正态近似的 0 宽度。
+
+    这是这条判据存在的全部理由：0 宽度会让任何 margin 都通过。
+    """
+    for failed in (0, 10):
+        needed = live_gate.sample_size_margin_needed(10, failed)
+        assert needed is not None and needed > 0, (failed, needed)
+
+
+def test_middle_of_the_range_still_uses_the_normal_approximation() -> None:
+    """非退化区间仍然用双侧半宽——别为了修两端把中间也换成保守界。
+
+    换成 Clopper-Pearson 会得到更宽的区间，于是本来够厚的快照会被判太薄，
+    快照得导更多 run 才能过。那不是本轮想改的东西。
+    """
+    attempts, failed = 255, 10
+    needed = live_gate.sample_size_margin_needed(attempts, failed)
+    p = failed / attempts
+    expected = live_gate.Z_95 * (p * (1 - p) / attempts) ** 0.5 * 100
+    assert needed is not None
+    assert abs(needed - expected) < 1e-9, (needed, expected)
+
+
 def test_sample_size_detects_metadata_drift(tmp_path: Path) -> None:
     """改了内容没重导元数据 → 退出码 4，不是拿旧数字判新内容。"""
     snap = tmp_path / "snap"

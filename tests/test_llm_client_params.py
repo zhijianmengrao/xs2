@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -547,3 +548,59 @@ def test_core_retry_sleeps_for_the_configured_delays(monkeypatch):
 
     assert calls == 3
     assert slept == [0.7, 1.9], f"Core 没有按 delays 等待，实际 {slept}"
+
+
+# ------------------------- sdk_max_retries 的生产取值决策（R53）
+def test_production_config_does_not_pin_the_sdk_retry_layer(tmp_path):
+    """生产配置**刻意不设** ``sdk_max_retries``（R53 复核结论）。
+
+    这一项是为**可观察性**而加的（R51：关掉 SDK 层才能量到 Core 的 delays，
+    e2e 场景用 ``sdk_max_retries=0``）。把它写进生产配置是另一件事——那会改变
+    实际的重试行为，而不只是让判据看得见。
+
+    不写的理由：两层叠加的最坏情况是 ``(sdk+1) * (core+1)`` = 12 次请求、
+    约 50s 的 Core 退避 + SDK 的指数退避。写 0 会把最坏请求数降到 4，听起来
+    更好，但代价是：SDK 层处理的是**连接级**瞬时故障（TCP 重置、读超时），
+    它与 Core 处理的是**协议级**错误（HTTP 5xx / 429）。关掉上层会让连接级
+    故障直接冒到 Core，由 ``delays=[5,15,30]`` 用掉一次宝贵的重试配额——而
+    Core 的配额是给「供应商暂时不可用」这种需要长间隔的场景留的。
+
+    所以生产取值的结论是：**保持不设**，让两层各管各的故障类型。要改这个
+    决策，需要的是一次单独的行为评估（含真实供应商的故障画像），不是顺手
+    在配置里加一行。
+    """
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    for name in ("models_config.json", "models_config.example.json"):
+        path = repo_root / "config" / name
+        if not path.is_file():
+            continue
+        config = json.loads(path.read_text(encoding="utf-8"))
+        retry = config.get("retry")
+        if isinstance(retry, dict):
+            assert "sdk_max_retries" not in retry, (
+                f"{name} 显式钉住了 sdk_max_retries：改生产重试行为需要单独一轮评估")
+
+
+def test_disabling_the_sdk_layer_is_for_observability_not_production_policy():
+    """``sdk_max_retries=0`` 的正确用法是**场景内**，不是全局配置。
+
+    这条测试把两件事分开：e2e 脚本必须显式关掉它（否则量不到 Core 的退避），
+    而生产配置必须不设它。两者用同一个开关但目的相反——把它写进生产配置，
+    等于为了让测试看得见而改变了产品行为。
+    """
+    import re
+
+    repo_root = Path(__file__).resolve().parents[1]
+    e2e_source = (repo_root / "scripts" / "e2e_workflow_stub.py").read_text(
+        encoding="utf-8")
+    assert "sdk_max_retries=0" in e2e_source, (
+        "e2e 脚本没有显式关掉 SDK 层：量到的间隔可能来自 SDK 而非 Core delays"
+    )
+    # 生产代码里除 get_retry_config / create_llm 的读取逻辑外，不该出现硬编码的 0。
+    for name in ("model_manager.py", "llm_client.py"):
+        source = (repo_root / "src" / "core" / name).read_text(encoding="utf-8")
+        assert not re.search(r'"sdk_max_retries"\s*:\s*0', source), (
+            f"{name} 里硬编码了 sdk_max_retries=0：那会改变生产重试行为"
+        )

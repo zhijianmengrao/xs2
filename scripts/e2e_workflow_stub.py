@@ -635,6 +635,48 @@ def _backoff_segments(stub, *, floor: float = 0.2) -> list[float]:
     return [gap for gap in _request_gaps(stub) if gap >= floor]
 
 
+def _rising_shape_violations(segments: list[float], configured: list[float],
+                             *, min_ratio: float = 1.5) -> list[str]:
+    """逐对检查退避段是否按配置递增。返回问题列表（空 = 合格）。
+
+    判据是**相邻段的比值**，不是绝对差值，也不是「与配置值逐个比绝对误差」：
+
+    - 绝对差值（``second - first >= 0.3``）会被共模偏移吞掉。JIT 预热、日志、
+      调度会让**每一段**同时多出一个不可知量；段数越多，累积偏移越大，松阈值
+      的必要性越强，于是「退避被改成恒定额」也能绿。
+    - 逐段比配置值（``|first - 0.4| < 0.1``）等价于假定偏移是 0，而它恰恰不是。
+
+    比值对共模偏移不敏感（``(a+c)/(b+c)`` 在 c>0 时被压向 1，但对
+    ``b/a=2`` 仍显著偏离恒定的 1.0），而恒定（1.0）与递减（0.5）仍被
+    ``min_ratio`` 分开。
+
+    为什么 ``min_ratio`` 取 1.5 而不是 2.0：实测偏移会把比值往下压
+    （R52 在 CI 上量到 1.99 而非 2.0，本机 1.98），卡 2.0 会变成依赖机器
+    稳定性的脆判据。1.5 与恒定的 1.0 之间仍有一倍半的距离。
+
+    两段与三段共用这一个函数，是为了让「形状怎么判」只有一份实现——各写各的
+    迟早漂移成两套阈值，而它们判的是同一件事。
+    """
+    if len(segments) < len(configured):
+        return [
+            f"只量到 {len(segments)} 个退避段，配置需要 {len(configured)} 段，"
+            f"判不了形状——每段退避都要求一次失败"
+        ]
+    problems: list[str] = []
+    for index in range(len(configured) - 1):
+        first, second = segments[index], segments[index + 1]
+        if first <= 0:
+            problems.append(f"第 {index + 1} 段退避时长为 {first:.3f}s，无法算比值")
+            continue
+        ratio = second / first
+        if ratio < min_ratio:
+            problems.append(
+                f"第 {index + 1}→{index + 2} 段未递增：配置 {configured}，"
+                f"实测 {first:.2f}s → {second:.2f}s（比值 {ratio:.2f}，应≥{min_ratio}）"
+            )
+    return problems
+
+
 def _install_retry_config(runtime: Runtime, *, max_retries: int,
                           delays: list[float],
                           sdk_max_retries: int | None) -> None:
@@ -748,17 +790,7 @@ async def scenario_retry_backoff_shape_is_honoured(runtime: Runtime, stub) -> Sc
             f"任务未 completed（status={status}），形状场景前提不成立：两次重试应当救回")
     else:
         segments = _backoff_segments(stub, floor=0.2)
-        if len(segments) < 2:
-            problems.append(
-                f"只量到 {len(segments)} 个退避段（间隔 {_request_gaps(stub)}），"
-                "判不了形状——需要两次失败各产生一段等待")
-        else:
-            first, second = segments[0], segments[1]
-            # 配置是 0.4 → 0.8（2 倍）。恒定退避给 1.0，递减给 0.5。
-            if second < first * 1.5:
-                problems.append(
-                    f"退避形状不符：配置递增 {configured}，实测段 {first:.2f}s → "
-                    f"{second:.2f}s（比值 {second / first:.2f}，应≥1.5）")
+        problems.extend(_rising_shape_violations(segments, configured))
 
     _install_retry_config(runtime, max_retries=2, delays=[0, 0],
                           sdk_max_retries=None)
@@ -772,6 +804,54 @@ async def scenario_retry_backoff_shape_is_honoured(runtime: Runtime, stub) -> Sc
     )
 
 
+async def scenario_retry_backoff_long_chain_shape_is_honoured(
+        runtime: Runtime, stub) -> ScenarioResult:
+    """三段退避的形状必须与配置一致（R53）。
+
+    两段判据（``retry_backoff_shape_is_honoured``）能抓到「把递增写成恒定」，
+    但抓不到**只在长链后段显形**的回归：例如实现里 ``delays`` 只读前两项、
+    第三项回落到默认值，或者循环边界少一次导致最后一段用错了下标。这类 bug
+    在 ``max_retries=2`` 下完全不可见——那时根本不存在第三段。
+
+    做法：``[stub:5xx][stub:fail_thrice]`` 让前三次请求都失败，产生三个退避段；
+    配置 ``delays=[0.4, 0.8, 1.6]``，逐对断言 1→2、2→3 两对都递增。
+
+    代价是约 0.4+0.8+1.6=2.8s 真实等待（R52 §11-1 已算过仍在 CI 预算内）。
+    比值门槛与两段场景共用 ``_rising_shape_violations``，避免两处阈值漂移。
+    """
+    definition = {
+        "name": "retry backoff long chain shape",
+        "nodes": [_agent_node("shaped3", "task [stub:5xx][stub:fail_thrice]")],
+        "edges": [],
+    }
+    problems: list[str] = []
+    configured = [0.4, 0.8, 1.6]
+    _install_retry_config(runtime, max_retries=3, delays=configured,
+                          sdk_max_retries=0)
+    stub.requests.clear()
+    stub.reset_claims()
+    status, nodes = await runtime.run_workflow("wf-e2e-backoff-long-shape", definition)
+    node = nodes.get("shaped3")
+    if status != "completed" or (node is not None and node.status != "completed"):
+        problems.append(
+            f"任务未 completed（status={status}），三段形状场景前提不成立："
+            "三次重试应当救回")
+    else:
+        segments = _backoff_segments(stub, floor=0.2)
+        problems.extend(_rising_shape_violations(segments, configured))
+
+    _install_retry_config(runtime, max_retries=2, delays=[0, 0],
+                          sdk_max_retries=None)
+
+    return ScenarioResult(
+        "retry_backoff_long_chain_shape_is_honoured",
+        not problems,
+        "; ".join(problems) or (
+            f"三段退避形状符合配置 {configured}：实测 "
+            f"{_backoff_segments(stub, floor=0.2)[:3]}"),
+    )
+
+
 SCENARIOS = {
     "happy_path": scenario_happy_path,
     "failure_propagates": scenario_failure_propagates,
@@ -781,6 +861,8 @@ SCENARIOS = {
     "stream_stall_fails_fast": scenario_stream_stall_fails_fast,
     "retry_backoff_is_honoured": scenario_retry_backoff_is_honoured,
     "retry_backoff_shape_is_honoured": scenario_retry_backoff_shape_is_honoured,
+    "retry_backoff_long_chain_shape_is_honoured": (
+        scenario_retry_backoff_long_chain_shape_is_honoured),
 }
 SCENARIO_ORDER = [
     "happy_path",
@@ -791,6 +873,7 @@ SCENARIO_ORDER = [
     "stream_stall_fails_fast",
     "retry_backoff_is_honoured",
     "retry_backoff_shape_is_honoured",
+    "retry_backoff_long_chain_shape_is_honoured",
 ]
 
 

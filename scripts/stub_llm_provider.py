@@ -96,10 +96,16 @@ ERROR_MARKERS: dict[str, int] = {
 }
 # 注入只在前 N 次请求上生效；之后正常回复。没有这些标记就是「每次请求都失败」。
 # ``fail_twice``（R52）为退避形状验证而加：只有一次失败时序列里只有一个退避段，
-# 量不到 delays 的增减形状。
+# 量不到 delays 的增减形状。``fail_thrice``（R53）同理再加一段，用来判「第二段
+# 对了但第三段没跟上」——那类回归只在三段以上的重试链上显形。
 FAIL_ONCE_MARKER = "[stub:fail_once]"
 FAIL_TWICE_MARKER = "[stub:fail_twice]"
-_FAIL_BUDGETS: dict[str, int] = {FAIL_ONCE_MARKER: 1, FAIL_TWICE_MARKER: 2}
+FAIL_THRICE_MARKER = "[stub:fail_thrice]"
+_FAIL_BUDGETS: dict[str, int] = {
+    FAIL_ONCE_MARKER: 1,
+    FAIL_TWICE_MARKER: 2,
+    FAIL_THRICE_MARKER: 3,
+}
 STALL_SECONDS_DEFAULT = 3.0
 
 # 各状态码对应的 OpenAI 风格错误体。code 必须落在 src/core/provider_errors.py
@@ -151,9 +157,13 @@ def injection(payload: dict) -> dict | None:
 
     task_text = _last_user_text(messages)
     markers = set(_MARKER_RE.findall(task_text))
-    # 失败配额：0 表示恒失败（没带任何 fail_* 标记）。
-    fail_budget = next(
-        (budget for marker, budget in _FAIL_BUDGETS.items() if marker in markers), 0)
+    # 失败配额：0 表示恒失败（没带任何 fail_* 标记）。同时写了多个时取**最大**
+    # 配额，而不是按键的插入顺序取第一个——`[stub:fail_once][stub:fail_thrice]`
+    # 这种组合若取到 1，场景会静默少失败两次，形状判据变成「段数不够」而不是
+    # 「配额写错」，那是把配置笔误伪装成判据失效。
+    fail_budget = max(
+        (budget for marker, budget in _FAIL_BUDGETS.items() if marker in markers),
+        default=0)
     for marker, status in ERROR_MARKERS.items():
         if marker not in markers:
             continue
