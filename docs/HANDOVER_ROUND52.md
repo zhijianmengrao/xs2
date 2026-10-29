@@ -213,22 +213,22 @@ R51 §10-2 挂账：快照停在 `--limit 2`，187 次尝试 / 7 失败 / 3.74% 
 | 项 | 结果 |
 |---|---|
 | 定向：`test_ci_e2e_stub.py` | **30 passed**（23 → 30） |
-| 定向：`test_live_snapshot_gate.py` | **38 passed**（34 → 38） |
+| 定向：`test_live_snapshot_gate.py` | **39 passed**（34 → 39） |
 | 定向：`test_run_profile.py` | **52 passed**（45 → 52） |
-| 收齐后 `--collect-only` | **2083 tests collected** |
-| Low-IL 全量 | **1987 passed / 96 skipped / 0 failed**（115.02s） |
-| High-IL 全量（权威） | **2072 passed / 11 skipped / 0 failed**（131.42s） |
+| 收齐后 `--collect-only` | **2084 tests collected** |
+| Low-IL 全量 | **1988 passed / 96 skipped / 0 failed**（120.60s） |
+| High-IL 全量（权威） | **2073 passed / 11 skipped / 0 failed**（137.47s） |
 | 前端 `npm test` | **479 passed / 0 fail**（478 + 1） |
 | 前端 `npm run build` | **通过**（5.51s） |
 | 本机 e2e | **8/8 场景通过** |
 
 **对账**：
 
-- Low-IL：R51 1969 **+18** = **1987** ✓
-- High-IL：R51 2054 **+18** = **2072** ✓
-- 总用例 R51 口径 2065 → **2083**（+18）
-- 新增 18 条构成：`test_run_profile.py` 7 + `test_ci_e2e_stub.py` 7 +
-  `test_live_snapshot_gate.py` 4。零删除。
+- Low-IL：R51 1969 **+19** = **1988** ✓
+- High-IL：R51 2054 **+19** = **2073** ✓
+- 总用例 R51 口径 2065 → **2084**（+19）
+- 新增 19 条构成：`test_run_profile.py` 7 + `test_ci_e2e_stub.py` 7 +
+  `test_live_snapshot_gate.py` 5。零删除。
 
 ### 6.1 High-IL 一次假红（已排除，值得记）
 
@@ -245,16 +245,20 @@ ModuleNotFoundError: No module named 'aiofiles'
 这与本项目反复记录的 CWD 回落问题是同一个根因家族。**High-IL 命令必须用绝对
 `PYTHONPATH`**，这条已写进 §11 的正确命令里。
 
-## 7. 变异验证（2 个，全部咬合）
+## 7. 变异验证（3 个，全部咬合）
 
 | 变异 | 预期 | 实测 |
 |---|---|---|
 | `all_failed` 恒 False | 红 | ✓ 3 红 |
 | 把 `stopped`/`running` 当失败证据 | 红 | ✓ 1 红 |
+| 删掉 Windows 步骤末尾 `exit 0` | 红 | ✓ 1 红 |
 
 没有做「退避形状」那一侧的变异（比如把 1.5 倍门槛改成 1.0），因为它需要跑完整
 e2e 才有意义，而契约测试钉的是「判据用了比值形式」这个结构性事实——实施变异
 成本高于收益。这一点如实记下，不假装覆盖了。
+
+另有第三个变异（§10.1 之后补做）：删掉 Windows 步骤末尾的 `exit 0` → **1 红**
+（`test_windows_sample_size_step_ends_with_exit_zero`）。
 
 ## 8. 本轮改动一览（15 改 1 增 + 快照文件）
 
@@ -269,7 +273,7 @@ e2e 才有意义，而契约测试钉的是「判据用了比值形式」这个�
 | `web/src/components/workflow/runProfileView.ts` | +~20 行：`shouldFlagAllFailed`、`allFailedLabel` |
 | `web/src/components/workflow/TaskHistoryPanel.tsx` | +11 行：`data-all-failed` 徽章 |
 | `tests/test_ci_e2e_stub.py` | +7 条（含 `fail_once` → `fail_budget` 断言迁移、形状契约 6 条） |
-| `tests/test_live_snapshot_gate.py` | +4 条（Windows 接线） |
+| `tests/test_live_snapshot_gate.py` | +5 条（Windows 接线 4 + 末尾 `exit 0` 契约 1） |
 | `tests/test_run_profile.py` | +7 条（全失败信号 + 正交性） |
 | `web/src/components/workflow/TaskHistoryPanel.test.ts` | +1 条 |
 | `tests/fixtures/live_snapshot/**` | 重导（18 → 28 个 run，meta 更新） |
@@ -297,10 +301,79 @@ e2e 才有意义，而契约测试钉的是「判据用了比值形式」这个�
 8. **未验 macOS/Windows 桌面构建**：本轮改了 `src/` 与 `web/`，按 paths 规则
    `desktop-windows.yml` 会被触发（见 §10.3）。
 
-## 10. 推送与 CI 核对
+## 10. 推送与 CI 核对（本篇补记，2026-10-29）
 
-**待补记**：本节在推送后填充（CI run / 各 job 结论 / 新步骤在 GHA 上的实跑输出 /
-`desktop-windows.yml` 是否被 paths 过滤命中）。
+推送 `fead4ea` 后触发两个 workflow（本轮改了 `src/`、`web/`、`scripts/`，
+`desktop-windows.yml` 的 paths 过滤命中）。
+
+### 10.1 第一次 CI 红：Windows 侧步骤的 pwsh 包装器坑（本轮最有价值的实证）
+
+`CI` run **40801653541** 的 `windows-backend` job 在**我新加的那一步**上红。
+日志里两个分支都判对了，也打印了 OK：
+
+```
+[live-gate] 快照样本量足够支撑失败率判定：失败率 3.92% 的 95% 半宽 2.38 个百分点≤ 余量 10.0（n=255, 失败 10）
+OK  样本量判据双向生效（Windows/Python 3.14）：默认余量通过，余量 2 触发 7
+##[error]Process completed with exit code 1.
+```
+
+**根因**：GHA 的 `pwsh` 包装器在脚本末尾追加 `exit $LASTEXITCODE`，而脚本最后
+一条原生命令正是那次**故意**以 7 退出的反向验证。于是走到末尾的成功路径也被
+透传成非零。
+
+这正是本轮 §3.1 那条论断的活实例——**判据看着与平台无关，但平台的 shell 语义
+把它弄红了**。而且它比恒绿更难排查：日志从头到尾都在说「判据是对的」。
+
+修法（`3572cc2`）：末尾显式 `exit 0`，真正的失败仍由 `exit $code` / `exit 1`
+提前退出。新增契约测试钉住末行（删掉它就红，已做变异验证）。
+
+顺带修正一处本轮的认知：我原先以为只要把 `$ErrorActionPreference` 降成
+`Continue` 就够了（那解决的是 NativeCommandError），但**末尾 exit 是另一件事**。
+两个坑叠在同一个步骤里，只在本机 PowerShell 5.1 上验逻辑时都看不出来——
+本机 `powershell` 不会替脚本追加 `exit $LASTEXITCODE`。
+
+### 10.2 CI run 40802321401 —— 五 job 全绿
+
+| job | 结论 |
+|---|---|
+| `backend` | **success** |
+| `windows-backend` | **success** |
+| `frontend` | **success** |
+| `container-build` | **success** |
+| `container-config` | **success** |
+
+**新增的 Windows 侧第 7 步在 GHA 上真跑并通过**（Python 3.14.9 / pwsh 7）：
+
+```
+[live-gate] 快照样本量足够支撑失败率判定：失败率 3.92% 的 95% 半宽 2.38 个百分点≤ 余量 10.0（n=255, 失败 10）
+OK  样本量判据双向生效（Windows/Python 3.14）：默认余量通过，余量 2 触发 7
+```
+
+ubuntu 侧（`backend` 第 9 步）输出同一个数字，**两个 runner 结论一致**。这同时
+验证了重导后的快照（255/10/3.92%/半宽 2.38）与 §5.1 那个「半宽要留余量」的判断。
+
+**e2e 在 GHA 上真跑 8/8 场景**，含本轮新增的形状场景：
+
+```
+[e2e] PASS retry_backoff_is_honoured: 退避生效：delays=0 → 0.01s，delays=1.2 → 1.20s（多 1.20s）
+[e2e] PASS retry_backoff_shape_is_honoured: 退避形状符合配置 [0.4, 0.8]：实测 [0.403, 0.803]
+[e2e] 8/8 场景通过
+```
+
+形状场景在 Linux runner 上量到 **`[0.403, 0.803]`**（本机 `[0.41, 0.816]`），
+比值 1.99 vs 1.99——配置是 2.0。比本机还准一点，说明比值判据在两种平台都稳。
+
+### 10.3 Desktop Windows run 40801653581 —— 双 NSIS success
+
+| job | 结论 |
+|---|---|
+| `Build core NSIS installer` | success |
+| `Build full NSIS installer` | success |
+| `Publish GitHub Release` | skipped（不打 tag，预期） |
+
+本轮改了 `src/workflow/`、`src/web/`、`web/`，paths 过滤命中，NSIS 构建真实执行。
+（这个 run 跑的是 `fead4ea`，即修 CI 之前那个 commit——桌面构建与 CI 的
+pwsh 问题无关，所以它当时就是绿的。）
 
 ## 11. 下一轮候选
 
