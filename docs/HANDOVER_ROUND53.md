@@ -349,9 +349,16 @@ PYTHONPATH="$sp;$sp\\win32;$sp\\win32\\lib;$sp\\pythonwin;$sp\\pywin32_system32"
 （3.92% / 2.38 / n=255），**p=1.0 的修复没有影响常态快照的判定**——这是要注意
 的一点：那条修复改的是退化分支，中段仍走正态近似，两平台结论不变。
 
-### 10.2 Desktop macOS run 40876413164 —— 双 candidate success
+### 10.2 文档提交的 CI（`d599ba7`）
 
-见 §6。
+文档提交也触发了一次 CI（`ci.yml` 无 paths 过滤），run **40886844200** 五 job
+全绿。纯文档改动照跑全量——这是 `ci.yml` 与 `desktop-*.yml` 的一个结构性差别：
+前者把「任何改动都验一遍」当作纪律，后者按 paths 过滤省分钟数。
+
+### 10.3 Desktop macOS run 40876413164 —— 双 candidate success
+
+见 §6。注意它跑的是 `6b81ffb`（功能提交），不是最后的文档提交——macOS 那侧
+只认 `desktop/**` 的 PR，与文档无关。
 
 ## 11. 未做与未验证的事（如实记录）
 
