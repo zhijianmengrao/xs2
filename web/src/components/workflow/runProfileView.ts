@@ -4,7 +4,7 @@
  * 错误分类是后端 run_profile.py 的关键词启发式（R40 六桶），此处只做
  * 展示映射（文案/徽章色），不构成失败原因判定。
  */
-import type { RunProfileAttemptDetail } from "../../types";
+import type { RunProfileAttemptDetail, TaskTrendBlock } from "../../types";
 
 export const ERROR_CLASS_LABELS: Record<string, string> = {
   http_5xx: "HTTP 5xx",
@@ -220,4 +220,22 @@ export function trendClass(trend: string | undefined): string {
  *  insufficient 同理不显示——它是「判不了」，不是结论。 */
 export function shouldFlagTrend(trend: string | undefined): boolean {
   return trend === "regressing";
+}
+
+/** 「最近 N 次全失败」的徽章文案（R52）。 */
+export function allFailedLabel(block: TaskTrendBlock | null | undefined): string {
+  const consecutive = block?.consecutive_failed ?? 0;
+  return `连续 ${consecutive} 次全失败`;
+}
+
+/** 列表徽章要不要显示「全失败」信号（R52）。
+ *
+ *  它与 `shouldFlagTrend` 互不替代：``trend`` 比的是失败率**差值**，所以一个
+ *  每次都 100% 失败的工作流相邻差值为 0、判成 ``stable``——最难处理的那种运维
+ *  状况恰好被趋势判据漏掉。这里直接看「最近 N 次是不是都 failed」。
+ *
+ *  只认后端算好的 ``all_failed``：门槛 N 的取值属后端判据，前端不重算，
+ *  否则两处阈值迟早漂移。 */
+export function shouldFlagAllFailed(block: TaskTrendBlock | null | undefined): boolean {
+  return block?.all_failed === true;
 }

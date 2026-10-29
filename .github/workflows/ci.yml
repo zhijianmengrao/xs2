@@ -162,6 +162,38 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-dev.lock
       - run: python -m pytest -q
+      # 快照样本量（R52）：与 backend job 的同名步骤判同一个东西，但跑在
+      # Windows runner + Python 3.14 上。R51 只在 ubuntu 的 backend job 接了这一
+      # 步，§10-1 把它记成缺口——判据万一隐含了平台假设（路径、浮点格式化、
+      # stderr 编码），只在一个 runner 上验证是看不出来的。
+      #
+      # 同样做双向验证：只跑「默认余量该通过」会得到一个恒绿步骤。收紧到 2 个
+      # 百分点必须触发退出码 7，否则判据已经失去判定力而 CI 仍然绿。
+      #
+      # 这段用 PowerShell 写（windows-latest 的默认 shell），逻辑与 ubuntu 那段
+      # 一一对应；语义差异只有「退出码取 $LASTEXITCODE」与「错误标注语法」。
+      - name: Snapshot sample-size gate
+        shell: pwsh
+        run: |
+          # 反向验证那一步**故意**让脚本以 7 退出。pwsh 的非零退出码原生命令在
+          # $ErrorActionPreference='Stop' 下会被包成 NativeCommandError，让这一步
+          # 在「判据正常工作」时反而红。所以这里用 Continue：退出码由
+          # $LASTEXITCODE 显式读，错误由下面的 ::error:: 显式发。
+          $ErrorActionPreference = 'Continue'
+          $snapshot = "tests/fixtures/live_snapshot"
+          python scripts/check_live_snapshot_gate.py --check-sample-size --data-dir $snapshot
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Host "::error::快照样本量不足（退出码 $code，7=样本太薄 3=无样本 4=元数据漂移）"
+            exit $code
+          }
+          $null = python scripts/check_live_snapshot_gate.py --check-sample-size --data-dir $snapshot --margin 2 2>&1
+          $strict = $LASTEXITCODE
+          if ($strict -ne 7) {
+            Write-Host "::error::收紧余量到 2 后仍判合格（退出码 $strict，期望 7）：判据失去判定力"
+            exit 1
+          }
+          Write-Host "OK  样本量判据双向生效（Windows/Python 3.14）：默认余量通过，余量 2 触发 7"
       # 存储名只读巡检（R23）：Windows 权威基线跑完后对仓库做一次设备名遗留
       # 体检，防新数据回归。CI 克隆不含运行期 data/，此步主要锚定配置面与
       # 未来可能入库的数据面；本地权威巡检仍以 PROJECT_INFO 维护入口为准。

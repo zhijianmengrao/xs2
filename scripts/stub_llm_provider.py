@@ -61,6 +61,10 @@ R45/R46/R47 连续三轮把「CI e2e」列为最有价值的缺口。它一直�
 **只在前一次请求上失败**，之后正常回复——这是「重试确实救回来了」的唯一可
 观察证据（一直失败只能证明它最终失败）。
 
+``[stub:fail_twice]`` 同样组合，但失败**前两次**请求。它存在的唯一理由是让
+「两次重试之间的两个间隔」都可观察：只失败一次时序列里只有一个退避段，量不到
+``delays`` 的**形状**（递增/递减/恒定三种配置会产生同样的单段时长）。
+
 **这不是伪造失败语义**（R49 §7-5 拒绝的那件事）：注入的是真实 provider 会
 发出的 HTTP 状态码与错误体，经过的是真实的 ``openai`` SDK → ``provider_errors``
 分类 → ``_should_retry_provider_error`` 判定链路。桩不发明新的失败类型，只
@@ -90,8 +94,12 @@ ERROR_MARKERS: dict[str, int] = {
     "[stub:401]": 401,
     "[stub:stall]": 0,
 }
-# 只让第一次注入生效；之后正常回复。没有它就是「每次请求都失败」。
+# 注入只在前 N 次请求上生效；之后正常回复。没有这些标记就是「每次请求都失败」。
+# ``fail_twice``（R52）为退避形状验证而加：只有一次失败时序列里只有一个退避段，
+# 量不到 delays 的增减形状。
 FAIL_ONCE_MARKER = "[stub:fail_once]"
+FAIL_TWICE_MARKER = "[stub:fail_twice]"
+_FAIL_BUDGETS: dict[str, int] = {FAIL_ONCE_MARKER: 1, FAIL_TWICE_MARKER: 2}
 STALL_SECONDS_DEFAULT = 3.0
 
 # 各状态码对应的 OpenAI 风格错误体。code 必须落在 src/core/provider_errors.py
@@ -143,7 +151,9 @@ def injection(payload: dict) -> dict | None:
 
     task_text = _last_user_text(messages)
     markers = set(_MARKER_RE.findall(task_text))
-    fail_once = FAIL_ONCE_MARKER in markers
+    # 失败配额：0 表示恒失败（没带任何 fail_* 标记）。
+    fail_budget = next(
+        (budget for marker, budget in _FAIL_BUDGETS.items() if marker in markers), 0)
     for marker, status in ERROR_MARKERS.items():
         if marker not in markers:
             continue
@@ -152,7 +162,7 @@ def injection(payload: dict) -> dict | None:
                 "kind": "stall",
                 "seconds": STALL_SECONDS_DEFAULT,
                 "marker": marker,
-                "fail_once": fail_once,
+                "fail_budget": fail_budget,
             }
         code, message = _ERROR_BODIES[status]
         return {
@@ -161,7 +171,7 @@ def injection(payload: dict) -> dict | None:
             "code": code,
             "message": message,
             "marker": marker,
-            "fail_once": fail_once,
+            "fail_budget": fail_budget,
         }
     return None
 
@@ -197,9 +207,10 @@ def decide(payload: dict) -> dict:
     """把一次请求映射成响应意图。纯函数，测试可直接调它验行为契约。
 
     命中故障注入标记时返回注入意图（``kind`` 为 ``error`` 或 ``stall``）；
-    否则返回正常完成意图。``[stub:fail_once]`` 的「只失败一次」需要跨请求
-    状态，由 ``_Handler`` 用 ``StubProvider`` 上的计数器实现——纯函数这一层
-    始终按「该注入」返回，测试因此能直接验注入语义本身。
+    否则返回正常完成意图。``[stub:fail_once]`` / ``[stub:fail_twice]`` 的
+    「只失败 N 次」需要跨请求状态，由 ``_Handler`` 用 ``StubProvider`` 上的
+    配额计数实现——纯函数这一层始终按「该注入」返回，测试因此能直接验注入
+    语义本身。
     """
     injected = injection(payload)
     if injected is not None:
@@ -253,12 +264,14 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         decision = decide(payload)
-        # ``[stub:fail_once]``：只有第一条命中注入的请求真的失败，之后照常回复。
-        # 键按「注入标记 + 消息摘要」记，避免同进程里两个场景互相吃掉配额。
-        if decision["kind"] in {"error", "stall"} and decision.get("fail_once"):
+        # ``[stub:fail_once]`` / ``[stub:fail_twice]``：只有前 N 条命中注入的请求
+        # 真的失败，之后照常回复。键按「注入标记 + 消息摘要」记，避免同进程里
+        # 两个场景互相吃掉配额。
+        budget = int(decision.get("fail_budget") or 0)
+        if decision["kind"] in {"error", "stall"} and budget > 0:
             key = (decision.get("marker", ""),
                    json.dumps(payload.get("messages") or [], sort_keys=True)[:400])
-            if not server.claim(key):
+            if not server.claim(key, budget):
                 decision = _completion_decision(payload)
 
         if decision["kind"] == "error":
@@ -391,7 +404,8 @@ class StubProvider:
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._claims: set[tuple[str, str]] = set()
+        # 键 → 已用配额次数（``fail_once`` 用 1，``fail_twice`` 用 2）
+        self._claims: dict[tuple[str, str], int] = {}
         self.requests: list[dict] = []
 
     # -- 生命周期 --
@@ -441,20 +455,22 @@ class StubProvider:
                 with open(self._record_path, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    def claim(self, key: tuple[str, str]) -> bool:
-        """``[stub:fail_once]`` 的一次性配额：首次 True，之后 False。
+    def claim(self, key: tuple[str, str], budget: int = 1) -> bool:
+        """``[stub:fail_once]`` / ``[stub:fail_twice]`` 的配额：前 ``budget`` 次 True。
 
         跨请求状态只能放在服务端（纯函数决定「该注入什么」，服务端决定
-        「这次还算不算首次」），否则同一进程里两个场景会互相吃掉配额。
+        「这次的配额用完了没有」），否则同一进程里两个场景会互相吃掉配额。
+        用计数而不是集合：``fail_twice`` 需要「第二次仍然失败」。
         """
         with self._lock:
-            if key in self._claims:
+            used = self._claims.get(key, 0)
+            if used >= budget:
                 return False
-            self._claims.add(key)
+            self._claims[key] = used + 1
             return True
 
     def reset_claims(self) -> None:
-        """清掉 fail_once 配额（每场景开始时调用，与 ``requests.clear()`` 配套）。"""
+        """清掉注入配额（每场景开始时调用，与 ``requests.clear()`` 配套）。"""
         with self._lock:
             self._claims.clear()
 

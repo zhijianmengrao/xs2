@@ -1,0 +1,579 @@
+{
+  "run_id": "run-22cf1120",
+  "workflow_id": "xs2-novel-flywheel-character",
+  "status": "completed",
+  "started_at": "2026-10-26T17:58:33.845330+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_sync_down",
+      "status": "completed",
+      "started_at": "2026-10-26T17:58:33.846058+08:00",
+      "completed_at": "2026-10-26T17:58:33.927784+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T17:58:33.846058+08:00",
+          "completed_at": "2026-10-26T17:58:33.927784+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_skeleton",
+      "status": "completed",
+      "started_at": "2026-10-26T17:58:33.929161+08:00",
+      "completed_at": "2026-10-26T18:00:41.584051+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T17:58:33.929161+08:00",
+          "completed_at": "2026-10-26T18:00:41.584051+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_skeleton",
+      "status": "completed",
+      "started_at": "2026-10-26T18:00:41.585394+08:00",
+      "completed_at": "2026-10-26T18:00:41.666672+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:00:41.585394+08:00",
+          "completed_at": "2026-10-26T18:00:41.666672+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_extract",
+      "status": "completed",
+      "started_at": "2026-10-26T18:00:41.668251+08:00",
+      "completed_at": "2026-10-26T18:00:41.744075+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:00:41.668251+08:00",
+          "completed_at": "2026-10-26T18:00:41.744075+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_belief",
+      "status": "completed",
+      "started_at": "2026-10-26T18:00:41.745727+08:00",
+      "completed_at": "2026-10-26T18:01:32.706027+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:00:41.745727+08:00",
+          "completed_at": "2026-10-26T18:01:32.706027+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_belief",
+      "status": "completed",
+      "started_at": "2026-10-26T18:01:32.707548+08:00",
+      "completed_at": "2026-10-26T18:01:32.785361+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:01:32.707548+08:00",
+          "completed_at": "2026-10-26T18:01:32.785361+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:01:32.794216+08:00",
+          "completed_at": "2026-10-26T18:04:31.258355+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.260117+08:00",
+          "completed_at": "2026-10-26T18:04:31.337089+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 2,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:01:32.794216+08:00",
+          "completed_at": "2026-10-26T18:04:31.258355+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.347297+08:00",
+          "completed_at": "2026-10-26T18:06:48.615589+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 2,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.260117+08:00",
+          "completed_at": "2026-10-26T18:04:31.337089+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:06:48.617482+08:00",
+          "completed_at": "2026-10-26T18:06:48.694347+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 3,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:01:32.794216+08:00",
+          "completed_at": "2026-10-26T18:04:31.258355+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.347297+08:00",
+          "completed_at": "2026-10-26T18:06:48.615589+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 3,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:06:48.704464+08:00",
+          "completed_at": "2026-10-26T18:08:03.346375+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_deep",
+      "status": "running",
+      "started_at": null,
+      "completed_at": null,
+      "error": "",
+      "attempt_count": 3,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.260117+08:00",
+          "completed_at": "2026-10-26T18:04:31.337089+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:06:48.617482+08:00",
+          "completed_at": "2026-10-26T18:06:48.694347+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 3,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:08:03.348185+08:00",
+          "completed_at": "2026-10-26T18:08:03.423768+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_deep",
+      "status": "completed",
+      "started_at": "2026-10-26T18:08:03.434061+08:00",
+      "completed_at": "2026-10-26T18:09:06.855683+08:00",
+      "error": "",
+      "attempt_count": 4,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:01:32.794216+08:00",
+          "completed_at": "2026-10-26T18:04:31.258355+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.347297+08:00",
+          "completed_at": "2026-10-26T18:06:48.615589+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 3,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:06:48.704464+08:00",
+          "completed_at": "2026-10-26T18:08:03.346375+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 4,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:08:03.434061+08:00",
+          "completed_at": "2026-10-26T18:09:06.855683+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_deep",
+      "status": "completed",
+      "started_at": "2026-10-26T18:09:06.857661+08:00",
+      "completed_at": "2026-10-26T18:09:06.936227+08:00",
+      "error": "",
+      "attempt_count": 4,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:04:31.260117+08:00",
+          "completed_at": "2026-10-26T18:04:31.337089+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 2,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:06:48.617482+08:00",
+          "completed_at": "2026-10-26T18:06:48.694347+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 3,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:08:03.348185+08:00",
+          "completed_at": "2026-10-26T18:08:03.423768+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        },
+        {
+          "attempt_number": 4,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:09:06.857661+08:00",
+          "completed_at": "2026-10-26T18:09:06.936227+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_merge",
+      "status": "completed",
+      "started_at": "2026-10-26T18:09:06.942956+08:00",
+      "completed_at": "2026-10-26T18:09:07.019643+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:09:06.942956+08:00",
+          "completed_at": "2026-10-26T18:09:07.019643+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_voice",
+      "status": "completed",
+      "started_at": "2026-10-26T18:09:07.021811+08:00",
+      "completed_at": "2026-10-26T18:11:46.758861+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:09:07.021811+08:00",
+          "completed_at": "2026-10-26T18:11:46.758861+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_persist_voice",
+      "status": "completed",
+      "started_at": "2026-10-26T18:11:46.761173+08:00",
+      "completed_at": "2026-10-26T18:11:46.843507+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:11:46.761173+08:00",
+          "completed_at": "2026-10-26T18:11:46.843507+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_voice_to_md",
+      "status": "completed",
+      "started_at": "2026-10-26T18:11:46.846493+08:00",
+      "completed_at": "2026-10-26T18:11:46.924754+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-26T18:11:46.846493+08:00",
+          "completed_at": "2026-10-26T18:11:46.924754+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}

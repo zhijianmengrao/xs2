@@ -625,6 +625,32 @@ def _request_gaps(stub) -> list[float]:
     return [round(b - a, 3) for a, b in zip(stamps, stamps[1:])]
 
 
+def _backoff_segments(stub, *, floor: float = 0.2) -> list[float]:
+    """把请求间隔里的「退避段」挑出来（按到达顺序）。
+
+    同一场景里除了退避还有别的停顿：工具结果回来后那次收尾请求的间隔通常只有
+    几毫秒。``floor`` 以下的间隔不是退避，混进来会让形状判断失真。这个阈值
+    只区分量级（毫秒 vs 数百毫秒），不承担判据——判据在调用方。
+    """
+    return [gap for gap in _request_gaps(stub) if gap >= floor]
+
+
+def _install_retry_config(runtime: Runtime, *, max_retries: int,
+                          delays: list[float],
+                          sdk_max_retries: int | None) -> None:
+    """改写模型配置并重建 ModelManager 单例（配置在 import 期被读取）。"""
+    _write_models_config(
+        runtime.data_root / "models_config.json", runtime.base_url,
+        max_retries=max_retries, delays=list(delays),
+        sdk_max_retries=sdk_max_retries,
+    )
+    from src.core.model_manager import ModelManager
+    import src.core.model_manager as model_manager_module
+
+    model_manager_module._model_manager = ModelManager(
+        str(runtime.data_root / "models_config.json"))
+
+
 async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> ScenarioResult:
     """退避时长必须真的被等过（R51）。
 
@@ -640,6 +666,9 @@ async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> Scenario
 
     本场景因此判的是「**Core 层的** delays」，不是「重试总效果」——
     ``transient_error_is_retried`` 判的是后者，两者互补。
+
+    它只判**单点**幅度（配了 1.2s 就等到 1.2s）。退避的**形状**由
+    ``retry_backoff_shape_is_honoured`` 判。
     """
     definition = {
         "name": "retry backoff",
@@ -648,21 +677,10 @@ async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> Scenario
     }
     problems: list[str] = []
 
-    def configure(delay: float) -> None:
-        _write_models_config(
-            runtime.data_root / "models_config.json", stub.base_url,
-            max_retries=1, delays=[delay], sdk_max_retries=0,
-        )
-        # ModelManager 在 import 期读配置，改文件后必须重建单例才能生效。
-        from src.core.model_manager import ModelManager
-        import src.core.model_manager as model_manager_module
-
-        model_manager_module._model_manager = ModelManager(
-            str(runtime.data_root / "models_config.json"))
-
     samples: dict[str, float] = {}
     for label, delay in (("zero", 0.0), ("configured", 1.2)):
-        configure(delay)
+        _install_retry_config(runtime, max_retries=1, delays=[delay],
+                              sdk_max_retries=0)
         stub.requests.clear()
         stub.reset_claims()
         status, nodes = await runtime.run_workflow(f"wf-e2e-backoff-{label}", definition)
@@ -686,21 +704,72 @@ async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> Scenario
                 f"configured={samples['configured']:.2f}s）：Core 的 delays 没被等过")
 
     # 本场景改写了全局重试配置；恢复成 e2e 的基准配置，避免影响后续场景。
-    _write_models_config(
-        runtime.data_root / "models_config.json", stub.base_url,
-        max_retries=2, delays=[0, 0],
-    )
-    from src.core.model_manager import ModelManager
-    import src.core.model_manager as model_manager_module
-
-    model_manager_module._model_manager = ModelManager(
-        str(runtime.data_root / "models_config.json"))
+    _install_retry_config(runtime, max_retries=2, delays=[0, 0],
+                          sdk_max_retries=None)
 
     detail = "; ".join(problems) or (
         f"退避生效：delays=0 → {samples['zero']:.2f}s，"
         f"delays=1.2 → {samples['configured']:.2f}s"
         f"（多 {samples['configured'] - samples['zero']:.2f}s）")
     return ScenarioResult("retry_backoff_is_honoured", not problems, detail)
+
+
+async def scenario_retry_backoff_shape_is_honoured(runtime: Runtime, stub) -> ScenarioResult:
+    """退避的**形状**必须与配置一致：两次退避递增（R52）。
+
+    R51 的场景判「配的这一个是 1.2s，就真等了 1.2s」，是单点幅度。它对形状是
+    失明的：``delays=[0.4, 0.8]``、``[0.4, 0.4]``、``[0.8, 0.4]`` 三种配置在
+    单点判据下都只是「某个值被等过」，而它们的运维含义完全不同（指数退避 vs
+    恒定轮询 vs 倒着来）。
+
+    做法：``[stub:5xx][stub:fail_twice]`` 让前两次请求都失败，于是序列里出现
+    两个退避段；配置 ``delays=[0.4, 0.8]``，断言第二段明显长于第一段。
+    用**比值**而不是绝对差值：JIT、日志、调度会让两段同时偏移一个固定量，
+    比值对这种共模偏移不敏感，而「恒定/递减」这两种失效形状仍然会被抓到
+    （比值分别约 1.0 与 0.5）。
+
+    为什么不加大等待：0.4+0.8=1.2s 与 R51 那个场景同量级，CI 预算不变。
+    """
+    definition = {
+        "name": "retry backoff shape",
+        "nodes": [_agent_node("shaped", "task [stub:5xx][stub:fail_twice]")],
+        "edges": [],
+    }
+    problems: list[str] = []
+    configured = [0.4, 0.8]
+    _install_retry_config(runtime, max_retries=2, delays=configured,
+                          sdk_max_retries=0)
+    stub.requests.clear()
+    stub.reset_claims()
+    status, nodes = await runtime.run_workflow("wf-e2e-backoff-shape", definition)
+    node = nodes.get("shaped")
+    if status != "completed" or (node is not None and node.status != "completed"):
+        problems.append(
+            f"任务未 completed（status={status}），形状场景前提不成立：两次重试应当救回")
+    else:
+        segments = _backoff_segments(stub, floor=0.2)
+        if len(segments) < 2:
+            problems.append(
+                f"只量到 {len(segments)} 个退避段（间隔 {_request_gaps(stub)}），"
+                "判不了形状——需要两次失败各产生一段等待")
+        else:
+            first, second = segments[0], segments[1]
+            # 配置是 0.4 → 0.8（2 倍）。恒定退避给 1.0，递减给 0.5。
+            if second < first * 1.5:
+                problems.append(
+                    f"退避形状不符：配置递增 {configured}，实测段 {first:.2f}s → "
+                    f"{second:.2f}s（比值 {second / first:.2f}，应≥1.5）")
+
+    _install_retry_config(runtime, max_retries=2, delays=[0, 0],
+                          sdk_max_retries=None)
+
+    return ScenarioResult(
+        "retry_backoff_shape_is_honoured",
+        not problems,
+        "; ".join(problems) or (
+            f"退避形状符合配置 {configured}：实测 "
+            f"{_backoff_segments(stub, floor=0.2)[:2]}"),
+    )
 
 
 SCENARIOS = {
@@ -711,6 +780,7 @@ SCENARIOS = {
     "permanent_error_is_not_retried": scenario_permanent_error_is_not_retried,
     "stream_stall_fails_fast": scenario_stream_stall_fails_fast,
     "retry_backoff_is_honoured": scenario_retry_backoff_is_honoured,
+    "retry_backoff_shape_is_honoured": scenario_retry_backoff_shape_is_honoured,
 }
 SCENARIO_ORDER = [
     "happy_path",
@@ -720,6 +790,7 @@ SCENARIO_ORDER = [
     "permanent_error_is_not_retried",
     "stream_stall_fails_fast",
     "retry_backoff_is_honoured",
+    "retry_backoff_shape_is_honoured",
 ]
 
 

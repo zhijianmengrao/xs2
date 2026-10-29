@@ -871,6 +871,12 @@ export interface TaskTrendBlock {
   points_considered: number;
   comparisons: number;
   delta_failure_rate?: number | null;
+  /** 最近连续失败的 run 数（R52）。与 trend 正交：trend 比的是失败率**差值**，
+   *  一个每次都 100% 失败的工作流相邻差值恒为 0，trend 会判 stable。 */
+  consecutive_failed?: number;
+  /** 是否达到「最近 N 次全失败」门槛（R52，N = all_failed_required） */
+  all_failed?: boolean;
+  all_failed_required?: number;
 }
 
 /** 工作流参数变量定义（与后端 WorkflowVariable 对齐，参照 bk-sops） */

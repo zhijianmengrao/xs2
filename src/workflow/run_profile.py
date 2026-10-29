@@ -368,6 +368,40 @@ TREND_INSUFFICIENT = "insufficient"
 # 是「连续三次都在退步」这种形状。
 TREND_STREAK_REQUIRED = 2
 
+# 「最近 N 次全失败」的判据（R52）。与 ``trend`` 是两个正交的信号，不能并进
+# 同一个字段（R51 §10-7 已经因为「两个指标混进一个 trend 会让退步语义变糊」
+# 拒绝过耗时趋势，这里是同一个理由的第二次实例）。
+#
+# 为什么 ``trend`` 判不到这件事：``trend`` 看的是失败率的**相邻差值**。一个
+# 每次都 100% 失败的工作流，相邻差值恒为 0，于是 ``regressing`` 永远不触发，
+# 判出来是 ``stable``——「一直在全挂」被读成「没有变化」。这正是 R45/R46/R47
+# 反复批评的那类盲区：判据只回答了「有没有在变坏」，没回答「现在是不是全坏」。
+FAILURE_STREAK_REQUIRED = 3
+
+
+def failure_streak(points: list[dict[str, Any]],
+                   required: int = FAILURE_STREAK_REQUIRED) -> dict[str, Any]:
+    """从时间序列尾部数「连续失败的 run 数」（纯函数）。
+
+    ``points`` 是 ``compare_run_baseline`` 产出的时间序列（旧→新）。从尾部往
+    回数 ``status == "failed"`` 的连续条数，遇到第一个非 failed 就停。
+
+    只认 ``failed``：``stopped``（人工停止）与 ``running``/``pending``（还没
+    结论）都不是失败证据。把它们算进连续失败会让「我手动停了一个任务」变成
+    运维告警。
+    """
+    consecutive = 0
+    for point in reversed(points or []):
+        if str(point.get("status") or "") != "failed":
+            break
+        consecutive += 1
+    return {
+        "consecutive_failed": consecutive,
+        "required": required,
+        # required <= 0 时永远不判成立：配置成 0 不该等于「一律告警」。
+        "all_failed": required > 0 and consecutive >= required,
+    }
+
 
 def compare_run_baseline(current: dict[str, Any],
                          previous_runs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -437,4 +471,8 @@ def compare_run_baseline(current: dict[str, Any],
         "trend": trend,
         "consecutive_required": TREND_STREAK_REQUIRED,
         "baseline_run_ids": [p["run_id"] for p in series[:-1]],
+        # 与 trend 正交的第二个信号（R52）：「最近 N 次全失败」。放在同一个
+        # 基线块里是因为它要的正是这条时间序列，另开一次目录扫描没有意义；
+        # 但它有独立的字段与判据，调用方可以只用其中一个。
+        "failure_streak": failure_streak(points),
     }

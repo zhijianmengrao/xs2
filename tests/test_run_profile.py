@@ -835,3 +835,121 @@ def test_global_task_list_supports_trend(tmp_path, monkeypatch):
     by_id = {t["task_id"]: t for t in body["tasks"]}
     assert by_id["task-1"]["trend"]["trend"] == "regressing"
     assert by_id["task-2"]["trend"]["trend"] == "insufficient"
+
+
+# ---------- 「最近 N 次全失败」信号（R52） ----------
+
+def _failed_profile(run_id: str, *, status: str = "failed",
+                    attempts: int = 10, failed: int = 10) -> dict:
+    profile = _baseline_profile(run_id, attempts, failed)
+    profile["status"] = status
+    return profile
+
+
+def test_failure_streak_counts_consecutive_failed_runs():
+    """从尾部数连续 failed；遇到第一个非 failed 就停（R52）。"""
+    from src.workflow.run_profile import failure_streak
+
+    points = [{"status": s} for s in
+              ["completed", "failed", "failed", "failed"]]
+    result = failure_streak(points, required=3)
+    assert result["consecutive_failed"] == 3
+    assert result["all_failed"] is True
+
+
+def test_failure_streak_stops_at_the_first_success():
+    """中间夹一次成功就断了：连续不等于累计。"""
+    from src.workflow.run_profile import failure_streak
+
+    points = [{"status": s} for s in ["failed", "failed", "completed", "failed"]]
+    result = failure_streak(points, required=3)
+    assert result["consecutive_failed"] == 1
+    assert result["all_failed"] is False
+
+
+def test_failure_streak_ignores_stopped_and_running():
+    """``stopped`` 是人工停止，不是失败证据；``running`` 还没有结论。
+
+    把它们算进连续失败会让「我手动停了一个任务」变成运维告警。
+    """
+    from src.workflow.run_profile import failure_streak
+
+    for status in ("stopped", "running", "pending", "completed", ""):
+        result = failure_streak(
+            [{"status": "failed"}, {"status": "failed"}, {"status": status}],
+            required=3)
+        assert result["consecutive_failed"] == 0, (
+            f"status={status!r} 被当成失败证据了"
+        )
+        assert result["all_failed"] is False
+
+
+def test_failure_streak_required_zero_never_fires():
+    """门槛 0 不等于「一律告警」：配置成 0 时永不成立。"""
+    from src.workflow.run_profile import failure_streak
+
+    result = failure_streak([{"status": "failed"}] * 5, required=0)
+    assert result["all_failed"] is False
+
+
+def test_all_failed_signal_is_invisible_to_trend_by_design():
+    """这条测试是 R52 的全部动机。
+
+    每次都 100% 失败时，相邻失败率差值恒为 0，``trend`` 判成 ``stable``——
+    「一直在全挂」被读成「没有变化」。``failure_streak`` 判的正是这一半。
+    两个字段同时断言，钉住「它们是正交的两个信号」。
+    """
+    history = [_failed_profile(f"run-{c}") for c in "abc"]
+    baseline = compare_run_baseline(_failed_profile("run-d"), history)
+
+    assert baseline["trend"] == "stable", (
+        "前提不成立：全失败序列的 trend 应当因差值为 0 而判 stable"
+    )
+    assert baseline["failure_streak"]["consecutive_failed"] == 4
+    assert baseline["failure_streak"]["all_failed"] is True
+
+
+def test_failure_streak_is_absent_when_history_is_healthy():
+    """互为正反面：全成功时不得触发（只验「会报」会让「一律报警」也绿灯）。"""
+    history = [_baseline_profile(f"run-{c}", 10, 0) for c in "abc"]
+    baseline = compare_run_baseline(_baseline_profile("run-d", 10, 0), history)
+    assert baseline["failure_streak"]["consecutive_failed"] == 0
+    assert baseline["failure_streak"]["all_failed"] is False
+
+
+def _seed_all_failed_tree(tmp_path: Path) -> None:
+    """同一 workflow 四条 run 全部 failed，最新一条被 task-1 指向。"""
+    wf_dir = tmp_path / "wf-x"
+    (wf_dir / "tasks").mkdir(parents=True)
+    (wf_dir / "runs").mkdir()
+    (wf_dir / "tasks" / "task-1.json").write_text(json.dumps({
+        "task_id": "task-1", "name": "newest", "run_id": "run-d",
+        "status": "failed", "created_at": "2026-10-04T00:00:00+08:00",
+    }), encoding="utf-8")
+    for index, name in enumerate("abcd", start=1):
+        nodes = [{"node_id": "build", "status": "failed", "attempt_history": [
+            {"attempt_number": 1, "trigger": "initial", "status": "failed"},
+        ]}]
+        (wf_dir / "runs" / f"run-{name}.json").write_text(json.dumps({
+            "run_id": f"run-{name}", "status": "failed",
+            "started_at": f"2026-10-0{index}T00:00:00+08:00",
+            "node_executions": nodes,
+        }), encoding="utf-8")
+
+
+def test_list_trend_block_carries_the_all_failed_signal(tmp_path, monkeypatch):
+    """列表端点的精简 trend 块要带 R52 的字段（前端不重算门槛）。"""
+    _seed_all_failed_tree(tmp_path)
+    monkeypatch.setattr(workflow_routes, "WORKFLOWS_DIR", tmp_path)
+    client = _client(tmp_path, monkeypatch, _ListManager([
+        {"task_id": "task-1", "workflow_id": "wf-x", "name": "newest",
+         "run_id": "run-d", "status": "failed"},
+    ]))
+    body = client.get(
+        "/api/workflows/wf-x/tasks?with_trend=true&baseline_limit=5").json()
+    block = body["tasks"][0]["trend"]
+    assert block["all_failed"] is True
+    assert block["consecutive_failed"] == 4
+    assert block["all_failed_required"] >= 1
+    # 同时钉住动机：趋势判据在这里判不出问题。
+    assert block["trend"] == "stable"

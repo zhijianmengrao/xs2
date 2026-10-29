@@ -163,11 +163,58 @@ def test_fail_once_marker_is_parsed_but_state_lives_in_the_server() -> None:
         tools=["complete_task"],
     ))
     assert decision["kind"] == "error"
-    assert decision["fail_once"] is True
-    # 不带 fail_once 时必须是恒失败（否则「重试救回来了」无法与「本来就没失败」区分）
+    assert decision["fail_budget"] == 1
+    # 不带 fail_* 时必须是恒失败（否则「重试救回来了」无法与「本来就没失败」区分）
     always = decide(_payload(
         [{"role": "user", "content": "x [stub:5xx]"}], tools=["complete_task"]))
-    assert always["fail_once"] is False
+    assert always["fail_budget"] == 0
+
+
+def test_fail_twice_marker_grants_a_two_request_budget() -> None:
+    """``[stub:fail_twice]`` 的配额是 2（R52）。
+
+    退避**形状**需要两个退避段才可观察；只失败一次时序列里只有一个间隔，
+    ``[0.4, 0.8]``、``[0.4, 0.4]``、``[0.8, 0.4]`` 三种配置无法区分。
+    """
+    decision = decide(_payload(
+        [{"role": "user", "content": "x [stub:5xx][stub:fail_twice]"}],
+        tools=["complete_task"],
+    ))
+    assert decision["kind"] == "error"
+    assert decision["fail_budget"] == 2
+
+
+def test_stub_provider_fails_twice_then_succeeds() -> None:
+    """真端口上验 fail_twice：前两次 503，第三次 200。
+
+    这是形状场景的前提。若配额实现只记「见过」而不记次数（R52 之前的集合
+    写法），第二次就会被当成已用过而直接成功，形状场景会退化成「只有一个
+    退避段」然后判不了形状——它自己会红，但红在形状判据上，不容易看出
+    根因在这里。
+    """
+    import urllib.error
+    import urllib.request
+
+    def post(base_url: str, text: str) -> int:
+        body = json.dumps({
+            "model": "stub-model",
+            "stream": True,
+            "messages": [{"role": "user", "content": text}],
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            base_url, data=body,
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                return resp.status
+        except urllib.error.HTTPError as err:
+            return err.code
+
+    with stub_module.StubProvider() as stub:
+        url = stub.base_url + "/chat/completions"
+        codes = [post(url, "x [stub:5xx][stub:fail_twice]") for _ in range(3)]
+
+    assert codes == [503, 503, 200], f"fail_twice 配额不对：{codes}"
 
 
 def test_stub_provider_fails_once_then_succeeds() -> None:
@@ -351,6 +398,7 @@ def test_e2e_scenarios_cover_success_failure_and_termination() -> None:
         "permanent_error_is_not_retried",
         "stream_stall_fails_fast",
         "retry_backoff_is_honoured",
+        "retry_backoff_shape_is_honoured",
     ]
 
 
@@ -413,4 +461,59 @@ def test_backoff_scenario_restores_the_baseline_config() -> None:
     body = source[start:end]
     assert "max_retries=2, delays=[0, 0]" in body, (
         "退避场景结束后没有恢复 e2e 基准重试配置"
+    )
+
+
+# ------------------------------------------------------- 退避形状（R52）
+def _shape_scenario_body() -> str:
+    source = (REPO_ROOT / "scripts" / "e2e_workflow_stub.py").read_text(encoding="utf-8")
+    start = source.index("async def scenario_retry_backoff_shape_is_honoured")
+    return source[start:source.index("SCENARIOS = {")]
+
+
+def test_shape_scenario_configures_a_rising_backoff() -> None:
+    """形状判据要有可判别的配置：两段退避必须显著不同。
+
+    如果配置成 ``[0.4, 0.4]``（恒定），「递增」与「恒定」两种实现都合格，
+    判据失去意义。``[0.4, 0.8]`` 的比值是 2.0，与恒定（1.0）、递减（0.5）
+    都能分开。
+    """
+    body = _shape_scenario_body()
+    assert "[0.4, 0.8]" in body or "[0.4,0.8]" in body, (
+        "形状场景没有配置两段递增的 delays"
+    )
+    assert "max_retries=2" in body, "形状场景需要两次重试才产生两个退避段"
+
+
+def test_shape_scenario_uses_the_two_failure_marker() -> None:
+    """必须用 ``fail_twice``：``fail_once`` 只产生一个退避段，量不到形状。"""
+    body = _shape_scenario_body()
+    assert "[stub:fail_twice]" in body, (
+        "形状场景没有让两次请求都失败：只有一个退避段时判不了形状"
+    )
+
+
+def test_shape_scenario_compares_a_ratio_not_an_absolute_gap() -> None:
+    """用比值而不是绝对差值：共模偏移（JIT/日志/调度）会同时抬高两段。
+
+    绝对差值会被一层不可知开销吞掉，只能取很松的阈值，于是「递减一半」也能绿。
+    比值对共模偏移不敏感，而恒定（1.0）与递减（0.5）仍被 1.5 的门槛分开。
+    """
+    body = _shape_scenario_body()
+    assert "second < first * 1.5" in body, (
+        "形状判据没有用「第二段 ≥ 第一段的 1.5 倍」这种比值形式"
+    )
+
+
+def test_shape_scenario_disables_the_sdk_retry_layer() -> None:
+    """与单点场景同一条理由：SDK 层开着就量到 SDK 的指数退避而非 Core delays。"""
+    body = _shape_scenario_body()
+    assert "sdk_max_retries=0" in body, "形状场景没有关掉 SDK 重试层"
+
+
+def test_shape_scenario_restores_the_baseline_config() -> None:
+    """形状场景同样改写全局重试配置，必须恢复。"""
+    body = _shape_scenario_body()
+    assert "max_retries=2, delays=[0, 0]" in body, (
+        "形状场景结束后没有恢复 e2e 基准重试配置"
     )

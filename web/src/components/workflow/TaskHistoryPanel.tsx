@@ -19,7 +19,7 @@ import {
   Settings, RotateCcw,
 } from "lucide-react";
 import { listTasks, listAllTasks } from "../../lib/api";
-import { shouldFlagTrend, trendClass, trendLabel } from "./runProfileView";
+import { shouldFlagTrend, shouldFlagAllFailed, allFailedLabel, trendClass, trendLabel } from "./runProfileView";
 import type { WorkflowTask } from "../../types";
 
 // ============ 常量 ============
@@ -281,6 +281,15 @@ export default function TaskHistoryPanel({ workflowId, onTaskClick, onRedoTask, 
                   className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10px] ${trendClass(t.trend.trend)}`}
                 >
                   {trendLabel(t.trend.trend)}
+                </span>
+              )}
+              {shouldFlagAllFailed(t.trend) && (
+                <span
+                  data-all-failed="true"
+                  title={`最近 ${t.trend?.all_failed_required ?? 0} 次 run 全部失败（与「连续退步」是两个独立信号：每次都 100% 失败时失败率差值为 0，趋势判据看不到它）`}
+                  className="inline-flex shrink-0 items-center rounded-full border border-destructive/30 bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive"
+                >
+                  {allFailedLabel(t.trend)}
                 </span>
               )}
             </div>

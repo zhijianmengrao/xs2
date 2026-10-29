@@ -1,0 +1,109 @@
+{
+  "run_id": "run-327f7b89",
+  "workflow_id": "xs2-novel-flywheel-reader-sim",
+  "status": "completed",
+  "started_at": "2026-10-25T11:47:49.916588+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "script_story_context",
+      "status": "completed",
+      "started_at": "2026-10-25T11:47:49.917376+08:00",
+      "completed_at": "2026-10-25T11:47:50.027598+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-25T11:47:49.917376+08:00",
+          "completed_at": "2026-10-25T11:47:50.027598+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_reader_source",
+      "status": "completed",
+      "started_at": "2026-10-25T11:47:50.028721+08:00",
+      "completed_at": "2026-10-25T11:47:50.126311+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-25T11:47:50.028721+08:00",
+          "completed_at": "2026-10-25T11:47:50.126311+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "agent_reader",
+      "status": "completed",
+      "started_at": "2026-10-25T11:47:50.127484+08:00",
+      "completed_at": "2026-10-25T11:47:54.826248+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-25T11:47:50.127484+08:00",
+          "completed_at": "2026-10-25T11:47:54.826248+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    },
+    {
+      "node_id": "script_reader_commit",
+      "status": "completed",
+      "started_at": "2026-10-25T11:47:54.827308+08:00",
+      "completed_at": "2026-10-25T11:47:54.933047+08:00",
+      "error": "",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "completed",
+          "error": "",
+          "started_at": "2026-10-25T11:47:54.827308+08:00",
+          "completed_at": "2026-10-25T11:47:54.933047+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}

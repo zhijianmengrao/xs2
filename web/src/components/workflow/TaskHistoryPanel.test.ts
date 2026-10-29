@@ -125,3 +125,35 @@ test("only regressing is badged; insufficient is not a verdict", async () => {
   assert.equal(badges[0].getAttribute("data-trend"), "regressing");
   assert.ok((badges[0].textContent || "").includes("连续退步"));
 });
+
+test("all-failed badge is independent of the trend badge", async () => {
+  // R52 的动机：一个每次都 100% 失败的工作流，失败率相邻差值恒为 0，
+  // trend 判成 stable ——「一直在全挂」在趋势里是隐形的。所以两个徽章必须
+  // 各自独立：这条用例里 trend=stable 但仍要有「连续 N 次全失败」。
+  const tasks = [task({
+    task_id: "task-3", name: "全挂的任务", status: "failed",
+    trend: {
+      run_id: "run-d", trend: "stable", consecutive_required: 2,
+      points_considered: 4, comparisons: 3, delta_failure_rate: 0,
+      consecutive_failed: 4, all_failed: true, all_failed_required: 3,
+    },
+  })];
+  const fetcher: TaskListFetcher = async (_workflowId, params) => (
+    params.with_trend
+      ? { tasks, total: 1 }
+      : { tasks: [{ ...tasks[0], trend: undefined }], total: 1 }
+  );
+  await render(React.createElement(TaskHistoryPanel, {
+    workflowId: "wf-x", onTaskClick: () => {}, fetchTasks: fetcher,
+  }));
+  const checkbox = document.querySelector<HTMLInputElement>(
+    'input[aria-label="标注连续退步"]');
+  await act(async () => { checkbox!.click(); });
+
+  assert.equal(document.querySelectorAll("[data-trend]").length, 0,
+    "stable 不该挂趋势徽章");
+  const badges = document.querySelectorAll("[data-all-failed]");
+  assert.equal(badges.length, 1, "全失败信号必须独立成徽章");
+  assert.ok((badges[0].textContent || "").includes("连续 4 次全失败"),
+    `徽章文案应含次数，实得 ${(badges[0].textContent || "")}`);
+});

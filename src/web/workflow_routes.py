@@ -896,6 +896,7 @@ def _collect_workflow_trends(workflow_id: str, entries: list[dict],
             if loaded is not None:
                 history.append(loaded)
         baseline = compare_run_baseline(current, history)
+        streak = baseline.get("failure_streak") or {}
         results[task_id] = {
             "run_id": run_id,
             "trend": baseline["trend"],
@@ -904,6 +905,12 @@ def _collect_workflow_trends(workflow_id: str, entries: list[dict],
             "comparisons": len([d for d in baseline["deltas"] if d["comparable"]]),
             "delta_failure_rate": (baseline["deltas"][-1]["delta_failure_rate"]
                                    if baseline["deltas"] else None),
+            # R52：与 trend 正交的第二个信号。trend 看「失败率在不在上升」，
+            # 一个每次都 100% 失败的工作流相邻差值恒为 0 → trend=stable。
+            # 这里补的正是那一半：最近 N 次是不是全挂。
+            "consecutive_failed": streak.get("consecutive_failed", 0),
+            "all_failed": streak.get("all_failed", False),
+            "all_failed_required": streak.get("required", 0),
         }
     return results
 

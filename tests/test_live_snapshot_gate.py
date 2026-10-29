@@ -60,6 +60,16 @@ def _live_gate_step() -> dict:
     return hits[0]
 
 
+def _windows_backend_steps() -> list[dict]:
+    jobs = _load_ci().get("jobs")
+    assert isinstance(jobs, dict)
+    windows = jobs.get("windows-backend")
+    assert windows is not None, "ci.yml 缺少 windows-backend job"
+    steps = windows.get("steps")
+    assert isinstance(steps, list)
+    return steps
+
+
 def _sample_size_step() -> dict:
     """样本量闸门那一步（R51）。"""
     hits = [
@@ -68,6 +78,19 @@ def _sample_size_step() -> dict:
     ]
     assert len(hits) == 1, (
         "ci.yml 的 backend job 必须且只能有一处跑 --check-sample-size"
+        f"（实际 {len(hits)} 处）"
+    )
+    return hits[0]
+
+
+def _windows_sample_size_step() -> dict:
+    """Windows runner 上的样本量闸门（R52）。"""
+    hits = [
+        s for s in _windows_backend_steps()
+        if "--check-sample-size" in str(s.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "ci.yml 的 windows-backend job 必须且只能有一处跑 --check-sample-size"
         f"（实际 {len(hits)} 处）"
     )
     return hits[0]
@@ -551,6 +574,55 @@ def test_stale_and_coverage_still_stay_out_of_ci() -> None:
     这条守着「别顺手把两条需要真实数据的判据也接上」——那会让它们永远无法判定。
     """
     for step in _backend_steps():
+        run = str(step.get("run", ""))
+        assert "--check-stale" not in run
+        assert "--check-coverage" not in run
+
+
+# --------------------------------------- Windows runner 也判（R52 / §10-1）
+def test_windows_runner_also_judges_the_sample_size() -> None:
+    """R51 §10-1 的缺口：第 9 步只在 ubuntu 的 backend job 上跑。
+
+    判据只用 ``math`` 与四则运算，看起来与平台无关——但那正是「只在单一环境
+    验证」最容易漏掉的情形：stderr 编码、路径分隔、浮点格式化任一隐含假设都
+    只在另一个 runner 上才显形。
+    """
+    step = _windows_sample_size_step()
+    run = str(step["run"])
+    assert "python scripts/check_live_snapshot_gate.py" in run
+    assert "tests/fixtures/live_snapshot" in run
+    assert step.get("shell") == "pwsh", (
+        "windows runner 的步骤应显式指定 shell：默认可能变，而这段脚本用的是"
+        "PowerShell 语法（$LASTEXITCODE）"
+    )
+
+
+def test_windows_sample_size_step_is_not_permanently_green() -> None:
+    """与 ubuntu 那一步同样的反向要求：只跑「该通过」的分支等于恒绿。"""
+    run = str(_windows_sample_size_step()["run"])
+    assert "--margin 2" in run, "Windows 步骤没有反向验证（收紧余量应触发 7）"
+    assert "-ne 7" in run or "-eq 7" in run, (
+        "Windows 步骤没有断言退出码 7"
+    )
+
+
+def test_windows_sample_size_step_reads_last_exit_code_not_stop_preference() -> None:
+    """pwsh 的默认 ``$ErrorActionPreference='Stop'`` 会把「故意以 7 退出」判成崩溃。
+
+    反向验证恰恰要求被测脚本以非零码退出。若不在脚本里把它降成 Continue，
+    这一步会在判据正常工作时红——那是比恒绿更难排查的失效（红灯指向错误的东西）。
+    """
+    run = str(_windows_sample_size_step()["run"])
+    assert "$LASTEXITCODE" in run, "Windows 步骤没有读 $LASTEXITCODE"
+    assert "ErrorActionPreference" in run and "Continue" in run, (
+        "Windows 步骤没有把 $ErrorActionPreference 降成 Continue："
+        "故意非零退出的反向验证会被 NativeCommandError 当成崩溃"
+    )
+
+
+def test_windows_step_does_not_reintroduce_stale_or_coverage() -> None:
+    """同一条纪律在 Windows job 上同样成立。"""
+    for step in _windows_backend_steps():
         run = str(step.get("run", ""))
         assert "--check-stale" not in run
         assert "--check-coverage" not in run
