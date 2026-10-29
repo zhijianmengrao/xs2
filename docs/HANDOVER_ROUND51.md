@@ -86,8 +86,8 @@ $ python scripts/check_live_snapshot_gate.py --check-sample-size --margin 2
     python ... --margin 2 ; 期望 exit 7，否则 ::error:: 判据失去判定力
 ```
 
-本地等价实跑：`default exit=0` / `margin2 exit=7`。**未在真实 GHA 上跑过**
-（本机无 Actions），yml 解析与路径展开以推送后 CI 日志为准。
+本地等价实跑：`default exit=0` / `margin2 exit=7`。推送后 GHA 上同样两个分支都
+成立，见 §11.1。
 
 ## 4. 退避策略验证（R51-4）— 本轮最有价值的发现
 
@@ -177,8 +177,11 @@ GET /api/tasks?with_trend=true                          （全局）
 ## 6. macOS core candidate（R51-5）
 
 R50 §9-1 挂账：`desktop-macos.yml` 的 `core candidate` job 被 GHA 并发策略
-cancelled，只有 full candidate 有 success 记录。**本轮结论见 §11**（需要推送后
-才能触发，与 CI 核对一并完成）。
+cancelled，只有 full candidate 有 success 记录。
+
+本轮推送后手动触发 `desktop-macos.yml`（run **40796761709**，`workflow_dispatch`，
+不打 tag、不产发布物）：**core candidate 与 full candidate 两个 job 都 success**，
+run 级 `conclusion` 也是 success。挂账闭合，详见 §11.2。
 
 ## 7. 测试执行汇总（全部实际运行）
 
@@ -267,9 +270,10 @@ IL 与 Python 子进程无关**——`Start-Process` 派生的是同一 token。
 
 ## 10. 未做与未验证的事（如实记录）
 
-1. **`Snapshot sample-size gate` 未在真实 GHA 上跑过**：本机无 Actions，只做了
-   Git Bash 等价实跑（默认 0 / margin 2 → 7）。yml 解析、`${{ }}` 展开、
-   `--data-dir` 相对路径在 runner 上的解析以推送后日志为准。
+1. **`Snapshot sample-size gate` 的 GHA 实跑只覆盖了 Ubuntu runner**：CI 的
+   `backend` job 在 ubuntu-24.04 上跑（Python 3.11.17），判据已验证跨版本一致；
+   `windows-backend` job 没有这一步（它只跑 pytest 与存储名审计）。若要让 Windows
+   runner 也判，需另行接线。
 2. **未重导快照**：三条判据（失败率 / 样本量 / 覆盖度）与保鲜都绿，无需重导。
    快照仍停在 `exported_at 2026-10-28T12:30:35Z`，滞后约 0.5 天。
 3. **未跑 `docker build`**：本机仍无 docker/wsl（与历轮一致）。本轮改了
@@ -286,17 +290,93 @@ IL 与 Python 子进程无关**——`Start-Process` 派生的是同一 token。
 8. **`baseline_limit` 在列表端点默认 5**：与抽屉的「最近 5 次」一致，上限仍是
    20。没有理论最优值，属经验取值。
 
-## 11. 推送与 CI 核对（本篇补记）
+## 11. 推送与 CI 核对（本篇补记，2026-10-29）
 
-（待推送后填写。）
+推送 `bb0df1d` 后触发三个 workflow（本轮改了 `src/core/`、`src/web/`、`web/`，
+`desktop-windows.yml` 的 paths 过滤这次**命中**，与 R50 只触发 CI 不同）。
+
+### 11.1 CI run 40796688120 —— 五 job 全绿
+
+| job | 结论 |
+|---|---|
+| `backend` | **success** |
+| `windows-backend` | **success** |
+| `frontend` | **success** |
+| `container-build` | **success** |
+| `container-config` | **success** |
+
+**新增的第 9 步 `Snapshot sample-size gate` 在 GHA 上真跑并通过**，日志：
+
+```
+[live-gate] 快照样本量足够支撑失败率判定：失败率 3.74% 的 95% 半宽 2.72 个百分点
+            ≤ 余量 10.0（n=187, 失败 7）
+OK  样本量判据双向生效：默认余量通过，余量 2 触发 7
+```
+
+两点值得记：
+
+1. **双向验证的第二半真的执行了**：如果只跑「默认该通过」，这行 `OK` 不会
+   出现（那条路径需要 `--margin 2` 触发 7 才走到）。这是一条能红的步骤的证据。
+2. **runner 是 Python **3.11.17**，不是本机的 3.14**。判据只用 `math` 与四则
+   运算，跨版本结论一致——这本身也是对「判据没有隐含环境依赖」的一次检验。
+
+**e2e 第 10 步在 GHA 上真跑了 7/7 场景**，含本轮新增的退避场景：
+
+```
+[e2e] PASS happy_path: 4 次模型请求，3 节点 completed，上游产出已传下游
+[e2e] PASS failure_propagates: 任务 failed，broken=failed
+[e2e] PASS turn_terminates: 任务 completed，2 次模型请求
+[e2e] PASS transient_error_is_retried: 任务 completed，3 次请求（含 1 次注入 503），重试救回
+[e2e] PASS permanent_error_is_not_retried: 任务 failed，1 次请求（401 未重试）
+[e2e] PASS stream_stall_fails_fast: 任务 failed，1 次请求（部分流后未重试）
+[e2e] PASS retry_backoff_is_honoured: 退避生效：delays=0 → 0.01s，delays=1.2 → 1.21s（多 1.20s）
+[e2e] 7/7 场景通过
+```
+
+退避场景在 Linux runner 上量到 **1.20s**（本机 Windows 是 1.21s）——差分判据
+（阈值 0.7s）跨平台成立，且这不是「恰好过」：配置值 1.2s 与两平台的实测差值
+都在 0.01s 内吻合。
+
+### 11.2 Desktop macOS run 40796761709 —— 两个 candidate 都 success
+
+**R50 §9-1 的挂账在这里闭合**：R50 那次 `core candidate` 被 GHA 并发策略
+cancelled，本轮**两个 job 都跑完并 success**：
+
+| job | 结论 |
+|---|---|
+| `Build Apple Silicon core candidate` | **success** |
+| `Build Apple Silicon full candidate` | **success** |
+
+core candidate 的三步关键验证（第 10/12/13 步）都 success：
+`Build and test frozen backend`（含 `smoke_backend.py` 的 `--port 0` 路径）、
+`Verify app, DMG and bundled backend`、`Verify backend from installed DMG copy`。
+
+R50 §9-1 记的那条「core flavor 没有 success 记录」**从此不再成立**。
+run 级 `conclusion` 这次也是 **success**（不是 R50 那样的 failure+cancelled）。
+
+（core candidate 第 8 步 `Verify latest official Plugin lock for Full candidate`
+是 skipped——那是 Full 专属检查，在 core flavor 上跳过属预期。）
+
+### 11.3 Desktop Windows run 40796688136 —— 双 NSIS success
+
+| job | 结论 |
+|---|---|
+| `Build core NSIS installer` | **success** |
+| `Build full NSIS installer` | **success** |
+| `Publish GitHub Release` | skipped（不打 tag，预期） |
+
+本轮改了 `src/core/`、`src/web/`、`web/`，所以 `desktop-windows.yml` 的 paths
+过滤命中，NSIS 构建真实执行。这也顺带确认：改后端源码会触发桌面构建，
+与 R50 的「只改 scripts/tests/docs 不触发」是同一套 paths 规则。
 
 ## 12. 下一轮候选
 
-1. **画像趋势的「批量接口」再进一步**：当前是列表端点 opt-in 附带。若要在
-   工作流列表（而非任务列表）上标「这个 workflow 在连续退步」，需要按 workflow
-   聚合（取最新 run 的 trend），语义与现在的「每条任务」不同。
+1. **趋势再往上一级**：当前是「每条任务」的趋势。若要在**工作流列表**上标
+   「这个 workflow 在连续退步」，需要按 workflow 聚合（取最新 run 的 trend），
+   语义与现状不同，是一次独立设计。
 2. **`--check-sample-size` 加 per-workflow 判据**：当前只判全局样本厚度。
-   单个 workflow 样本很薄而全局够厚时，全局判据看不出问题。
+   单个 workflow 很薄而全局够厚时，全局判据看不出问题；需要新的退出码或
+   `--strict` 形态，并想清楚「哪个 workflow 该有多少样本」的依据。
 3. **退避策略的形状验证**：需要一个能断言「两次重试之间递增」的场景，
    这会引入真实等待（`delays=[0.4, 0.8]` 约 1.2s），仍在 CI 预算内。
 4. **`sdk_max_retries` 的生产取值决策**：当前默认不改。若要统一关掉 SDK 层、
@@ -304,5 +384,5 @@ IL 与 Python 子进程无关**——`Start-Process` 派生的是同一 token。
 5. **趋势徽章的运维视角**：现在只有「连续退步」一个信号。若要做「本 workflow
    最近 N 次全失败」这类更强信号，需要另立判据而不是塞进 trend。
 
-其余：快照闸门的 CI 接线缺口已闭合（§3）；macOS `core candidate` 见 §11；
+其余：快照闸门的 CI 接线缺口已闭合（§3）；macOS `core candidate` 已闭合（§11.2）；
 大陆下载加速维持现状（R44 结论）；快照保鲜容忍 7 天维持（R49 确认）。
