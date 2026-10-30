@@ -901,8 +901,8 @@ def main() -> int:
                         help="精度余量（百分点，默认 10），只用于 --check-* 判据："
                              "样本量厚度与 per-workflow 判决都拿它当尺")
     parser.add_argument("--fail-if-above", type=float, default=None,
-                        help="默认判定模式的政策上限（百分点，0..100）：失败率 95%% "
-                             "区间下界高于它才退出 1；不给则只报告不判定")
+                        help="默认判定模式的政策上限（百分点，0 到 100 之间且不含 "
+                             "100）：失败率 95%% 区间下界高于它才退出 1；不给则只报告不判定")
     parser.add_argument("--check-stale", action="store_true",
                         help="改判快照新鲜度：真实数据比快照新多少天（不判失败率）")
     parser.add_argument("--check-coverage", action="store_true",
@@ -928,10 +928,11 @@ def main() -> int:
     margin = 10.0 if options.margin is None else options.margin
     if margin < 0:
         parser.error("--margin 不能为负")
-    if options.fail_if_above is not None and not 0.0 <= options.fail_if_above <= 100.0:
-        # 超出 0..100 的上限没有意义：>100 永远判不出超阈（又一个恒绿），
-        # <0 则任何数据都超。两种都让人以为加了闸门，实则它不说话。
-        parser.error("--fail-if-above 需在 0..100 之间（单位是百分比）")
+    if options.fail_if_above is not None and not 0.0 <= options.fail_if_above < 100.0:
+        # 100 与 >100 都永远判不出超阈：Clopper-Pearson 上界最多到 100%，而判据
+        # 要求**整个区间**都在上限之上。那是写着「容忍一切」的恒绿配置，不是闸门
+        # ——与 R57 修掉的自指阈值同一类失效，不能在参数层放它进来。
+        parser.error("--fail-if-above 需在 0 到 100 之间（不含 100，单位是百分比）")
     if options.max_lag_days < 0:
         parser.error("--max-lag-days 不能为负")
     # 四种判据互斥：一次调用判一件事，混判会让人看不出是哪种不合格。

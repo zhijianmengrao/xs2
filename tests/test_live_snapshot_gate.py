@@ -1361,10 +1361,15 @@ def test_margin_is_rejected_in_default_mode(monkeypatch) -> None:
 
 
 def test_fail_if_above_out_of_range_is_rejected(monkeypatch) -> None:
-    """``>100`` 的上限永远判不出超阈（又一个恒绿），``<0`` 则任何数据都超。"""
+    """``>=100`` 的上限永远判不出超阈（又一个恒绿），``<0`` 则任何数据都超。
+
+    100 也要拒绝：CP 上界最多到 100%，判据又要求整个区间都高于上限，于是
+    ``--fail-if-above 100`` 是一个写着「容忍一切」的恒绿配置——与自指阈值同一类
+    失效，只是更容易被发现。
+    """
     import sys
 
-    for value in ("101", "-0.5"):
+    for value in ("101", "100", "-0.5"):
         monkeypatch.setattr(sys, "argv", [
             "check_live_snapshot_gate.py", "--fail-if-above", value])
         with pytest.raises(SystemExit) as excinfo:
