@@ -18,7 +18,9 @@ R46 的 CI 闸门 step 判的是 ``tests/fixtures/run_samples`` ——**固定**
    改了快照内容却没重导元数据，这里直接失败——否则闸门会拿旧阈值判新内容，
    看起来仍在工作，实际判的是别的数字。
 3. **退出码沿用闸门语义**：0=通过，1=超阈，3=无样本。与
-   ``provider_failure_profile.py`` 同一套，CI 日志里两种失败可分。
+   ``provider_failure_profile.py`` 同一套，CI 日志里两种失败可分。R64 补了
+   8=**判据算术失败、未作判定**——它必须与 1 分开，否则一次崩溃会被读成「失败率
+   突破政策」（实测形状见 ``EXIT_NUMERIC_FAILURE``）。
 4. **三分法**（R56 的判据形状沿用到这里）：95% 区间整体在上限之上才判
    ``exceeds``，整体在限内才判 ``normal``，横跨上限则 ``undetermined``——判不了
    既不冒充合格也不冒充不合格。``undetermined`` 不判失败：样本精度是另一件事，
@@ -171,6 +173,15 @@ EXIT_META_DRIFT = 4
 EXIT_STALE = 5
 EXIT_COVERAGE_GAP = 6
 EXIT_THIN_SAMPLE = 7
+# 判据自己算不下去（R64）。必须与 1 分开：1 的含义是「判了，结论是不合格」，
+# 处置是查数据/供应商；8 的含义是「**没判**，算术失败」，处置是修判据。
+#
+# 为什么这不是假想的码：R64 实测 CP 精确界在 n≈1030、p≈0.5 时抛 OverflowError，
+# 而 ``main`` 里没有任何捕获——进程按 Python 默认以 **1** 退出，与政策超阈
+# 完全同码，日志里只差一行 traceback。CI 里两种处置会互相冒充：看着是「失败率
+# 突破政策」，实际是判据崩了。修了溢出之后这条路径不再出现，但「未捕获异常 =
+# 不合格」这个形状还在，所以边界上仍然要有一个只属于它的码。
+EXIT_NUMERIC_FAILURE = 8
 
 # 连续多少轮（含当前这一轮）都判 ``undetermined`` 才提示重导（R58，用户拍定 3）。
 # 它不是判据：提示不改变任何退出码。定成常量而不是开关，是因为「连续几轮才算
@@ -493,15 +504,59 @@ _CP_BISECTION_STEPS = 80
 
 
 def _binomial_cdf_le(attempts: int, k: int, p: float) -> float:
-    """``P(X <= k)``，X ~ Binomial(attempts, p)。"""
+    """``P(X <= k)``，X ~ Binomial(attempts, p)，**整个求和在对数空间做**（R64）。
+
+    为什么不能直接按 pmf 求和：``math.comb(attempts, i)`` 是 Python 大整数，
+    一旦与浮点相乘就要转成 double——``comb(1030, 515)`` 已经是 1e308 量级，
+    转 float 直接抛 ``OverflowError``。这个边界**不是一个样本量数字，而是一条
+    （样本量 × 失败率）的曲线**，实测：失败率 50%/75%/90% 从 **1030** 起溢出、
+    25% 从 1270、10% 从 2200、5% 从 3600、本项目当前的 3.92% 形状要 **4317**。
+    R61 记的「n=4000 时 4% 形状仍可算」是对的（那条形状的边界就是 4317），
+    R62 把它抄成了「4000+ 才需要处理」——于是漏掉了曲线的另一半：**最小值在
+    1030，而它出现在失败率很高的一端**，也就是最需要判据说得出话的时候。修在
+    现在而不是等到 4000 次尝试，理由就是这条曲线，不是那个单一数字。
+
+    也不能只把 ``comb`` 换成 ``lgamma``：``q ** (attempts - i)`` 在 n 上千时
+    会下溢到 0.0（0.5**2000 远小于最小正规 double），于是「不抛异常」变成
+    「静默返回 0」——一个恒等于 0 的 CDF 会让二分把上界钉在 0，判据比崩溃更
+    安静地错。所以乘法的每一步都取对数：``comb``、``p**i``、``q**(n-i)`` 各自
+    的对数相加，再逐项 ``exp`` 回来累加。
+
+    没有 max-shift：每一项都是概率，对数 ≤ 0，``exp`` 回来 ≤ 1，累加不可能
+    溢出；下溢只出现在真实概率远小于 1e-308 的位置，那里返回 0 就是正确舍入
+    （不是算术失败）。变异验证里把缩放加回去，153 条用例全绿、与精确有理数的
+    误差仍在 1e-15 量级——缩放保护的是一个这里不存在的失效模式。少一层机制，
+    就少一处将来会被误以为「必须保留」的代码。
+
+    单一路径，不按 n 分「小 n 直算 / 大 n 换算法」：R55 的教训是两套式子迟早
+    对同一个量给出两个答案（那一轮就是正态近似与精确界在 p 从 0 跳到 1/n 处
+    互相打架）。这里一份式子跑全区间，代价只是 n 上的线性循环——n=10000 时
+    单次 CDF 实测 0.7ms，而一次 ``_cp_bounds`` 是 160 次，仍不到 0.2s。
+
+    精度：对 ``Fraction`` 精确值的最大绝对误差 4.4e-15（n≤80 全 k）；与旧直接
+    求和在双方都不溢出的 n≤1029 上最大差 2.6e-12（2268 组）——判决与两位小数
+    的显示值都不变（有测试钉住）。事故形状（崩溃退出 1 与「政策超阈」同码）见
+    ``EXIT_NUMERIC_FAILURE``。
+    """
     if p <= 0:
         return 1.0
     if p >= 1:
         return 0.0 if k < attempts else 1.0
     k = min(k, attempts)
-    q = 1.0 - p
-    return sum(math.comb(attempts, i) * (p ** i) * (q ** (attempts - i))
-               for i in range(k + 1))
+    if k < 0:
+        return 0.0
+    # log1p 而不是 log(1 - p)：p 很小时 1 - p 会丢掉有效位，而这里正需要它。
+    log_p = math.log(p)
+    log_q = math.log1p(-p)
+    # 第 0 项的对数，以及逐项累加（每一项都是概率，见 docstring：不需要缩放）。
+    log_term = attempts * log_q
+    total = math.exp(log_term)
+    for i in range(1, k + 1):
+        # pmf 的相邻比：(n-i+1)/i * p/q，取对数后逐项累加。
+        log_term += (math.log(attempts - i + 1) - math.log(i)
+                     + log_p - log_q)
+        total += math.exp(log_term)
+    return total
 
 
 def _cp_bounds(attempts: int, failed: int) -> tuple[float, float]:
@@ -1417,6 +1472,29 @@ def check_per_workflow_regression(data_dir: Path,
     return EXIT_OK, summary
 
 
+def _run_judgement(judgement) -> int:
+    """跑一个判据，把「算不下去」与「判了且不合格」分开（R64）。
+
+    退出码 1 的含义是「判了，结论是不合格」，处置是查数据/供应商；判据在算的
+    过程中抛算术异常时，进程按 Python 默认以 1 退出，于是两种处置共用一个码。
+    R64 修掉的那条路径（CP 精确界在 n≈1030 溢出）正是如此：CI 里读起来是
+    「失败率突破政策」，实际是判据自己崩了。
+
+    只捕获算术类异常（``ArithmeticError`` 含 OverflowError/ZeroDivisionError，
+    外加 ``ValueError``——``log``/``exp`` 的定义域错误也落在这里）。类型错误之类
+    的代码 bug 仍然照常崩掉，那是开发期信号，不该被降级成一个退出码。
+    """
+    try:
+        code, message = judgement()
+    except (ArithmeticError, ValueError) as exc:
+        print(f"[live-gate] 判据算术失败，**未作判定**（退出码 "
+              f"{EXIT_NUMERIC_FAILURE}，不等于任何不合格判决）："
+              f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_NUMERIC_FAILURE
+    print(f"[live-gate] {message}", file=sys.stderr)
+    return code
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -1521,32 +1599,24 @@ def main() -> int:
 
     if options.check_per_workflow_rate:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
-        code, message = check_per_workflow_rate(
+        return _run_judgement(lambda: check_per_workflow_rate(
             options.data_dir or _default_data_dir(), margin,
-            fail_on_exceeds=options.fail_on_exceeds)
-        print(f"[live-gate] {message}", file=sys.stderr)
-        return code
+            fail_on_exceeds=options.fail_on_exceeds))
 
     if options.check_per_workflow_regression:
         # 只读快照自身（内容 + 元数据里的 history），与 --check-* 同一前提。
-        code, message = check_per_workflow_regression(
-            options.data_dir or _default_data_dir(), margin)
-        print(f"[live-gate] {message}", file=sys.stderr)
-        return code
+        return _run_judgement(lambda: check_per_workflow_regression(
+            options.data_dir or _default_data_dir(), margin))
 
     if options.check_per_workflow:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
-        code, message = check_per_workflow(
-            options.data_dir or _default_data_dir(), margin)
-        print(f"[live-gate] {message}", file=sys.stderr)
-        return code
+        return _run_judgement(lambda: check_per_workflow(
+            options.data_dir or _default_data_dir(), margin))
 
     if options.check_sample_size:
         # 只读快照自身，不需要 --source：这是它能进 CI 的全部原因。
-        code, message = check_sample_size(
-            options.data_dir or _default_data_dir(), margin)
-        print(f"[live-gate] {message}", file=sys.stderr)
-        return code
+        return _run_judgement(lambda: check_sample_size(
+            options.data_dir or _default_data_dir(), margin))
 
     if options.check_stale or options.check_coverage:
         source = options.source
@@ -1556,21 +1626,18 @@ def main() -> int:
             source = WORKFLOWS_DIR
         snapshot = options.data_dir or _default_data_dir()
         if options.check_coverage:
-            code, message = check_coverage(snapshot, Path(source))
-        else:
-            code, message = check_stale(snapshot, Path(source), options.max_lag_days)
-        print(f"[live-gate] {message}", file=sys.stderr)
-        return code
+            return _run_judgement(
+                lambda: check_coverage(snapshot, Path(source)))
+        return _run_judgement(
+            lambda: check_stale(snapshot, Path(source), options.max_lag_days))
 
     regression_margin = None
     if options.fail_on_regression:
         regression_margin = (REGRESSION_MARGIN if options.regression_margin is None
                              else options.regression_margin)
-    code, message = evaluate(
+    return _run_judgement(lambda: evaluate(
         options.data_dir or _default_data_dir(), options.fail_if_above,
-        regression_margin=regression_margin)
-    print(f"[live-gate] {message}", file=sys.stderr)
-    return code
+        regression_margin=regression_margin))
 
 
 if __name__ == "__main__":

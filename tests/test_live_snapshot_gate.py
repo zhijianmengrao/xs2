@@ -854,6 +854,271 @@ def test_the_small_n_inversion_cannot_change_any_verdict() -> None:
         live_gate.sample_size_margin_needed(5, 0)
 
 
+# ---------------------------------------------------------------------------
+# R64：精确界求和搬到对数空间（溢出边界实测 n≈1030，不是记录里的 4000+）
+# ---------------------------------------------------------------------------
+
+def _direct_pmf_sum(attempts: int, k: int, p: float) -> float:
+    """R64 **之前**的直接求和，只作参照用，已不在产品路径上。
+
+    留在测试里是因为「旧实现从哪里开始崩」必须是可复核的事实，而不是交接文档
+    里的一句断言：``math.comb`` 是大整数，转 float 在 n≈1030 就溢出。谁都可以
+    重跑这条式子验证那个边界，而不是相信一个数字。
+    """
+    import math
+
+    if p <= 0:
+        return 1.0
+    if p >= 1:
+        return 0.0 if k < attempts else 1.0
+    k = min(k, attempts)
+    q = 1.0 - p
+    return sum(math.comb(attempts, i) * (p ** i) * (q ** (attempts - i))
+               for i in range(k + 1))
+
+
+def test_binomial_cdf_matches_exact_rational_reference() -> None:
+    """对数空间求和必须与**精确有理数**一致，而不是只与旧浮点实现一致。
+
+    只跟旧实现比是不够的：两边错在同一个方向时，一致性会把 bug 一起认证。
+    这里用 ``Fraction`` 精确算二项分布部分和（n≤80、全 k），把新求和钉在真值
+    上。实测最大绝对误差 4.4e-15。
+    """
+    import math
+    from fractions import Fraction
+
+    def exact(n: int, k: int, p: Fraction) -> float:
+        q = 1 - p
+        return float(sum(Fraction(math.comb(n, i)) * p ** i * q ** (n - i)
+                         for i in range(min(k, n) + 1)))
+
+    worst = 0.0
+    for attempts in (10, 25, 60, 80):
+        for p in (Fraction(1, 2), Fraction(1, 3), Fraction(1, 7),
+                  Fraction(1, 20)):
+            for k in sorted({0, 1, attempts // 10, attempts // 2,
+                             attempts - 1, attempts}):
+                got = live_gate._binomial_cdf_le(attempts, k, float(p))
+                worst = max(worst, abs(got - exact(attempts, k, p)))
+    assert worst < 1e-12, f"与精确参考值最大绝对误差 {worst:.2e}"
+
+
+def test_log_space_sum_agrees_with_the_direct_pmf_sum_where_it_works() -> None:
+    """修的是「算不出来」，不是「答案不对」：旧实现还能算的区间里必须一致。
+
+    这一段是**语义不变**的证据：n ≤ 1029（旧实现还不溢出）与各种 k、p 上，
+    两条路径的最大差 2.6e-12——远小于任何判决或两位小数显示的分辨率。
+    """
+    worst = 0.0
+    cases = 0
+    for attempts in list(range(1, 41)) + [100, 255, 500, 1000, 1029]:
+        for k in sorted({0, 1, attempts // 10, attempts // 4, attempts // 2,
+                         3 * attempts // 4, attempts - 1, attempts}):
+            for p in (0.001, 0.05, 0.2, 0.5, 0.8, 0.95, 0.999):
+                worst = max(
+                    worst,
+                    abs(live_gate._binomial_cdf_le(attempts, k, p)
+                        - _direct_pmf_sum(attempts, k, p)))
+                cases += 1
+    assert worst < 1e-9, f"{cases} 组里最大差 {worst:.2e}"
+
+
+def test_the_overflow_boundary_is_a_curve_not_a_single_sample_count() -> None:
+    """溢出边界是（样本量 × 失败率）的一条曲线，不是一个「4000+」的数字。
+
+    R61 记的「n=4000 时 4% 形状仍可算」是对的，R62 把它抄成「4000+ 才需要
+    处理」。两句话都只描述了曲线的一端：实测 4% 形状的边界是 **4317**，而
+    50%/75%/90% 形状的边界是 **1030**——**最小值出现在失败率很高的一端**，
+    也就是最需要判据说得出话的时候。
+
+    这条测试同时钉住两端：1029/1030 在 50% 形状上确实成立（所以 1030 是实测
+    边界），4000 在 4% 形状上确实还算得出来（所以 R61 那句没有被如何）。
+    """
+    for p in (0.5, 0.75, 0.9):
+        _direct_pmf_sum(1029, int(1029 * p), p)  # 还不溢出：边界是实测的
+        with pytest.raises(OverflowError):
+            _direct_pmf_sum(1030, int(1030 * p), p)
+    # 本项目当前形状（3.92% 失败率）：n=4000 仍可算，边界在 4317。
+    _direct_pmf_sum(4000, int(4000 * 0.0392), 0.0392)
+    with pytest.raises(OverflowError):
+        _direct_pmf_sum(4317, int(4317 * 0.0392), 0.0392)
+    # 新实现在曲线上的每个点都要给出结果，而不是在最小值处才失效。
+    for attempts, p in ((1030, 0.5), (4000, 0.0392), (4317, 0.0392),
+                        (10000, 0.5)):
+        value = live_gate._binomial_cdf_le(attempts, int(attempts * p), p)
+        assert 0.0 < value < 1.0, (attempts, p, value)
+
+
+def test_large_sample_cdf_is_monotone_in_k() -> None:
+    """R55 的「失败越多要求越厚」在大 n 上必须仍然成立。
+
+    缩放求和是逐项累加的，浮点误差有可能让曲线在 ulp 级别倒退——而判据在 k 上
+    不单调就是「多一次失败样本反而更可信」，与 R55 修掉的那个台阶同族。同时钉
+    住闭合性：k 走到 n 时 CDF 必须是 1（实测误差 1.5e-12，所以容差取 1e-9）。
+    """
+    for attempts in (2000, 4000):
+        step = attempts // 200
+        previous = 0.0
+        for k in range(0, attempts + 1, step):
+            value = live_gate._binomial_cdf_le(attempts, k, 0.5)
+            assert value >= previous - 1e-12, (attempts, k, previous, value)
+            assert value <= 1.0 + 1e-12, (attempts, k, value)
+            previous = value
+        assert abs(previous - 1.0) < 1e-9, (attempts, previous)
+
+
+def test_large_sample_bounds_still_solve_the_defining_quantiles() -> None:
+    """二分在 n=4000 上给出的界仍满足定义式，而不只是「返回了一个有限的数」。
+
+    这是判据正确性的定义本身（上界满足 P(X≤k)=0.05，下界满足 P(X≤k-1)=0.95），
+    与 n=255 那条同一条式子。大为不同的一点是它**只能**靠对数空间求和来验：
+    旧实现在这个 n 上连算都算不出来。
+    """
+    attempts, failed = 4000, 2000
+    lower, upper = live_gate._cp_bounds(attempts, failed)
+    assert abs(live_gate._binomial_cdf_le(attempts, failed, upper) - 0.05) < 1e-9
+    assert abs(live_gate._binomial_cdf_le(attempts, failed - 1, lower) - 0.95) < 1e-9
+    assert 0.48 < lower < 0.50 < upper < 0.52, (lower, upper)
+
+
+def test_large_sample_margin_needed_is_finite_and_sane() -> None:
+    """大样本上的所需余量必须落在现实区间，而不是 0 或 100。
+
+    p=0.5 时精确界比 Wald 窄（Wald 用估计方差，在 0.5 处偏保守），实测比值
+    0.844–0.854。这里留一条宽松的带——它抓的是「静默返回 0 或荒谬值」，不是
+    复算数学常数。
+    """
+    for attempts in (1030, 4000, 10000):
+        needed = live_gate.sample_size_margin_needed(attempts, attempts // 2)
+        normal = live_gate.Z_95 * (0.25 / attempts) ** 0.5 * 100
+        assert needed is not None
+        assert 0.7 * normal < needed < normal, (attempts, needed, normal)
+
+
+def test_margin_needed_never_raises_for_any_sample_shape() -> None:
+    """R64 的修复目标：判据算不下去的概率是 0，不是「很少有人碰到」。
+
+    两端（0 与 n）走闭式，中段走精确界——六种形状、四个样本量全部必须给出
+    一个有限值。旧实现在这里第三行就会抛异常，而那正是「崩溃冒充政策超阈」
+    的起点。
+    """
+    for attempts in (1030, 2000, 4000, 10000):
+        for failed in (0, 1, attempts // 10, attempts // 2,
+                       attempts - 1, attempts):
+            needed = live_gate.sample_size_margin_needed(attempts, failed)
+            assert needed is not None, (attempts, failed)
+            assert 0.0 < needed <= 100.0, (attempts, failed, needed)
+
+
+def test_no_verdict_moved_on_the_committed_snapshot() -> None:
+    """改算术不能悄悄改判决：入库快照上 9 个 workflow 的所需余量逐字不变。
+
+    期望值取自 R62 §1 的表（那份表由**旧实现**算出），而两轮之间没有重导——
+    所以任何一个数字变了都说明改的不是溢出，而是判决。
+    """
+    expected = {
+        "xs2-novel-flywheel-build": 12.76,
+        "xs2-novel-flywheel-character": 5.22,
+        "xs2-novel-flywheel-export": 45.07,
+        "xs2-novel-flywheel-mvp": 8.46,
+        "xs2-novel-flywheel-outline": 17.07,
+        "xs2-novel-flywheel-polish": 19.26,
+        "xs2-novel-flywheel-post-hoc": 14.12,
+        "xs2-novel-flywheel-reader-sim": 22.09,
+        "xs2-novel-flywheel-story-plan": 17.07,
+    }
+    meta = json.loads(
+        (SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
+    for name, value in expected.items():
+        bucket = meta["per_workflow"][name]
+        needed = live_gate.sample_size_margin_needed(
+            bucket["attempts"], bucket["failed"])
+        assert needed is not None, name
+        assert round(needed, 2) == value, (name, needed, value)
+    assert round(live_gate.sample_size_margin_needed(255, 10), 2) == 2.64
+
+
+def test_numeric_failure_has_its_own_exit_code() -> None:
+    """8 不能与任何已有码重合，尤其是 1——1 的含义是「判了且不合格」。
+
+    判据崩了与判据判红是两种处置（修判据 vs 查数据/供应商）。共用一个码时，
+    CI 日志里只差一行 traceback，而读日志的人看到的是「失败率突破政策」。
+    """
+    existing = {
+        "ok": live_gate.EXIT_OK,
+        "gate": live_gate.EXIT_GATE_TRIGGERED,
+        "no_sample": live_gate.EXIT_NO_SAMPLE,
+        "meta_drift": live_gate.EXIT_META_DRIFT,
+        "stale": live_gate.EXIT_STALE,
+        "coverage": live_gate.EXIT_COVERAGE_GAP,
+        "thin": live_gate.EXIT_THIN_SAMPLE,
+    }
+    assert live_gate.EXIT_NUMERIC_FAILURE == 8
+    assert live_gate.EXIT_NUMERIC_FAILURE not in existing.values(), existing
+
+
+def test_a_crashing_judgement_is_not_reported_as_a_policy_breach(
+        monkeypatch, capsys) -> None:
+    """判据崩了必须以 8 退出并写明「未作判定」，不能被读成「失败率超阈」。
+
+    这就是 R64 修掉的那条路径的形状：CP 在 n≈1030 抛 OverflowError、``main``
+    没有任何捕获，于是进程按 Python 默认以 **1** 退出。这里把崩溃重新注入一次
+    （monkeypatch 掉判据本身），钉住它现在落在 8 而不是 1。
+    """
+    import sys
+
+    def boom(*args, **kwargs):
+        raise OverflowError("int too large to convert to float")
+
+    monkeypatch.setattr(live_gate, "check_sample_size", boom)
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-sample-size",
+        "--data-dir", str(SNAPSHOT_ROOT)])
+    code = live_gate.main()
+    assert code == live_gate.EXIT_NUMERIC_FAILURE
+    assert code != live_gate.EXIT_GATE_TRIGGERED
+    err = capsys.readouterr().err
+    assert "未作判定" in err, err
+    assert "OverflowError" in err, err
+
+
+def test_the_guard_does_not_swallow_ordinary_verdicts(monkeypatch) -> None:
+    """正常判决仍然带着自己的退出码穿过守卫：7 还是 7，1 还是 1。
+
+    只测「崩溃变 8」会让「一切都变 8」也绿灯——那比撞码更糟：所有判据都会
+    失去它们的结论。
+    """
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-sample-size",
+        "--data-dir", str(SNAPSHOT_ROOT), "--margin", "2"])
+    assert live_gate.main() == live_gate.EXIT_THIN_SAMPLE
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--fail-if-above", "1",
+        "--data-dir", str(SNAPSHOT_ROOT)])
+    assert live_gate.main() == live_gate.EXIT_GATE_TRIGGERED
+
+
+def test_non_arithmetic_bugs_still_crash_loudly(monkeypatch) -> None:
+    """只捕获算术异常：``TypeError`` 之类的代码 bug 必须照常崩掉。
+
+    把它们也降级成一个退出码，等于把开发期信号换成生产期的谜题——而 R57/R59
+    那一串「静默忽略的配置」教训说明，这类降级总会被当成「判据在工作」。
+    """
+    import sys
+
+    def boom(*args, **kwargs):
+        raise TypeError("wrong argument")
+
+    monkeypatch.setattr(live_gate, "check_sample_size", boom)
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-sample-size",
+        "--data-dir", str(SNAPSHOT_ROOT)])
+    with pytest.raises(TypeError):
+        live_gate.main()
+
+
 def test_sample_size_detects_metadata_drift(tmp_path: Path) -> None:
     """改了内容没重导元数据 → 退出码 4，不是拿旧数字判新内容。"""
     snap = tmp_path / "snap"
