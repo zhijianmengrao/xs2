@@ -114,6 +114,39 @@ workflow + 一个 40/40 的全挂者）：1 个超出 / 2 个正常，加开关�
 - Low-IL 的 passed/skipped 分布与 R57 不同（2085/96 → 2082/113）：17 条用例
   转成 skip（8021 服务本轮未运行等环境前置），总用例数不受影响；High-IL 同因。
 
+### 7.1 推送与 CI 核对（已闭环）
+
+推送 `477eb68`（代码 + 夹具）+ `d024d78`（文档）。直连通道当时不稳（配的
+socks5 代理未运行），重试第二次才推上去——如实记录，不改远端配置。
+
+| run | 结果 |
+|---|---|
+| `CI` **41018667020**（d024d78） | **五 job 全绿**（backend / windows-backend / frontend / container-config / container-build） |
+
+CI 日志实证（下载日志解码后逐字比对，不是推断）：
+
+- **新步骤在两个 runner 上都真跑了**：ubuntu `backend` 第 11 步与 windows
+  `windows-backend` 第 9 步 `Snapshot per-workflow failure-rate gate`，均 success
+  （步骤名已从 R56 的 `…report` 改为 `…gate`）。
+- **两个 runner 的判决逐字一致**：
+
+  ```
+  [live-gate] per-workflow 失败率（留一法基线，margin=10）：0 个超出 / 1 个正常 /
+  8 个样本不足无法判定。…快照历史 1 轮（含当前）——「连续 3 轮样本不足」的提示
+  需要 ≥3 轮历史，当前未生效
+  ```
+
+  windows 日志里中文是 `\uXXXX` 转义，解码后比对；gate 输出逐字相同，
+  `OK` 行只多一个平台后缀 `（Windows/Python 3.14）`。
+- **硬门槛双向生效真跑**：两个 runner 都打印
+  `OK  per-workflow 失败率硬门槛双向生效：真实快照通过，全挂快照触发 1，注入漂移触发 4`。
+  这句话只有在「真实快照退出 0 + 全挂 fixture 退出 1 + 漂移注入退出 4」三条
+  同时成立时才会打印；全挂那次调用的输出被 `$null =` 收走（预期），由
+  `$LASTEXITCODE` 断言。
+- **四面用例总数一致**：ubuntu `2131 passed / 64 skipped` = **2195**、
+  windows `2166 / 29` = **2195**、本机 Low-IL `2082 / 113` = **2195**、
+  High-IL `2167 / 28` = **2195**。
+
 ## 8. 变异验证（6 个，全部咬合）
 
 | 变异 | 预期 | 实测 |
