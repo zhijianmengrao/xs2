@@ -94,7 +94,7 @@ jobs:
           code=0
           python scripts/check_live_snapshot_gate.py --fail-if-above 8 || code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::真实失败率闸门判 $code（1=超 8% 上限 3=无样本 4=元数据漂移）"
+            echo "::error::真实失败率闸门判 $code（1=超 8% 上限 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit "$code"
           fi
           tight=0
@@ -128,7 +128,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --fail-on-regression \
             --regression-margin 3 --data-dir "$snapshot" || code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::历史基线回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            echo "::error::历史基线回归闸门判 $code（1=回归 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit "$code"
           fi
           strict=0
@@ -163,7 +163,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --check-per-workflow-regression \
             --margin 10 --data-dir "$snapshot" || code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::逐 workflow 回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            echo "::error::逐 workflow 回归闸门判 $code（1=回归 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit "$code"
           fi
           strict=0
@@ -196,7 +196,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --check-sample-size \
             --data-dir "$snapshot" || code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::快照样本量不足（退出码 $code，7=样本太薄 3=无样本 4=元数据漂移）"
+            echo "::error::快照样本量不足（退出码 $code，7=样本太薄 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit "$code"
           fi
           strict=0
@@ -219,7 +219,7 @@ jobs:
             --data-dir tests/fixtures/live_snapshot
           code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::per-workflow 判据失败（退出码 $code，4=元数据漂移 3=无样本）"
+            echo "::error::per-workflow 判据失败（退出码 $code，4=元数据漂移 3=无样本 8=判据算术失败·未判定）"
             exit "$code"
           fi
           # 反向验证：把一处 per-workflow 失败数改错，全局合计不变，必须判 4。
@@ -262,7 +262,7 @@ jobs:
             --fail-on-exceeds --data-dir "$snapshot"
           code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::per-workflow 失败率闸门判 $code（1=有 workflow 超出基线 4=元数据漂移 3=无样本）"
+            echo "::error::per-workflow 失败率闸门判 $code（1=有 workflow 超出基线 4=元数据漂移 3=无样本 8=判据算术失败·未判定）"
             exit "$code"
           fi
           # 反向验证 1：判定力。一份「一个 workflow 全挂、其余健康」的合成快照
@@ -353,7 +353,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --fail-if-above 8 --data-dir $snapshot
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Write-Host "::error::真实失败率闸门判 $code（1=超 8% 上限 3=无样本 4=元数据漂移）"
+            Write-Host "::error::真实失败率闸门判 $code（1=超 8% 上限 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit $code
           }
           $null = python scripts/check_live_snapshot_gate.py --fail-if-above 1 --data-dir $snapshot 2>&1
@@ -376,7 +376,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --fail-on-regression --regression-margin 3 --data-dir $snapshot
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Write-Host "::error::历史基线回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            Write-Host "::error::历史基线回归闸门判 $code（1=回归 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit $code
           }
           $null = python scripts/check_live_snapshot_gate.py --fail-on-regression --regression-margin 3 --data-dir tests/fixtures/live_snapshot_exceeds 2>&1
@@ -399,7 +399,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --check-per-workflow-regression --margin 10 --data-dir $snapshot
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Write-Host "::error::逐 workflow 回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            Write-Host "::error::逐 workflow 回归闸门判 $code（1=回归 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit $code
           }
           $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-regression --margin 10 --data-dir tests/fixtures/live_snapshot_exceeds 2>&1
@@ -440,7 +440,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --check-sample-size --data-dir $snapshot
           $code = $LASTEXITCODE
           if ($code -ne 0) {
-            Write-Host "::error::快照样本量不足（退出码 $code，7=样本太薄 3=无样本 4=元数据漂移）"
+            Write-Host "::error::快照样本量不足（退出码 $code，7=样本太薄 3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
             exit $code
           }
           $null = python scripts/check_live_snapshot_gate.py --check-sample-size --data-dir $snapshot --margin 2 2>&1
@@ -457,7 +457,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --check-per-workflow --data-dir $snapshot
           $wfCode = $LASTEXITCODE
           if ($wfCode -ne 0) {
-            Write-Host "::error::per-workflow 判据失败（退出码 $wfCode，4=元数据漂移 3=无样本）"
+            Write-Host "::error::per-workflow 判据失败（退出码 $wfCode，4=元数据漂移 3=无样本 8=判据算术失败·未判定）"
             exit $wfCode
           }
           $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("wfdrift-" + [guid]::NewGuid().ToString("N"))
@@ -495,7 +495,7 @@ jobs:
           python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds --data-dir $snapshot
           $rateCode = $LASTEXITCODE
           if ($rateCode -ne 0) {
-            Write-Host "::error::per-workflow 失败率闸门判 $rateCode（1=有 workflow 超出基线 4=元数据漂移 3=无样本）"
+            Write-Host "::error::per-workflow 失败率闸门判 $rateCode（1=有 workflow 超出基线 4=元数据漂移 3=无样本 8=判据算术失败·未判定）"
             exit $rateCode
           }
           $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds --data-dir tests/fixtures/live_snapshot_exceeds 2>&1

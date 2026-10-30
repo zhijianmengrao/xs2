@@ -102,8 +102,8 @@ ERROR_MARKERS: dict[str, int] = {
 # ``fail_twice``（R52）为退避形状验证而加：只有一次失败时序列里只有一个退避段，
 # 量不到 delays 的增减形状。``fail_thrice``（R53）同理再加一段，用来判「第二段
 # 对了但第三段没跟上」——那类回归只在三段以上的重试链上显形。``fail_four_times``
-# （R55）再加一段：判据 ``_rising_shape_violations`` 本就按 ``len(configured)-1``
-# 循环、支持任意段数，缺的只是标记与场景；四段用来覆盖「前两段对、第三段对、
+# （R55）再加一段：判据 ``_rising_shape_violations`` 本就按 ``len(configured)``
+# 逐段判、支持任意段数，缺的只是标记与场景；四段用来覆盖「前两段对、第三段对、
 # 最后一段错」这类只在长链末端显形的回归（例如实现里 delays 只读前三项）。
 FAIL_ONCE_MARKER = "[stub:fail_once]"
 FAIL_TWICE_MARKER = "[stub:fail_twice]"

@@ -2512,3 +2512,68 @@ def test_per_workflow_regression_step_does_not_reintroduce_stale_or_coverage() -
         assert "--check-stale" not in run
         assert "--check-coverage" not in run
 
+
+# ------------------------------------------- CI 文案 vs 实际退出码集合（R65）
+#
+# R64 §8-7 挂账：「`ci.yml` 的错误文案没有列出退出码 8」。文案与脚本各写一份，
+# 正是「同一判据在两处各写一份」的典型形态——脚本加了码、文案不知道，读日志的
+# 人就会把「判据崩了」当成「政策超阈」。下面这条把一致性变成可测的：
+#
+#   某个步骤的文案声明的码集合 ⊇ 该步骤实际调用的模式能返回的码集合
+#
+# 反过来（声明了不会发生的码）不查：步骤里往往还有反向验证调用，它期望的码与
+# 主调用不同，逐字对齐会逼着文案写成「期望/实际」两套。
+_GATE_MODE_CODES = {
+    # 模式 -> 该模式真能返回的码（0=通过 不在文案之列）。
+    "--check-sample-size": {"3", "4", "7"},
+    "--check-per-workflow": {"3", "4"},
+    "--check-per-workflow-rate": {"1", "3", "4"},
+    "--check-per-workflow-regression": {"1", "3", "4"},
+    "--fail-on-regression": {"1", "3", "4"},
+}
+_DEFAULT_MODE_CODES = {"1", "3", "4"}   # --fail-if-above / 默认判定模式
+
+
+def _gate_steps() -> list[tuple[str, str, str]]:
+    """所有调用闸门脚本的 (job, 步骤名, run 文本)。"""
+    jobs = _load_ci().get("jobs")
+    assert isinstance(jobs, dict)
+    found: list[tuple[str, str, str]] = []
+    for job_name, job in jobs.items():
+        for step in job.get("steps") or []:
+            run = str(step.get("run", ""))
+            if "check_live_snapshot_gate.py" in run:
+                found.append((str(job_name), str(step.get("name", "")), run))
+    assert found, "ci.yml 里没有任何步骤调用闸门脚本"
+    return found
+
+
+def _declared_codes(run: str) -> set[str]:
+    """文案里以 ``N=`` 形式声明的退出码（``8% 上限`` 这种不会误命中）。"""
+    import re
+
+    return set(re.findall(r"(?<![\d%])(\d)=", run))
+
+
+def test_ci_gate_messages_declare_every_exit_code_the_mode_can_return() -> None:
+    """六步文案各自要覆盖它那套模式能返回的码，8 一处都不能漏。
+
+    8（判据算术失败 / 未作判定）是**所有**模式共有的：``_run_judgement`` 六个
+    派发分支统一套用。它不出现在文案里时，CI 日志里「1=政策超阈」的提示会替
+    一次崩溃做解释——两种处置（查数据 / 修判据）互相冒充。
+    """
+    for job, name, run in _gate_steps():
+        expected = {"8"}
+        matched = False
+        for flag, codes in _GATE_MODE_CODES.items():
+            if _has_flag(run, flag):
+                expected |= codes
+                matched = True
+        if not matched:
+            expected |= _DEFAULT_MODE_CODES
+        declared = _declared_codes(run)
+        missing = expected - declared
+        assert not missing, (
+            f"{job}/{name} 的退出码文案漏了 {sorted(missing)}："
+            f"声明 {sorted(declared)}，该模式实际可返回 {sorted(expected)}")
+

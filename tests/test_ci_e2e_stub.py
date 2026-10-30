@@ -573,21 +573,17 @@ def test_shape_scenario_uses_the_two_failure_marker() -> None:
     )
 
 
-def test_shape_scenario_compares_a_ratio_not_an_absolute_gap() -> None:
-    """用比值而不是绝对差值：共模偏移（JIT/日志/调度）会同时抬高两段。
+def test_shape_scenario_uses_the_per_segment_judge() -> None:
+    """两段/三段/四段必须共用同一个判据，且不能再留比值门槛的残留。
 
-    绝对差值会被一层不可知开销吞掉，只能取很松的阈值，于是「递减一半」也能绿。
-    比值对共模偏移不敏感，而恒定（1.0）与递减（0.5）仍被 1.5 的门槛分开。
-
-    R53 把判据收进共享的 ``_rising_shape_violations``（两段/三段同一份实现），
-    所以这里改钉**该函数的存在与调用**，比值本身的行为由
-    ``test_rising_shape_violations_*`` 直接测那个纯函数——断言放在能被穷举的
-    地方，比在源码字符串里找表达式稳。
+    R65 把判据从「相邻比值 ≥ 1.5」换成「每段与自己的配置之差在非对称容差内」，
+    理由见 ``_rising_shape_violations`` 的 docstring（单段离群会把比值压到门槛
+    以下，而延迟其实都被等过了）。这里只钉「场景走的是共享实现」；判据能不能
+    分辨对错，由下面那些纯函数用例穷举。
     """
     body = _shape_scenario_body()
-    assert "_rising_shape_violations" in body, (
-        "形状场景没有走共享的比值判据"
-    )
+    assert "_rising_shape_violations" in body, "形状场景没有走共享的逐段判据"
+    assert "min_ratio" not in body, "形状场景还留着比值门槛的残留"
 
 
 def test_shape_scenario_disables_the_sdk_retry_layer() -> None:
@@ -644,43 +640,49 @@ def test_long_chain_scenario_shares_the_shape_judge() -> None:
 
 
 
-# ----------------------------------------- 形状判据本身（R53，纯函数）
+# ------------------------------------- 形状判据本身（R53~R65，纯函数）
 # 上面那些源码契约只钉「场景用了哪个函数」。判据真的能分辨对错，由这里直接
 # 测 ``_rising_shape_violations``——它没有 I/O、没有时钟，可以穷举。
-def test_rising_shape_accepts_a_correctly_rising_chain() -> None:
+#
+# R65 把判据从「相邻比值」换成了「逐段 + 非对称容差」。原有行为用例一条没删，
+# 只是换了口径重新钉；另补两种旧判据结构性看不见的形状（统一放大、单段离群）。
+def test_shape_judge_accepts_a_correctly_configured_chain() -> None:
     assert e2e._rising_shape_violations([0.41, 0.82, 1.63], [0.4, 0.8, 1.6]) == []
 
 
-def test_rising_shape_rejects_a_constant_backoff() -> None:
+def test_shape_judge_rejects_a_constant_backoff() -> None:
     """恒定退避（运维上是轮询而非退避）必须被拒。
 
     这是 R52/R53 判据存在的首要理由：恒定配置下「某个值被等过」仍然成立，
-    单点判据完全看不出问题。
+    单点判据完全看不出问题。R65 之后由**欠睡侧**抓到——第二、三段只量到
+    0.42/0.41，比配置的 0.8/1.6 少得远超 0.05s 容差。
     """
     problems = e2e._rising_shape_violations([0.4, 0.42, 0.41], [0.4, 0.8, 1.6])
     assert len(problems) == 2, problems
-    assert all("未递增" in p for p in problems)
+    assert all("欠睡" in problem for problem in problems), problems
 
 
-def test_rising_shape_rejects_a_decreasing_chain() -> None:
-    """递减（配置写反了）必须被拒，且每对都要报。"""
+def test_shape_judge_rejects_a_decreasing_chain() -> None:
+    """递减（配置写反了）必须被拒，两个方向各自点名。"""
     problems = e2e._rising_shape_violations([1.6, 0.8, 0.4], [0.4, 0.8, 1.6])
     assert len(problems) == 2, problems
+    assert "第 1 段超睡" in problems[0], problems
+    assert "第 3 段欠睡" in problems[1], problems
 
 
-def test_rising_shape_catches_a_stale_last_segment() -> None:
-    """**R53 的全部价值**：前两段对、第三段没跟上时，只有 2→3 那一对报错。
+def test_shape_judge_catches_a_stale_last_segment() -> None:
+    """**R53 的全部价值**：前两段对、第三段没跟上时，只有第 3 段报错。
 
     这类回归只在三段以上的链上显形——两段判据下第三段根本不存在，它永远绿。
-    断言「恰好 1 条问题、且指向 2→3」，而不是「有问题」：若判据把前两段也
-    误判成问题，说明它比的是绝对差值而非比值，噪声一进来就会假红。
+    断言「恰好 1 条、且指向第 3 段」：若判据把前两段也误判成问题，说明它比的
+    是相对关系而不是各自的配置值，噪声一进来就会连带假红。
     """
     problems = e2e._rising_shape_violations([0.41, 0.82, 0.85], [0.4, 0.8, 1.6])
     assert len(problems) == 1, problems
-    assert "2→3" in problems[0], problems[0]
+    assert "第 3 段" in problems[0], problems[0]
 
 
-def test_rising_shape_requires_one_segment_per_configured_delay() -> None:
+def test_shape_judge_requires_one_segment_per_configured_delay() -> None:
     """段数不足时明确报「判不了」，而不是默默通过。
 
     这是「永远绿的防护」的入口：少一段却返回空列表，判据会在数据不足时
@@ -691,149 +693,127 @@ def test_rising_shape_requires_one_segment_per_configured_delay() -> None:
     assert "只量到 2 个退避段" in problems[0]
 
 
-def test_rising_shape_tolerates_common_mode_offset_at_configured_scale() -> None:
-    """在**本场景的配置量级**上，共模偏移不该让判据假红。
+# ---- R64/R65：单段离群是旧判据的真正弱点 --------------------------------
+def test_shape_judge_tolerates_the_r64_single_segment_outlier() -> None:
+    """R64 §11 的真实事故：首段被调度多拖 0.16s，比值掉到 1.45。
 
-    配置 0.4→0.8，每段都多 0.15s：实测 0.55→0.95，比值 1.73 仍 > 1.5。
-    这是用比值的理由——绝对差值判据在这里只看「多等了 0.40s」就放行，而
-    实际形状已被压缩。
-
-    同时钉下它的**边界**（下一个断言）：偏移不变、配置缩小到 0.1→0.2 时，
-    实测 0.25→0.35 的比值只有 1.40，判据会红。比值对共模偏移的不敏感性是
-    有限的——偏移相对配置越大，判别力越弱。本场景把量级放在数百毫秒，正是
-    为了让偏移始终是小量；改成 0.1s 级配置时这条判据会变脆，那时该调大配置
-    而不是放松门槛。
+    旧判据（相邻比值 >= 1.5）在这组数上判红，而两段延迟其实都被等过了。
+    新判据逐段看偏差：+0.16 与 +0.01，都在 0.30s 超睡容差内 → 合格。
     """
-    assert e2e._rising_shape_violations([0.55, 0.95], [0.4, 0.8]) == []
-    # 边界：同样的偏移在更小的配置量级上会吃掉判别力。这不是回归，是判据的
-    # 已知适用范围；钉下来免得将来有人把 delays 改成 0.1 级后困惑于假红。
-    assert e2e._rising_shape_violations([0.25, 0.35], [0.1, 0.2]) != []
+    segments = [0.56, 0.81]
+    configured = [0.4, 0.8]
+    assert segments[1] / segments[0] == pytest.approx(1.446, abs=0.001)
+    assert e2e._rising_shape_violations(segments, configured) == []
 
 
-# --- R63：min_ratio 判别力边界的精确定量 ------------------------------------
-#
-# R53 §11-2 / R55 §11-2 一直挂着的说法是「偏移相对配置越大，判别力越弱」。
-# 那是一句无法复核的定性话。下面这组用例把边界钉成式子：
-#
-#     实测比值 (b + c) / (a + c) >= min_ratio
-#     <=> 真实比值 rho >= min_ratio + (min_ratio - 1) * (c / a)
-#
-# 于是「失明点」是 c == a（对 2 倍递增、门槛 1.5），不是某个模糊的量级。
+def test_shape_judge_rejects_an_over_sleep_beyond_the_budget() -> None:
+    """同样只慢一段，但慢 0.31s——超过 0.30s 容差必须红，且要点名哪一段。"""
+    problems = e2e._rising_shape_violations([0.71, 0.81], [0.4, 0.8])
+    assert len(problems) == 1, problems
+    assert "第 1 段超睡" in problems[0]
+    assert "0.31s" in problems[0]
 
 
-def test_offset_budget_reproduces_the_two_pinned_points() -> None:
-    """公式必须精确复现 R53 钉下的两个点，否则它只是又一段说法。"""
-    assert e2e._rising_shape_offset_budget([0.4, 0.8]).offset_budget == pytest.approx(0.40)
-    assert e2e._rising_shape_offset_budget([0.1, 0.2]).offset_budget == pytest.approx(0.10)
+def test_shape_judge_rejects_under_sleep_tightly() -> None:
+    """欠睡侧容差只有 0.05s：0.06s 就红（延迟没被等过），0.04s 放行。
+
+    两侧不对称是量纲决定的：间隔 = 配置的睡眠 + 开销，开销不可能为负，所以
+    负偏差只能是实现问题。
+    """
+    assert e2e._rising_shape_violations([0.34, 0.81], [0.4, 0.8]) != []
+    assert e2e._rising_shape_violations([0.36, 0.81], [0.4, 0.8]) == []
 
 
-def test_offset_budget_explains_why_the_same_offset_flips_the_verdict() -> None:
-    """同一个 0.15s 偏移，在 0.4 量级合格、0.1 量级不合格——预算给出了算术原因。"""
-    generous = e2e._rising_shape_offset_budget([0.4, 0.8])
-    tight = e2e._rising_shape_offset_budget([0.1, 0.2])
-    assert 0.15 < generous.offset_budget
-    assert 0.15 > tight.offset_budget
-    assert e2e._rising_shape_violations([0.55, 0.95], [0.4, 0.8]) == []
-    assert e2e._rising_shape_violations([0.25, 0.35], [0.1, 0.2]) != []
+def test_shape_judge_rejects_a_uniform_scale_up_the_ratio_could_not_see() -> None:
+    """所有段一起放大 2 倍：旧比值判据看到的是 2.0/2.0 → 全绿。
+
+    这是真实的失效形状（把 delays 当「倍数」用，或配置里混进了两次缩放）。
+    逐段判在每段都多出 0.4/0.8 时全红——换判据顺带补上的盲区。
+    """
+    segments = [0.8, 1.6]
+    configured = [0.4, 0.8]
+    assert segments[1] / segments[0] == pytest.approx(2.0)
+    problems = e2e._rising_shape_violations(segments, configured)
+    assert len(problems) == 2, problems
 
 
-def test_offset_budget_is_exact_at_the_edge() -> None:
-    """预算处必须恰好合格，越过去一丝就必须红——否则预算只是近似值。"""
-    budget = e2e._rising_shape_offset_budget([0.4, 0.8]).offset_budget
-    at_edge = [0.4 + budget, 0.8 + budget]
-    assert e2e._rising_shape_violations(at_edge, [0.4, 0.8]) == []
-    over_edge = [0.4 + budget + 0.001, 0.8 + budget + 0.001]
-    assert e2e._rising_shape_violations(over_edge, [0.4, 0.8]) != []
+# ---- R65：预算与余量 -----------------------------------------------------
+def test_segment_budget_pins_the_two_tolerances() -> None:
+    """预算把三个数钉死：欠睡 0.05、超睡 0.30、最小相邻差 0.4。"""
+    budget = e2e._rising_shape_segment_budget([0.4, 0.8, 1.6])
+    assert budget.under_tol == pytest.approx(0.05)
+    assert budget.over_tol == pytest.approx(0.30)
+    assert budget.min_gap == pytest.approx(0.40)
+    assert budget.judgeable is True
 
 
-def test_offset_budget_reproduces_the_effective_threshold_formula() -> None:
-    """真实比值恰好等于有效门槛时，偏移后的比值必须恰好是 min_ratio。"""
-    min_ratio = 1.5
-    for delta in (0.0, 0.375, 1.5):
-        effective = min_ratio + (min_ratio - 1) * delta
-        first = 0.4
-        offset = delta * first
-        second = effective * first
-        measured_ratio = (second + offset) / (first + offset)
-        assert measured_ratio == pytest.approx(min_ratio)
+def test_segment_budget_loses_the_adjacent_confusion_below_the_tolerance() -> None:
+    """超睡容差必须严格小于最小相邻差，否则「下标错一位」落进容差。
+
+    0.2 起（相邻差 0.2s < 0.30s）已经不可判——这正是四段场景不降到 0.2 起的
+    算术理由。0.4 起（相邻差 0.4s）才恢复判定力。
+    """
+    assert e2e._rising_shape_segment_budget([0.2, 0.4]).judgeable is False
+    assert e2e._rising_shape_segment_budget([0.4, 0.8]).judgeable is True
 
 
-def test_offset_budget_scales_linearly_with_the_configured_magnitude() -> None:
-    """判据只在 c/a 上有意义：配置翻 4 倍，预算翻 4 倍，同一 delta 判决不变。"""
-    small = e2e._rising_shape_offset_budget([0.2, 0.4])
-    large = e2e._rising_shape_offset_budget([0.8, 1.6])
-    assert large.offset_budget == pytest.approx(small.offset_budget * 4)
-    for configured, budget in (([0.2, 0.4], small.offset_budget),
-                               ([0.8, 1.6], large.offset_budget)):
-        assert 0.5 * configured[0] < budget      # delta=0.5 仍然可判
-        assert 1.5 * configured[0] > budget      # delta=1.5 已经失明
+def test_segment_budget_rejects_degenerate_configurations() -> None:
+    with pytest.raises(ValueError):
+        e2e._rising_shape_segment_budget([0.4])
+    with pytest.raises(ValueError):
+        e2e._rising_shape_segment_budget([0.4, 0.8], over_tol=-0.1)
 
 
-def test_offset_budget_reports_a_zero_width_window_at_tenth_second_scale() -> None:
-    """0.1 起步时窗口是 [0.1, 0.1] 一个点：floor 过滤与比值门槛把它压没了。"""
-    budget = e2e._rising_shape_offset_budget([0.1, 0.2])
-    assert budget.floor_offset == pytest.approx(0.10)
-    assert budget.offset_budget == pytest.approx(0.10)
+def test_segment_budget_reports_a_non_rising_config() -> None:
+    """配置本身不是递增的：零容差也判不出形状，必须写出来而不是抛异常。"""
+    budget = e2e._rising_shape_segment_budget([0.8, 0.4])
+    assert budget.min_gap == pytest.approx(-0.4)
     assert budget.judgeable is False
+    assert "不是递增的" in e2e._shape_headroom_note([0.9, 0.45], [0.8, 0.4])
 
 
-def test_offset_budget_takes_the_tightest_pair() -> None:
-    """形状逐对判：任何一对先失明，整个判据就在那里失明。"""
-    assert e2e._rising_shape_offset_budget([0.4, 0.8, 3.2]).worst_pair == (0.4, 0.8)
-    falling_short = e2e._rising_shape_offset_budget([0.4, 0.8, 1.0])
-    assert falling_short.worst_pair == (0.8, 1.0)
-    assert falling_short.offset_budget < 0
-    assert falling_short.judgeable is False
+def test_worst_deviation_picks_the_max_not_the_median() -> None:
+    """R64 的教训：中位数藏着单段离群，最坏情况判据必须看最大值。
+
+    [0.56, 0.81, 1.62] 的偏差是 [+0.16, +0.01, +0.02]，中位数 0.02——而判决
+    是被 0.16 那一段决定的。R63 的余量用中位数，正是这一点让「余量 25 倍」读
+    起来比实际安全。（R64 实测只记到前两段；第三段的 1.62 是构造值，用来说明
+    中位数如何把首段那 0.16 稀释掉。）
+    """
+    worst = e2e._worst_segment_deviation([0.56, 0.81, 1.62], [0.4, 0.8, 1.6])
+    assert worst is not None
+    assert worst.index == 0
+    assert worst.deviation == pytest.approx(0.16)
+    diffs = sorted([0.16, 0.01, 0.02])
+    assert diffs[len(diffs) // 2] == pytest.approx(0.02)
+    assert e2e._worst_segment_deviation([], [0.4, 0.8]) is None
 
 
-def test_offset_budget_rejects_degenerate_configurations() -> None:
-    with pytest.raises(ValueError):
-        e2e._rising_shape_offset_budget([0.4])
-    with pytest.raises(ValueError):
-        e2e._rising_shape_offset_budget([0.4, 0.8], min_ratio=1.0)
-
-
-def test_measured_offset_uses_the_median_not_the_mean() -> None:
-    """单段被调度拖慢时均值会被拽走，中位数不动——共模偏移是所有段的共有量。"""
-    measured = [2.0, 0.82, 1.61]
-    configured = [0.4, 0.8, 1.6]
-    assert e2e._measured_common_mode_offset(measured, configured) == pytest.approx(0.02)
-    mean = sum(m - c for m, c in zip(measured, configured)) / 3
-    assert mean > 0.5  # 均值被单点污染，正是不能用均值的理由
-    assert e2e._measured_common_mode_offset([], configured) is None
-
-
-def test_headroom_note_reports_the_measured_margin() -> None:
-    """本机实测 [0.416, 0.818, 1.614]：预算 0.40s、偏移 0.016s、余量 25 倍。"""
+def test_headroom_note_reports_the_worst_segment_margin() -> None:
+    """本机实测 [0.416, 0.818, 1.614]：最大超睡 0.018s（第 2 段），余量 16.7 倍。"""
     note = e2e._shape_headroom_note([0.416, 0.818, 1.614], [0.4, 0.8, 1.6])
-    assert "0.40s" in note
-    assert "0.016s" in note
-    assert "25 倍" in note
+    assert "0.30s/段" in note
+    assert "0.018s" in note
+    assert "第 2 段" in note
+    assert "16.7 倍" in note
+    assert "诊断用" in note
 
 
 def test_headroom_note_says_unjudgeable_instead_of_passing_silently() -> None:
     """判不了时必须写出来——『没红』不能被读成『健康』（R62 的同一条纪律）。"""
-    note = e2e._shape_headroom_note([0.25, 0.35], [0.1, 0.2])
-    assert "单点" in note
-    unreachable = e2e._shape_headroom_note([0.4, 0.5], [0.4, 0.5])
-    assert "达不到门槛" in unreachable
+    crowded = e2e._shape_headroom_note([0.25, 0.35], [0.2, 0.3])
+    assert "不小于最小相邻配置差" in crowded
+    falling = e2e._shape_headroom_note([0.9, 0.45], [0.8, 0.4])
+    assert "不是递增的" in falling
 
 
-def test_all_shape_scenarios_sit_well_above_the_r53_offset_assumption() -> None:
-    """三个形状场景的量级必须离失明点足够远：R53 记录的偏移假设是 0.15s。
+def test_all_shape_scenarios_keep_the_min_gap_above_the_over_sleep_tolerance() -> None:
+    """三个形状场景的量级必须让「容差 < 相邻配置差」成立。
 
-    这条是给将来改 ``delays`` 的人看的：把量级降到 0.1 级，判据会退化成单点
-    窗口；降到 0.2 级，余量只剩 1.33 倍。至少要有两倍于假设偏移的余量。
+    这条是给将来改 ``delays`` 的人看的：降到 0.2 起（相邻差 0.2s < 0.30s），
+    判据立刻分不出「下标错一位」与「实现写错」。0.4 起是这条约束的下限。
     """
     for configured in ([0.4, 0.8], [0.4, 0.8, 1.6], [0.4, 0.8, 1.6, 3.2]):
-        budget = e2e._rising_shape_offset_budget(configured)
-        assert budget.judgeable
-        assert budget.offset_budget >= 0.15 * 2
-
-
-def test_four_segment_docstring_claim_is_reproducible() -> None:
-    """四段场景 docstring 说「0.2 起 + 0.15s 偏移 → 首对 1.57」，让算术复核它。"""
-    measured_ratio = (0.4 + 0.15) / (0.2 + 0.15)
-    assert measured_ratio == pytest.approx(1.571, abs=0.001)
-    assert e2e._rising_shape_offset_budget([0.2, 0.4]).offset_budget == pytest.approx(0.20)
-    assert e2e._rising_shape_violations([0.35, 0.55], [0.2, 0.4]) == []
+        budget = e2e._rising_shape_segment_budget(configured)
+        assert budget.judgeable, configured
+        assert budget.min_gap > budget.over_tol, configured

@@ -636,34 +636,74 @@ def _backoff_segments(stub, *, floor: float = 0.2) -> list[float]:
     return [gap for gap in _request_gaps(stub) if gap >= floor]
 
 
+# ---------------------------------------------- 退避形状：逐段预算（R65）
+#
+# 形状判据从 R53 起比的是**相邻比值**（第二段 >= 第一段 * min_ratio）。它对共模
+# 偏移不敏感，代价是对**单段**偏移极其敏感——比值里只有被拖慢的那一段起作用。
+# R64 在 CI 上第一次量到这种失效：配置 [0.4, 0.8, 1.6]、实测 [0.56, 0.81, ...]，
+# 第一段被调度多拖 0.16s，比值掉到 1.45，判据报「第 1->2 段未递增」，而每一段
+# 延迟其实一分不差地被等过了。R63 算过这条边界：偏移只落在前一段时预算是
+# b/r - a，0.4->0.8 那对只有 0.133s，比共模假设的 0.40s 紧三倍。
+#
+# 换成**逐段**判据：每个测得的段各自与自己的配置值比。两侧容差故意不对称，
+# 依据是量的定义——请求间隔 = 配置的睡眠 + 开销，而**开销不可能为负**（除计时器
+# 精度与四舍五入）。于是：
+#
+#   * 欠睡侧卡死在 0.05s：``m_i < c_i - 0.05`` 只可能是「延迟没被等过」或「用了
+#     更小的一项」，那是真 bug，不该被抖动之类的理由放过；
+#   * 超睡侧放宽到 0.30s：抖动是环境的，容差量级只能由实测决定（最坏 0.16s，
+#     见 R64 §11），它与判据的判定力无关。
+#
+# 超睡容差不能无限放宽：它必须**严格小于相邻配置的最小差**（本项目三个场景都是
+# 0.4s），否则「实现里 delays 下标错一位」会落进容差——那是这条判据还需要分辨的
+# 唯一相邻混淆，``RisingShapeSegmentBudget.judgeable`` 就是这条约束的化身。
+#
+# 逐段判还补上比值判据的一个盲区：所有段被同时放大（例如统一 *2）时比值仍是
+# 2.0，旧判据全绿；逐段判在每段分别多出 0.4/0.8/1.6 时逐段报红。
+UNDER_SLEEP_TOLERANCE = 0.05
+OVER_SLEEP_TOLERANCE = 0.30
+
+
+@dataclass(frozen=True)
+class SegmentDeviation:
+    """一段退避的实测与配置之差（秒）。``deviation`` 就是「开销 + 误差」。"""
+
+    index: int
+    configured: float
+    measured: float
+
+    @property
+    def deviation(self) -> float:
+        return round(self.measured - self.configured, 3)
+
+
+def _shape_segment_deviations(segments: list[float],
+                              configured: list[float]) -> list[SegmentDeviation]:
+    """逐段配对（按到达顺序截到较短的一方），只算偏差，不做判决。"""
+    return [SegmentDeviation(index=index, configured=target, measured=measured)
+            for index, (measured, target) in enumerate(zip(segments, configured))]
+
+
 def _rising_shape_violations(segments: list[float], configured: list[float],
-                             *, min_ratio: float = 1.5) -> list[str]:
-    """逐对检查退避段是否按配置递增。返回问题列表（空 = 合格）。
+                             *, under_tol: float = UNDER_SLEEP_TOLERANCE,
+                             over_tol: float = OVER_SLEEP_TOLERANCE) -> list[str]:
+    """逐段检查退避是否按配置被等过。返回问题列表（空 = 合格）。
 
-    判据是**相邻段的比值**，不是绝对差值，也不是「与配置值逐个比绝对误差」：
+    判据是**每一段与它自己配置值**的差，两侧容差不对称：
 
-    - 绝对差值（``second - first >= 0.3``）会被共模偏移吞掉。JIT 预热、日志、
-      调度会让**每一段**同时多出一个不可知量；段数越多，累积偏移越大，松阈值
-      的必要性越强，于是「退避被改成恒定额」也能绿。
-    - 逐段比配置值（``|first - 0.4| < 0.1``）等价于假定偏移是 0，而它恰恰不是。
+    - 欠睡侧 ``< -under_tol``：延迟没被等过。量的是「配置的睡眠 + 开销」，开销
+      不可能为负，所以负偏差只能来自实现（或计时器精度，0.05s 足够覆盖）。
+    - 超睡侧 ``> over_tol``：等得比配置长太多。这一侧是环境噪声（JIT、日志、
+      调度），容差只能由实测抖动决定；但它必须小于相邻配置差，否则分不出
+      「下标错一位」。
 
-    比值对共模偏移不敏感（``(a+c)/(b+c)`` 在 c>0 时被压向 1，但对
-    ``b/a=2`` 仍显著偏离恒定的 1.0），而恒定（1.0）与递减（0.5）仍被
-    ``min_ratio`` 分开。
+    为什么不再比相邻比值（R53~R64 的写法）：比值只看两段之差，单段被拖慢
+    0.16s 就能把 2 倍递增压到 1.45——R64 §11 实测到的那次假红。比值对共模
+    偏移不敏感是优点，对单段偏移过敏是缺点，而后者在本项目里真的发生过。
+    实测比值仍写进 ``_shape_headroom_note`` 供诊断，但**不参与判定**。
 
-    为什么 ``min_ratio`` 取 1.5 而不是 2.0：实测偏移会把比值往下压
-    （R52 在 CI 上量到 1.99 而非 2.0，本机 1.98），卡 2.0 会变成依赖机器
-    稳定性的脆判据。1.5 与恒定的 1.0 之间仍有一倍半的距离。
-
-    这个门槛的**适用边界是算得出来的**，见 ``_rising_shape_offset_budget``：
-    共模偏移 ``c`` 让判据实际要求真实比值
-    ``rho >= min_ratio + (min_ratio - 1) * c / a``。对默认的 1.5 与 2 倍递增
-    配置，失明点正好是 ``c == a``——偏移与首段等长时，真实的翻倍与恒定额给出
-    同一个比值 1.0。R63 之前这里只写着「适用量级有限」，那是一条无法复核的
-    定性说法；边界现在是可复算的式子，并由测试钉在两端。
-
-    两段与三段共用这一个函数，是为了让「形状怎么判」只有一份实现——各写各的
-    迟早漂移成两套阈值，而它们判的是同一件事。
+    两段、三段、四段共用这一个函数：各写一份迟早漂移成两套阈值，而它们判的是
+    同一件事。
     """
     if len(segments) < len(configured):
         return [
@@ -671,131 +711,113 @@ def _rising_shape_violations(segments: list[float], configured: list[float],
             f"判不了形状——每段退避都要求一次失败"
         ]
     problems: list[str] = []
-    for index in range(len(configured) - 1):
-        first, second = segments[index], segments[index + 1]
-        if first <= 0:
-            problems.append(f"第 {index + 1} 段退避时长为 {first:.3f}s，无法算比值")
-            continue
-        ratio = second / first
-        if ratio < min_ratio:
+    for item in _shape_segment_deviations(segments, configured):
+        deviation = item.deviation
+        position = item.index + 1
+        if deviation < -under_tol:
             problems.append(
-                f"第 {index + 1}→{index + 2} 段未递增：配置 {configured}，"
-                f"实测 {first:.2f}s → {second:.2f}s（比值 {ratio:.2f}，应≥{min_ratio}）"
-            )
+                f"第 {position} 段欠睡：配置 {item.configured:.2f}s，"
+                f"实测 {item.measured:.2f}s（少 {-deviation:.2f}s，"
+                f"超容差 {under_tol:.2f}s）：退避没有被等过")
+        elif deviation > over_tol:
+            problems.append(
+                f"第 {position} 段超睡：配置 {item.configured:.2f}s，"
+                f"实测 {item.measured:.2f}s（多 {deviation:.2f}s，"
+                f"超容差 {over_tol:.2f}s）")
     return problems
 
 
+def _worst_segment_deviation(segments: list[float],
+                             configured: list[float]) -> SegmentDeviation | None:
+    """偏差最大的那一段（超睡得最厉害的一段）——本判据是**最坏情况**判据。
+
+    R63 的余量用中位数（共模偏移的估计），R64 那次假红正好说明中位数在这里
+    是错的统计量：三段偏差 [+0.16, +0.01, +0.02] 的中位数是 0.02，而判据是被
+    0.16 那一段推翻的。逐段判只看最大值，所以余量也必须按最大值报。
+    """
+    deviations = _shape_segment_deviations(segments, configured)
+    if not deviations:
+        return None
+    return max(deviations, key=lambda item: item.deviation)
+
+
 @dataclass(frozen=True)
-class RisingShapeOffsetBudget:
-    """形状判据在共模偏移下还能判多远的定量边界（R63）。
+class RisingShapeSegmentBudget:
+    """逐段判据的判定力边界（R65，取代 R63 的 ``RisingShapeOffsetBudget``）。
 
-    判据比的是实测比值 ``(b + c) / (a + c)``，``c`` 是每段共有的不可知偏移
-    （JIT 预热、日志、调度）。要求它 ``>= min_ratio``，等价于对**真实**比值
-    ``rho = b / a`` 提出更高的要求::
+    两侧容差对称地受同一条约束限制：**必须小于相邻配置的最小差**
+    （``min_gap``）。差一个 ``min_gap`` 的实现错误（下标错一位、填充逻辑取错
+    源值）是这条判据还存在的主要理由；容差一旦越过去，那种错误就会落在容差
+    里，判据退化成「只判延迟有没有被等」。
 
-        (b + c) / (a + c) >= min_ratio
-        <=>  rho >= min_ratio + (min_ratio - 1) * delta      # delta = c / a
-
-    所以判据的失明点不是 ``rho < min_ratio``，而是
-    ``delta >= (rho - min_ratio) / (min_ratio - 1)``。对 2 倍递增、门槛 1.5，
-    失明点正好是 ``c == a``：偏移与首段等长时，真实的翻倍与恒定额给出同一个
-    比值 1.0——判据在这一侧结构性看不见。反过来，判据对**恒定**与**递减**的
-    识别不受偏移影响（``(d+c)/(d+c) ≡ 1``，``(0.5d+c)/(d+c) < 1``），所以偏差
-    只发生在「该红没红」一侧，不会产生假红。
-
-    ``floor_offset`` 是另一端的边界：``floor`` 以下的间隔会被
-    ``_backoff_segments`` 当成非退避丢弃，首段还必须满足 ``a + c >= floor``。
-    ``[floor_offset, offset_budget]`` 就是这个配置量级仍可判的偏移窗口；窗口
-    为空或退化成单点时，判据在该量级上没有判定力——0.1s 起步时窗口恰好是
-    ``[0.1, 0.1]`` 一个点，这正是 R53 用 0.1→0.2 举例会被判红的算术原因。
+    ``min_gap <= 0`` 表示配置本身不是递增的——零容差下也判不出形状。与 R63
+    的「负预算是合法返回值」同一条纪律：不抛异常，由调用方把话说清楚。
     """
 
-    worst_pair: tuple[float, float]
-    offset_budget: float
-    floor_offset: float
+    under_tol: float
+    over_tol: float
+    min_gap: float
 
     @property
     def judgeable(self) -> bool:
-        """窗口是否有宽度（单点窗口等于不可判）。"""
-        return self.offset_budget > self.floor_offset
+        """超睡容差是否严格小于最小相邻配置差（否则分不出下标错一位）。"""
+        return 0.0 < self.over_tol < self.min_gap
 
 
-def _rising_shape_offset_budget(configured: list[float], *,
-                                min_ratio: float = 1.5,
-                                floor: float = 0.2) -> RisingShapeOffsetBudget:
-    """把「什么量级下这个门槛开始不可信」算成一个数（R53 §11-2 / R55 §11-2）。
-
-    逐个相邻对求偏移预算 ``c_max = (b - min_ratio * a) / (min_ratio - 1)``，
-    取**最紧**的一对——形状是逐对判的，任何一对先失明，整个判据就在那里失明。
-
-    负预算是合法返回值而不是错误：它说明**配置本身**达不到门槛（例如
-    ``delays=[0.4, 0.5]``，真实比值 1.25 < 1.5），零偏移也判不过。那是配置
-    写错，不是判据太松，所以不抛异常、由调用方把话说清楚。
-    """
+def _rising_shape_segment_budget(
+        configured: list[float], *,
+        under_tol: float = UNDER_SLEEP_TOLERANCE,
+        over_tol: float = OVER_SLEEP_TOLERANCE) -> RisingShapeSegmentBudget:
+    """把「这个配置下判据还能分辨什么」算成三个数（R65）。"""
     if len(configured) < 2:
         raise ValueError("形状判据至少要两段配置，单段没有形状可比")
-    if min_ratio <= 1:
+    if under_tol < 0 or over_tol < 0:
         raise ValueError(
-            f"min_ratio={min_ratio} 时恒定额（比值 1.0）也能通过，判据没有意义")
-
-    budget = math.inf
-    worst = (configured[0], configured[1])
-    for first, second in zip(configured, configured[1:]):
-        pair_budget = (second - min_ratio * first) / (min_ratio - 1)
-        if pair_budget < budget:
-            budget, worst = pair_budget, (first, second)
-    return RisingShapeOffsetBudget(
-        worst_pair=worst,
-        offset_budget=budget,
-        floor_offset=max(0.0, floor - configured[0]),
-    )
+            f"容差不能为负（under_tol={under_tol}, over_tol={over_tol}）")
+    min_gap = min(second - first
+                  for first, second in zip(configured, configured[1:]))
+    return RisingShapeSegmentBudget(
+        under_tol=under_tol, over_tol=over_tol, min_gap=min_gap)
 
 
-def _measured_common_mode_offset(segments: list[float],
-                                 configured: list[float]) -> float | None:
-    """实测段减配置段的中位数（秒）——共模偏移的经验估计。
-
-    取中位数而不是均值：单段被调度多拖半秒时均值会被拽走，而共模偏移是所有
-    段的共有量。量到 0 段时返回 ``None``（判不了），由调用方决定怎么写。
-    """
-    diffs = sorted(measured - target for measured, target
-                   in zip(segments, configured))
-    if not diffs:
-        return None
-    middle = len(diffs) // 2
-    if len(diffs) % 2:
-        return round(diffs[middle], 3)
-    return round((diffs[middle - 1] + diffs[middle]) / 2, 3)
+def _adjacent_ratios(segments: list[float],
+                     configured: list[float]) -> list[float]:
+    """相邻实测比值（诊断用，不参与判定）。段数不足或首段为 0 时省略该对。"""
+    pairs = list(zip(segments, segments[1:]))[:max(len(configured) - 1, 0)]
+    return [round(second / first, 2) for first, second in pairs if first > 0]
 
 
 def _shape_headroom_note(segments: list[float], configured: list[float], *,
-                         min_ratio: float = 1.5, floor: float = 0.2) -> str:
-    """PASS 详情里那一句「这个判据还剩下多少余量」（R63）。
+                         under_tol: float = UNDER_SLEEP_TOLERANCE,
+                         over_tol: float = OVER_SLEEP_TOLERANCE) -> str:
+    """PASS 详情里那一句「这个判据还剩下多少余量」（R63 起，R65 换成逐段）。
 
     一个只说「符合配置」的判据，读日志的人无法区分「离边界很远」与「擦着门槛
-    过关」——后者下一次改配置就会变成假红。把预算、实测偏移与倍数写进详情，
-    CI 日志自己就能回答「这个门槛什么时候会失准」，不必回头翻文档。
+    过关」。把容差、本次最大超睡与倍数写进详情，CI 日志自己就能回答「这个门槛
+    什么时候会失准」，不必回头翻文档。
+
+    实测比值仍附在末尾并标注「诊断用」：R53~R64 的判决依据是它，换成逐段之后
+    它不再是判据，而它恰好能解释「为什么这一段慢」。
     """
-    budget = _rising_shape_offset_budget(
-        configured, min_ratio=min_ratio, floor=floor)
+    budget = _rising_shape_segment_budget(
+        configured, under_tol=under_tol, over_tol=over_tol)
     if not budget.judgeable:
-        if budget.offset_budget <= 0:
-            return (
-                f"配置本身达不到门槛 {min_ratio}：最紧一对 "
-                f"{list(budget.worst_pair)} 零偏移下也判不过"
-                f"（偏移预算 {budget.offset_budget:.2f}s）")
-        return (
-            f"偏移窗口 [{budget.floor_offset:.2f}s, {budget.offset_budget:.2f}s] "
-            f"退化为单点：floor={floor}s 的过滤与比值门槛把可判区间压没了")
-    offset = _measured_common_mode_offset(segments, configured)
-    if offset is None:
-        return f"偏移预算 {budget.offset_budget:.2f}s/段（本次没量到段）"
-    if offset <= 0:
-        return f"偏移预算 {budget.offset_budget:.2f}s/段，本次实测无正偏移"
-    return (
-        f"偏移预算 {budget.offset_budget:.2f}s/段，"
-        f"实测偏移 {offset:.3f}s（余量 {budget.offset_budget / offset:.0f} 倍）"
-    )
+        if budget.min_gap <= 0:
+            return (f"配置本身不是递增的：最小相邻差 {budget.min_gap:.2f}s，"
+                    f"判据没有形状可比")
+        return (f"容差 {budget.over_tol:.2f}s 不小于最小相邻配置差 "
+                f"{budget.min_gap:.2f}s：分不出「用错相邻一项」")
+    worst = _worst_segment_deviation(segments, configured)
+    ratios = _adjacent_ratios(segments, configured)
+    tail = f"；参考：相邻比值 {ratios}（诊断用，不参与判定）" if ratios else ""
+    if worst is None:
+        return f"超睡容差 {budget.over_tol:.2f}s/段（本次没量到段）{tail}"
+    if worst.deviation <= 0:
+        return (f"超睡容差 {budget.over_tol:.2f}s/段，本次没有超睡"
+                f"（最大偏差 {worst.deviation:.3f}s）{tail}")
+    return (f"超睡容差 {budget.over_tol:.2f}s/段，本次最大超睡 "
+            f"{worst.deviation:.3f}s（第 {worst.index + 1} 段，余量 "
+            f"{budget.over_tol / worst.deviation:.1f} 倍）{tail}")
 
 
 def _install_retry_config(runtime: Runtime, *, max_retries: int,
@@ -886,10 +908,9 @@ async def scenario_retry_backoff_shape_is_honoured(runtime: Runtime, stub) -> Sc
     恒定轮询 vs 倒着来）。
 
     做法：``[stub:5xx][stub:fail_twice]`` 让前两次请求都失败，于是序列里出现
-    两个退避段；配置 ``delays=[0.4, 0.8]``，断言第二段明显长于第一段。
-    用**比值**而不是绝对差值：JIT、日志、调度会让两段同时偏移一个固定量，
-    比值对这种共模偏移不敏感，而「恒定/递减」这两种失效形状仍然会被抓到
-    （比值分别约 1.0 与 0.5）。
+    两个退避段；配置 ``delays=[0.4, 0.8]``，逐段判「实测与自己那一项配置之差
+    在容差内」（R65 起；R52~R64 比的是相邻比值，换掉的理由见
+    ``_rising_shape_violations`` 的 docstring——CI 上真的被单段偏移判红过一次）。
 
     为什么不加大等待：0.4+0.8=1.2s 与 R51 那个场景同量级，CI 预算不变。
     """
@@ -939,7 +960,7 @@ async def scenario_retry_backoff_long_chain_shape_is_honoured(
     配置 ``delays=[0.4, 0.8, 1.6]``，逐对断言 1→2、2→3 两对都递增。
 
     代价是约 0.4+0.8+1.6=2.8s 真实等待（R52 §11-1 已算过仍在 CI 预算内）。
-    比值门槛与两段场景共用 ``_rising_shape_violations``，避免两处阈值漂移。
+    判据与两段场景共用 ``_rising_shape_violations``，避免两处阈值漂移。
     """
     definition = {
         "name": "retry backoff long chain shape",
@@ -986,14 +1007,14 @@ async def scenario_retry_backoff_four_segment_shape_is_honoured(
 
     做法：``[stub:5xx][stub:fail_four_times]`` 让前四次请求都失败，产生四个
     退避段；配置 ``delays=[0.4, 0.8, 1.6, 3.2]``，逐对断言 1→2、2→3、3→4 三段
-    都递增（``_rising_shape_violations`` 按 ``len(configured)-1`` 循环，本就不
+    都递增（``_rising_shape_violations`` 按 ``len(configured)`` 逐段判，本就不
     需要为段数改判据）。
 
     为什么量级与三段场景相同（0.4 起、总 6.0s）而**不**为了省时间降到 0.2 起：
-    R53 §11-2 记过 ``min_ratio=1.5`` 的判别力随共模偏移变弱。段长越小，同样的
-    绝对偏移占比越大——0.2 起时 0.15s 的偏移会把首对压到 1.57，离门槛只剩
-    0.07，CI 上很容易翻成假红。0.4 起时同一偏移是 1.73，仍有安全余量。宁可多
-    等 3 秒，也不要一条会偶发变红的判据。
+    逐段判据的超睡容差是 0.30s，而 0.2 起时相邻配置差只有 0.2s——容差大于最小
+    相邻差，「delays 下标错一位」就会落进容差里（``RisingShapeSegmentBudget``
+    的 ``judgeable`` 会判 False）。0.4 起的相邻差是 0.4s > 0.30s，判据仍然分得
+    出相邻项。宁可多等 3 秒，也不要一条分不清「配置写错」与「实现写错」的判据。
     """
     definition = {
         "name": "retry backoff four segment shape",
