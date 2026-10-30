@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from scripts import e2e_workflow_stub as e2e
@@ -707,3 +708,132 @@ def test_rising_shape_tolerates_common_mode_offset_at_configured_scale() -> None
     # 边界：同样的偏移在更小的配置量级上会吃掉判别力。这不是回归，是判据的
     # 已知适用范围；钉下来免得将来有人把 delays 改成 0.1 级后困惑于假红。
     assert e2e._rising_shape_violations([0.25, 0.35], [0.1, 0.2]) != []
+
+
+# --- R63：min_ratio 判别力边界的精确定量 ------------------------------------
+#
+# R53 §11-2 / R55 §11-2 一直挂着的说法是「偏移相对配置越大，判别力越弱」。
+# 那是一句无法复核的定性话。下面这组用例把边界钉成式子：
+#
+#     实测比值 (b + c) / (a + c) >= min_ratio
+#     <=> 真实比值 rho >= min_ratio + (min_ratio - 1) * (c / a)
+#
+# 于是「失明点」是 c == a（对 2 倍递增、门槛 1.5），不是某个模糊的量级。
+
+
+def test_offset_budget_reproduces_the_two_pinned_points() -> None:
+    """公式必须精确复现 R53 钉下的两个点，否则它只是又一段说法。"""
+    assert e2e._rising_shape_offset_budget([0.4, 0.8]).offset_budget == pytest.approx(0.40)
+    assert e2e._rising_shape_offset_budget([0.1, 0.2]).offset_budget == pytest.approx(0.10)
+
+
+def test_offset_budget_explains_why_the_same_offset_flips_the_verdict() -> None:
+    """同一个 0.15s 偏移，在 0.4 量级合格、0.1 量级不合格——预算给出了算术原因。"""
+    generous = e2e._rising_shape_offset_budget([0.4, 0.8])
+    tight = e2e._rising_shape_offset_budget([0.1, 0.2])
+    assert 0.15 < generous.offset_budget
+    assert 0.15 > tight.offset_budget
+    assert e2e._rising_shape_violations([0.55, 0.95], [0.4, 0.8]) == []
+    assert e2e._rising_shape_violations([0.25, 0.35], [0.1, 0.2]) != []
+
+
+def test_offset_budget_is_exact_at_the_edge() -> None:
+    """预算处必须恰好合格，越过去一丝就必须红——否则预算只是近似值。"""
+    budget = e2e._rising_shape_offset_budget([0.4, 0.8]).offset_budget
+    at_edge = [0.4 + budget, 0.8 + budget]
+    assert e2e._rising_shape_violations(at_edge, [0.4, 0.8]) == []
+    over_edge = [0.4 + budget + 0.001, 0.8 + budget + 0.001]
+    assert e2e._rising_shape_violations(over_edge, [0.4, 0.8]) != []
+
+
+def test_offset_budget_reproduces_the_effective_threshold_formula() -> None:
+    """真实比值恰好等于有效门槛时，偏移后的比值必须恰好是 min_ratio。"""
+    min_ratio = 1.5
+    for delta in (0.0, 0.375, 1.5):
+        effective = min_ratio + (min_ratio - 1) * delta
+        first = 0.4
+        offset = delta * first
+        second = effective * first
+        measured_ratio = (second + offset) / (first + offset)
+        assert measured_ratio == pytest.approx(min_ratio)
+
+
+def test_offset_budget_scales_linearly_with_the_configured_magnitude() -> None:
+    """判据只在 c/a 上有意义：配置翻 4 倍，预算翻 4 倍，同一 delta 判决不变。"""
+    small = e2e._rising_shape_offset_budget([0.2, 0.4])
+    large = e2e._rising_shape_offset_budget([0.8, 1.6])
+    assert large.offset_budget == pytest.approx(small.offset_budget * 4)
+    for configured, budget in (([0.2, 0.4], small.offset_budget),
+                               ([0.8, 1.6], large.offset_budget)):
+        assert 0.5 * configured[0] < budget      # delta=0.5 仍然可判
+        assert 1.5 * configured[0] > budget      # delta=1.5 已经失明
+
+
+def test_offset_budget_reports_a_zero_width_window_at_tenth_second_scale() -> None:
+    """0.1 起步时窗口是 [0.1, 0.1] 一个点：floor 过滤与比值门槛把它压没了。"""
+    budget = e2e._rising_shape_offset_budget([0.1, 0.2])
+    assert budget.floor_offset == pytest.approx(0.10)
+    assert budget.offset_budget == pytest.approx(0.10)
+    assert budget.judgeable is False
+
+
+def test_offset_budget_takes_the_tightest_pair() -> None:
+    """形状逐对判：任何一对先失明，整个判据就在那里失明。"""
+    assert e2e._rising_shape_offset_budget([0.4, 0.8, 3.2]).worst_pair == (0.4, 0.8)
+    falling_short = e2e._rising_shape_offset_budget([0.4, 0.8, 1.0])
+    assert falling_short.worst_pair == (0.8, 1.0)
+    assert falling_short.offset_budget < 0
+    assert falling_short.judgeable is False
+
+
+def test_offset_budget_rejects_degenerate_configurations() -> None:
+    with pytest.raises(ValueError):
+        e2e._rising_shape_offset_budget([0.4])
+    with pytest.raises(ValueError):
+        e2e._rising_shape_offset_budget([0.4, 0.8], min_ratio=1.0)
+
+
+def test_measured_offset_uses_the_median_not_the_mean() -> None:
+    """单段被调度拖慢时均值会被拽走，中位数不动——共模偏移是所有段的共有量。"""
+    measured = [2.0, 0.82, 1.61]
+    configured = [0.4, 0.8, 1.6]
+    assert e2e._measured_common_mode_offset(measured, configured) == pytest.approx(0.02)
+    mean = sum(m - c for m, c in zip(measured, configured)) / 3
+    assert mean > 0.5  # 均值被单点污染，正是不能用均值的理由
+    assert e2e._measured_common_mode_offset([], configured) is None
+
+
+def test_headroom_note_reports_the_measured_margin() -> None:
+    """本机实测 [0.416, 0.818, 1.614]：预算 0.40s、偏移 0.016s、余量 25 倍。"""
+    note = e2e._shape_headroom_note([0.416, 0.818, 1.614], [0.4, 0.8, 1.6])
+    assert "0.40s" in note
+    assert "0.016s" in note
+    assert "25 倍" in note
+
+
+def test_headroom_note_says_unjudgeable_instead_of_passing_silently() -> None:
+    """判不了时必须写出来——『没红』不能被读成『健康』（R62 的同一条纪律）。"""
+    note = e2e._shape_headroom_note([0.25, 0.35], [0.1, 0.2])
+    assert "单点" in note
+    unreachable = e2e._shape_headroom_note([0.4, 0.5], [0.4, 0.5])
+    assert "达不到门槛" in unreachable
+
+
+def test_all_shape_scenarios_sit_well_above_the_r53_offset_assumption() -> None:
+    """三个形状场景的量级必须离失明点足够远：R53 记录的偏移假设是 0.15s。
+
+    这条是给将来改 ``delays`` 的人看的：把量级降到 0.1 级，判据会退化成单点
+    窗口；降到 0.2 级，余量只剩 1.33 倍。至少要有两倍于假设偏移的余量。
+    """
+    for configured in ([0.4, 0.8], [0.4, 0.8, 1.6], [0.4, 0.8, 1.6, 3.2]):
+        budget = e2e._rising_shape_offset_budget(configured)
+        assert budget.judgeable
+        assert budget.offset_budget >= 0.15 * 2
+
+
+def test_four_segment_docstring_claim_is_reproducible() -> None:
+    """四段场景 docstring 说「0.2 起 + 0.15s 偏移 → 首对 1.57」，让算术复核它。"""
+    measured_ratio = (0.4 + 0.15) / (0.2 + 0.15)
+    assert measured_ratio == pytest.approx(1.571, abs=0.001)
+    assert e2e._rising_shape_offset_budget([0.2, 0.4]).offset_budget == pytest.approx(0.20)
+    assert e2e._rising_shape_violations([0.35, 0.55], [0.2, 0.4]) == []

@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import shutil
 import sys
@@ -654,6 +655,13 @@ def _rising_shape_violations(segments: list[float], configured: list[float],
     （R52 在 CI 上量到 1.99 而非 2.0，本机 1.98），卡 2.0 会变成依赖机器
     稳定性的脆判据。1.5 与恒定的 1.0 之间仍有一倍半的距离。
 
+    这个门槛的**适用边界是算得出来的**，见 ``_rising_shape_offset_budget``：
+    共模偏移 ``c`` 让判据实际要求真实比值
+    ``rho >= min_ratio + (min_ratio - 1) * c / a``。对默认的 1.5 与 2 倍递增
+    配置，失明点正好是 ``c == a``——偏移与首段等长时，真实的翻倍与恒定额给出
+    同一个比值 1.0。R63 之前这里只写着「适用量级有限」，那是一条无法复核的
+    定性说法；边界现在是可复算的式子，并由测试钉在两端。
+
     两段与三段共用这一个函数，是为了让「形状怎么判」只有一份实现——各写各的
     迟早漂移成两套阈值，而它们判的是同一件事。
     """
@@ -675,6 +683,119 @@ def _rising_shape_violations(segments: list[float], configured: list[float],
                 f"实测 {first:.2f}s → {second:.2f}s（比值 {ratio:.2f}，应≥{min_ratio}）"
             )
     return problems
+
+
+@dataclass(frozen=True)
+class RisingShapeOffsetBudget:
+    """形状判据在共模偏移下还能判多远的定量边界（R63）。
+
+    判据比的是实测比值 ``(b + c) / (a + c)``，``c`` 是每段共有的不可知偏移
+    （JIT 预热、日志、调度）。要求它 ``>= min_ratio``，等价于对**真实**比值
+    ``rho = b / a`` 提出更高的要求::
+
+        (b + c) / (a + c) >= min_ratio
+        <=>  rho >= min_ratio + (min_ratio - 1) * delta      # delta = c / a
+
+    所以判据的失明点不是 ``rho < min_ratio``，而是
+    ``delta >= (rho - min_ratio) / (min_ratio - 1)``。对 2 倍递增、门槛 1.5，
+    失明点正好是 ``c == a``：偏移与首段等长时，真实的翻倍与恒定额给出同一个
+    比值 1.0——判据在这一侧结构性看不见。反过来，判据对**恒定**与**递减**的
+    识别不受偏移影响（``(d+c)/(d+c) ≡ 1``，``(0.5d+c)/(d+c) < 1``），所以偏差
+    只发生在「该红没红」一侧，不会产生假红。
+
+    ``floor_offset`` 是另一端的边界：``floor`` 以下的间隔会被
+    ``_backoff_segments`` 当成非退避丢弃，首段还必须满足 ``a + c >= floor``。
+    ``[floor_offset, offset_budget]`` 就是这个配置量级仍可判的偏移窗口；窗口
+    为空或退化成单点时，判据在该量级上没有判定力——0.1s 起步时窗口恰好是
+    ``[0.1, 0.1]`` 一个点，这正是 R53 用 0.1→0.2 举例会被判红的算术原因。
+    """
+
+    worst_pair: tuple[float, float]
+    offset_budget: float
+    floor_offset: float
+
+    @property
+    def judgeable(self) -> bool:
+        """窗口是否有宽度（单点窗口等于不可判）。"""
+        return self.offset_budget > self.floor_offset
+
+
+def _rising_shape_offset_budget(configured: list[float], *,
+                                min_ratio: float = 1.5,
+                                floor: float = 0.2) -> RisingShapeOffsetBudget:
+    """把「什么量级下这个门槛开始不可信」算成一个数（R53 §11-2 / R55 §11-2）。
+
+    逐个相邻对求偏移预算 ``c_max = (b - min_ratio * a) / (min_ratio - 1)``，
+    取**最紧**的一对——形状是逐对判的，任何一对先失明，整个判据就在那里失明。
+
+    负预算是合法返回值而不是错误：它说明**配置本身**达不到门槛（例如
+    ``delays=[0.4, 0.5]``，真实比值 1.25 < 1.5），零偏移也判不过。那是配置
+    写错，不是判据太松，所以不抛异常、由调用方把话说清楚。
+    """
+    if len(configured) < 2:
+        raise ValueError("形状判据至少要两段配置，单段没有形状可比")
+    if min_ratio <= 1:
+        raise ValueError(
+            f"min_ratio={min_ratio} 时恒定额（比值 1.0）也能通过，判据没有意义")
+
+    budget = math.inf
+    worst = (configured[0], configured[1])
+    for first, second in zip(configured, configured[1:]):
+        pair_budget = (second - min_ratio * first) / (min_ratio - 1)
+        if pair_budget < budget:
+            budget, worst = pair_budget, (first, second)
+    return RisingShapeOffsetBudget(
+        worst_pair=worst,
+        offset_budget=budget,
+        floor_offset=max(0.0, floor - configured[0]),
+    )
+
+
+def _measured_common_mode_offset(segments: list[float],
+                                 configured: list[float]) -> float | None:
+    """实测段减配置段的中位数（秒）——共模偏移的经验估计。
+
+    取中位数而不是均值：单段被调度多拖半秒时均值会被拽走，而共模偏移是所有
+    段的共有量。量到 0 段时返回 ``None``（判不了），由调用方决定怎么写。
+    """
+    diffs = sorted(measured - target for measured, target
+                   in zip(segments, configured))
+    if not diffs:
+        return None
+    middle = len(diffs) // 2
+    if len(diffs) % 2:
+        return round(diffs[middle], 3)
+    return round((diffs[middle - 1] + diffs[middle]) / 2, 3)
+
+
+def _shape_headroom_note(segments: list[float], configured: list[float], *,
+                         min_ratio: float = 1.5, floor: float = 0.2) -> str:
+    """PASS 详情里那一句「这个判据还剩下多少余量」（R63）。
+
+    一个只说「符合配置」的判据，读日志的人无法区分「离边界很远」与「擦着门槛
+    过关」——后者下一次改配置就会变成假红。把预算、实测偏移与倍数写进详情，
+    CI 日志自己就能回答「这个门槛什么时候会失准」，不必回头翻文档。
+    """
+    budget = _rising_shape_offset_budget(
+        configured, min_ratio=min_ratio, floor=floor)
+    if not budget.judgeable:
+        if budget.offset_budget <= 0:
+            return (
+                f"配置本身达不到门槛 {min_ratio}：最紧一对 "
+                f"{list(budget.worst_pair)} 零偏移下也判不过"
+                f"（偏移预算 {budget.offset_budget:.2f}s）")
+        return (
+            f"偏移窗口 [{budget.floor_offset:.2f}s, {budget.offset_budget:.2f}s] "
+            f"退化为单点：floor={floor}s 的过滤与比值门槛把可判区间压没了")
+    offset = _measured_common_mode_offset(segments, configured)
+    if offset is None:
+        return f"偏移预算 {budget.offset_budget:.2f}s/段（本次没量到段）"
+    if offset <= 0:
+        return f"偏移预算 {budget.offset_budget:.2f}s/段，本次实测无正偏移"
+    return (
+        f"偏移预算 {budget.offset_budget:.2f}s/段，"
+        f"实测偏移 {offset:.3f}s（余量 {budget.offset_budget / offset:.0f} 倍）"
+    )
 
 
 def _install_retry_config(runtime: Runtime, *, max_retries: int,
@@ -779,6 +900,7 @@ async def scenario_retry_backoff_shape_is_honoured(runtime: Runtime, stub) -> Sc
     }
     problems: list[str] = []
     configured = [0.4, 0.8]
+    segments: list[float] = []
     _install_retry_config(runtime, max_retries=2, delays=configured,
                           sdk_max_retries=0)
     stub.requests.clear()
@@ -799,8 +921,8 @@ async def scenario_retry_backoff_shape_is_honoured(runtime: Runtime, stub) -> Sc
         "retry_backoff_shape_is_honoured",
         not problems,
         "; ".join(problems) or (
-            f"退避形状符合配置 {configured}：实测 "
-            f"{_backoff_segments(stub, floor=0.2)[:2]}"),
+            f"退避形状符合配置 {configured}：实测 {segments[:2]}；"
+            f"{_shape_headroom_note(segments, configured)}"),
     )
 
 
@@ -826,6 +948,7 @@ async def scenario_retry_backoff_long_chain_shape_is_honoured(
     }
     problems: list[str] = []
     configured = [0.4, 0.8, 1.6]
+    segments: list[float] = []
     _install_retry_config(runtime, max_retries=3, delays=configured,
                           sdk_max_retries=0)
     stub.requests.clear()
@@ -847,8 +970,8 @@ async def scenario_retry_backoff_long_chain_shape_is_honoured(
         "retry_backoff_long_chain_shape_is_honoured",
         not problems,
         "; ".join(problems) or (
-            f"三段退避形状符合配置 {configured}：实测 "
-            f"{_backoff_segments(stub, floor=0.2)[:3]}"),
+            f"三段退避形状符合配置 {configured}：实测 {segments[:3]}；"
+            f"{_shape_headroom_note(segments, configured)}"),
     )
 
 
@@ -879,6 +1002,7 @@ async def scenario_retry_backoff_four_segment_shape_is_honoured(
     }
     problems: list[str] = []
     configured = [0.4, 0.8, 1.6, 3.2]
+    segments: list[float] = []
     _install_retry_config(runtime, max_retries=4, delays=configured,
                           sdk_max_retries=0)
     stub.requests.clear()
@@ -901,8 +1025,8 @@ async def scenario_retry_backoff_four_segment_shape_is_honoured(
         "retry_backoff_four_segment_shape_is_honoured",
         not problems,
         "; ".join(problems) or (
-            f"四段退避形状符合配置 {configured}：实测 "
-            f"{_backoff_segments(stub, floor=0.2)[:4]}"),
+            f"四段退避形状符合配置 {configured}：实测 {segments[:4]}；"
+            f"{_shape_headroom_note(segments, configured)}"),
     )
 
 
