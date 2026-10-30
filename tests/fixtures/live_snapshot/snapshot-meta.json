@@ -1,5 +1,5 @@
 {
-  "exported_at": "2026-10-29T01:28:46+00:00",
+  "exported_at": "2026-10-30T09:26:54+00:00",
   "source_root": "workflows",
   "per_workflow": {
     "xs2-novel-flywheel-build": {
@@ -60,6 +60,47 @@
   "history": [
     {
       "exported_at": "2026-10-29T01:28:46+00:00",
+      "per_workflow": {
+        "xs2-novel-flywheel-build": {
+          "attempts": 33,
+          "failed": 3
+        },
+        "xs2-novel-flywheel-character": {
+          "attempts": 79,
+          "failed": 2
+        },
+        "xs2-novel-flywheel-export": {
+          "attempts": 5,
+          "failed": 0
+        },
+        "xs2-novel-flywheel-mvp": {
+          "attempts": 56,
+          "failed": 4
+        },
+        "xs2-novel-flywheel-outline": {
+          "attempts": 16,
+          "failed": 0
+        },
+        "xs2-novel-flywheel-polish": {
+          "attempts": 14,
+          "failed": 0
+        },
+        "xs2-novel-flywheel-post-hoc": {
+          "attempts": 24,
+          "failed": 1
+        },
+        "xs2-novel-flywheel-reader-sim": {
+          "attempts": 12,
+          "failed": 0
+        },
+        "xs2-novel-flywheel-story-plan": {
+          "attempts": 16,
+          "failed": 0
+        }
+      }
+    },
+    {
+      "exported_at": "2026-10-30T09:26:54+00:00",
       "per_workflow": {
         "xs2-novel-flywheel-build": {
           "attempts": 33,
