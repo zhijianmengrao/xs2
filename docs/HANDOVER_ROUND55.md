@@ -194,6 +194,34 @@ R53 用测试钉住了「`FAILURE_STREAK_REQUIRED ≤ baseline_limit + 1`」这�
 - 新增 14 条构成：`test_run_profile.py` 12 + `test_live_snapshot_gate.py` 2。零删除。
 - 前端 484 → 490（+6，全部在 `WorkflowTemplatePanel.test.ts`）。
 
+### 7.1 推送与 CI 核对（已闭环）
+
+推送 `69da8da`（代码）+ `39ccbd8`（文档）。
+
+| run | 结果 |
+|---|---|
+| `CI` **40992747372**（69da8da） | **五 job 全绿**（backend / windows-backend / frontend / container-config / container-build） |
+| `CI` **40992883756**（39ccbd8） | **五 job 全绿** |
+| `Desktop Windows` **40992747405**（69da8da） | **双 NSIS success**（full + core candidate） |
+
+CI 日志实证（不是推断）：
+
+- **四段退避场景在 GHA 上真跑**：
+  `四段退避形状符合配置 [0.4, 0.8, 1.6, 3.2]：实测 [0.407, 0.807, 1.607, 3.207]`
+  （本机 `[0.413, 0.812, 1.610, 3.210]`，配置比值恒 2.0）。
+- **两个 runner 的样本量结论一致**，且都用上了新的精确界：
+  `快照样本量足够…半宽 2.64 个百分点 ≤ 余量 10.0（n=255, 失败 10）`
+  ——修复前这个数字是 2.38，两边都是 **2.64** 说明改动在 Ubuntu 与 Windows、
+  Python 3.11 与 3.14 上行为一致。
+- **per-workflow 诊断按预期变严**（这也是 §1 记的那笔代价在 CI 上的样子）：
+  `2 个达标 / 7 个不达标`，点名 build（需 12.76）与 post-hoc（需 14.12）。
+  该步骤仍**退出 0**（诊断信息不是判据），所以五 job 全绿不受影响。
+- 本机与 GHA 的用例数对账：ubuntu `2090 passed / 64 skipped` = 2154、
+  windows `2125 / 29` = 2154，总用例口径三方一致。
+
+`config/skills_config.json` 的运行时写入未被任何一次提交带入（`git status` 在两次
+提交后都只剩它一个）。
+
 ## 8. 变异验证（5 个，全部咬合）
 
 | 变异 | 预期 | 实测 |
@@ -266,4 +294,4 @@ R53 用测试钉住了「`FAILURE_STREAK_REQUIRED ≤ baseline_limit + 1`」这�
    真实数据复验 R54 的徽标与 R55 的趋势徽标是不是各司其职。
 
 其余：快照三条判据与保鲜全绿；大陆下载加速维持现状（R44 结论）；快照保鲜容忍
-7 天维持（R49 确认）。
+7 天维持（R49 确认）；CI 五 job 全绿、Desktop Windows 双 candidate success。
