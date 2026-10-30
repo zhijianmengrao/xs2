@@ -159,6 +159,22 @@ job 各 1 处。
 其余：快照三条判据与保鲜全绿；大陆下载加速维持现状（R44 结论）；快照保鲜容忍
 7 天维持（R49 确认）；「轮」按导出轮推进（R59 拍定，CI 不写回仓库）。
 
-## 11. 推送与 CI 核对
+## 11. 推送与 CI 核对（已闭环）
 
-（待推送后补写）
+推送 `2f89a33`（判据 + 测试 + CI 步骤）与 `9efbbc4`（交接文档 + PROJECT_INFO
+条目）；一次推送两个提交，run **41059682759** 五 job 全绿
+（backend / windows-backend / frontend / container-config / container-build）。
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 新步骤在两个 runner 上都真跑 | ubuntu `backend` 第 **10** 步、windows `windows-backend` 第 **9** 步 `Snapshot per-workflow regression gate`，均 success |
+| 真实快照判决与本机逐字一致 | 两 runner 与本地三处**逐字节相同**：`9 个 workflow 里 2 个可判（0 个判回归 / 2 个没有回归 / 0 个区间横跨阈值），7 个基线太薄判不了`＋character/mvp 的完整详情＋`两轮计数完全相同 … 这是样本没有新增，不是质量结论` |
+| 反向验证仍有判定力 | ubuntu 打印全挂 fixture 的 `3 个 workflow 里 3 个可判（1 个判回归 / 2 个没有回归）… wf-bad … 95% 区间 [92.78%, 100.00%] … 退出码 1 的来源：逐 workflow 回归（wf-bad）`；windows 该次调用被 `$null =` 吞掉输出（R60 已记录的 PowerShell 写法），按退出码断言 1 通过 |
+| OK 行 | ubuntu `OK  逐 workflow 回归判据双向生效：真实快照不判回归，全挂快照的 wf-bad 触发 1`；windows 同名行带 `（Windows/Python 3.14）` |
+| 四面用例总数一致 | ubuntu `2176 / 64` = **2240**、windows `2211 / 29` = **2240**、本机 Low-IL `2127 / 113` = **2240**、High-IL `2212 / 28` = **2240** |
+| 前端 | 日志里 8 个 `# pass` 块合计 **490**、8 个 `# fail` 块合计 **0**；`✓ built in 7.89s` |
+
+推送通道：本轮 **socks5 与直连同时可用**（`curl --socks5 127.0.0.1:10808` 与
+`--noproxy '*'` 访问 api.github.com 都返回 200），按仓库配置走 socks5 成功。
+与 R59（直连可用、socks5 拒连）、R60（socks5 可用、直连 reset）、R61（两条都
+可用）又不完全相同——再次确认「每轮先探测再选路」。
