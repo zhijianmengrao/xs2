@@ -162,6 +162,43 @@ per-workflow 判决都拿它当尺）。默认模式里给了就 `parser.error`�
 （R51–R56 的交接文档没贴这一段，本轮补上。注意它和入库快照不是同一批数据：
 快照是 28 runs / 255 attempts / 10 failed，这里受 `--limit 3` 限制。）
 
+### 7.2 推送与 CI 核对（已闭环）
+
+推送 `53f8ad2`（代码）+ `b13d251`（文档）+ `b605d50`（上限 = 100 的边界修复）。
+
+| run | 结果 |
+|---|---|
+| `CI` **41002780226**（b13d251） | **五 job 全绿**（backend / windows-backend / frontend / container-config / container-build） |
+| `CI` **41003395830**（b605d50） | **五 job 全绿** |
+
+CI 日志实证（下载日志解码后逐字比对，不是推断）：
+
+- **新步骤在两个 runner 上都真跑了**：ubuntu `backend` 的第 8 步与 windows
+  `windows-backend` 的第 7 步 `Provider failure-rate gate against real snapshot`，
+  均 success。windows 那一步此前**不存在**（本轮新增）。
+- **两个 runner 的判决逐字一致**：
+
+  ```
+  [live-gate] 失败率 3.92%（n=255, 失败 10），95% 区间 [2.14%, 6.56%]，
+              阈值（政策上限）8.00%：整个区间都在阈值之内，判正常
+  OK  真实失败率闸门双向生效：8% 上限通过，1% 上限触发 1
+  ```
+
+  windows 的措辞多一个平台后缀 `（Windows/Python 3.14）`，其余逐字相同
+  （windows 日志里中文是 `\uXXXX` 转义，解码后比对）。
+- **反向验证真跑**：ubuntu 日志里能看到第二次调用的输出
+  `阈值（政策上限）1.00%：整个区间都在阈值之上，判超阈`，退出码 1 被显式断言；
+  windows 那次输出被 `$null =` 收走（预期），由 `$LASTEXITCODE` 断言 ——
+  两个 runner 都打印了上面那行 OK，说明断言真的执行过。
+- **四面用例总数一致**：ubuntu `2117 passed / 64 skipped` = **2181**、
+  windows `2152 / 29` = **2181**、本机 Low-IL `2085 / 96` = **2181**、
+  High-IL `2170 / 11` = **2181**。
+- 第二次 run 覆盖了 `b605d50`（拒绝上限 100）——那是参数校验，用例数不变，
+  说明修复没有顺手改变任何判定。
+
+`config/skills_config.json` 的运行时写入未被任何一次提交带入（三次提交后
+`git status` 都只剩它一个）。
+
 ## 8. 变异验证（6 个，全部咬合）
 
 | 变异 | 预期 | 实测 |
@@ -182,14 +219,14 @@ per-workflow 判决都拿它当尺）。默认模式里给了就 `parser.error`�
 存在了。这说明「参数是否真的被用上」需要单独的测试（`test_cli_default_mode_
 honours_the_ceiling`），光测 `evaluate` 不够。
 
-## 9. 本轮改动一览（3 改 + 1 单独文档提交）
+## 9. 本轮改动一览（3 处代码改动 + 交接文档 + 1 个单独文档提交）
 
 | 文件 | 变更 |
 |---|---|
-| `scripts/check_live_snapshot_gate.py` | +140/−36：`_cp_interval`、`_verdict_of_interval`、`_ceiling_verdict`、`evaluate(ceiling)`、`--fail-if-above`、`--margin` 语义收窄与三处参数校验 |
-| `tests/test_live_snapshot_gate.py` | +213/−26：13 条新测试、2 条自指语义测试替换、CI 接线三件套 |
+| `scripts/check_live_snapshot_gate.py` | +141/−36：`_cp_interval`、`_verdict_of_interval`、`_ceiling_verdict`、`evaluate(ceiling)`、`--fail-if-above`、`--margin` 语义收窄与三处参数校验（含拒绝上限 100） |
+| `tests/test_live_snapshot_gate.py` | +218/−26：13 条新测试、2 条自指语义测试替换、CI 接线四件套 |
 | `.github/workflows/ci.yml` | +50/−5：ubuntu 主闸门改写 + windows 新增主闸门步骤 |
-| `docs/PROJECT_INFO.md` | 单独提交 `a2f5e4d`（纯文档修复，见 §12） |
+| `docs/PROJECT_INFO.md` | R57 基线条目追加（+3 行）；另有一个单独提交 `a2f5e4d`（R44 条目错位修复，见 §12） |
 
 `config/skills_config.json` 仍是未入库的运行时写入（B23/R36 定性），**不在本轮
 改动内**。提交时照例显式按路径 add，排除它。
