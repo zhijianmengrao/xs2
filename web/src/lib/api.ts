@@ -622,7 +622,7 @@ export async function getNovelReaderReport(workflowId: string, workspace: string
  * `runs/` 才算得出「最近是不是一直在挂」。默认关着，因为资源选择器之类的
  * 调用方只要 id 和名字。
  */
-export async function listWorkflows(options: { withHealth?: boolean; healthLimit?: number } = {}) {
+export async function listWorkflows(options: { withHealth?: boolean; healthLimit?: number; withTrend?: boolean; trendLimit?: number } = {}) {
   const query = new URLSearchParams();
   if (options.withHealth) {
     query.set("with_health", "true");
@@ -630,8 +630,14 @@ export async function listWorkflows(options: { withHealth?: boolean; healthLimit
       query.set("health_limit", String(options.healthLimit));
     }
   }
+  if (options.withTrend) {
+    query.set("with_trend", "true");
+    if (options.trendLimit && options.trendLimit > 0) {
+      query.set("trend_limit", String(options.trendLimit));
+    }
+  }
   const suffix = query.toString() ? `?${query}` : "";
-  return request<Array<{ workflow_id: string; name: string; node_count: number; version: number; status?: string; health?: import("../types").WorkflowHealth }>>(`/workflows${suffix}`);
+  return request<Array<{ workflow_id: string; name: string; node_count: number; version: number; status?: string; health?: import("../types").WorkflowHealth; trend?: import("../types").WorkflowTrend }>>(`/workflows${suffix}`);
 }
 
 export async function listWorkspaceFiles(

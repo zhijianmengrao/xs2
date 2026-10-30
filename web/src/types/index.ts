@@ -945,6 +945,29 @@ export interface WorkflowHealth {
   all_failed: boolean;
 }
 
+/**
+ * 单个工作流的失败率趋势（R55，仅 `?with_trend=true` 时返回）。
+ *
+ * 与 `WorkflowHealth` 是**正交**的两个信号：trend 判方向（是不是在持续变坏），
+ * health 判状态（现在是不是全坏）。一个每次都 100% 失败的工作流 trend 恒为
+ * `stable`（相邻差值恒 0）而 health 会是 `all_failed`——两者不能互相替代。
+ */
+export interface WorkflowTrend {
+  /** 与任务级 trend 同一套取值 */
+  trend: "improving" | "regressing" | "stable" | "insufficient";
+  /** 判「连续退步」需要几次相邻对比（后端给的，不要写死） */
+  consecutive_required: number;
+  /** 参与判定的 run 条数 */
+  points_considered: number;
+  /** 其中可比的相邻对比数（任一侧无尝试时不算可比） */
+  comparisons: number;
+  /** 最新一次相邻差值，正值=退步 */
+  delta_failure_rate: number | null;
+  latest_run_id: string | null;
+  failure_rate_current: number | null;
+  failure_rate_previous: number | null;
+}
+
 /** 工作流列表摘要 */
 export interface WorkflowSummary {
   workflow_id: string;
@@ -957,6 +980,8 @@ export interface WorkflowSummary {
   running_tasks?: number;
   /** 仅当请求带 with_health=true 时存在 */
   health?: WorkflowHealth;
+  /** 仅当请求带 with_trend=true 时存在 */
+  trend?: WorkflowTrend;
 }
 
 /** 单个工作流完整响应（定义 + 状态） */

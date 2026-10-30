@@ -955,27 +955,23 @@ def test_list_trend_block_carries_the_all_failed_signal(tmp_path, monkeypatch):
     assert block["trend"] == "stable"
 
 
-# ------------------------------- FAILURE_STREAK_REQUIRED 的取值依据（R53）
+# ------------------------------- FAILURE_STREAK_REQUIRED 的取值依据（R53，R55 补数据）
 def test_failure_streak_threshold_fits_inside_the_default_baseline_window():
     """门槛必须能被默认回溯窗口满足，否则这条信号在默认配置下永不触发。
 
     「最近 N 次全失败」的时间序列长度由调用方的 ``baseline_limit`` 决定
     （列表视图默认 5，上限 20）。序列里最多有 ``limit + 1`` 个点，所以
-    ``N`` 必须 ≤ ``limit + 1`` 才可能成立。R52 取 3 而 ``limit`` 默认 5，
-    有余量；但这两个数在**不同文件**里（``run_profile.py`` 与
-    ``workflow_routes.py`` 的 ``baseline_limit`` 默认值），谁改都不会碰到
-    另一处——这条测试把约束写下来。
+    ``N`` 必须 ≤ ``limit + 1`` 才可能成立。
 
-    取 3 而不是 2 的理由：2 意味着「上一次 + 这一次都失败」就报警，而单次
-    失败在这类长流程里是常态（一次节点超时就让 run failed）。3 至少要求
-    「连续两次重试机会都没救回来」，与 ``TREND_STREAK_REQUIRED=2``（趋势要
-    两次相邻差值）同量级但语义不同：趋势判方向，这条判当前状态。
+    R55 起两个数**不再分散**：``DEFAULT_BASELINE_LIMIT`` 与
+    ``FAILURE_STREAK_REQUIRED`` 都在 ``run_profile.py``，且端点默认值直接引用
+    前者。R53 那条「测试钉住了耦合但两数仍分处两文件」的挂账至此关闭——
+    现在改任一个都必须同时面对另一个。
     """
     from src.workflow.run_profile import (
-        FAILURE_STREAK_REQUIRED, failure_streak)
+        DEFAULT_BASELINE_LIMIT, FAILURE_STREAK_REQUIRED, failure_streak)
 
-    default_baseline_limit = 5
-    max_points = default_baseline_limit + 1  # 历史 limit 条 + 当前一条
+    max_points = DEFAULT_BASELINE_LIMIT + 1  # 历史 limit 条 + 当前一条
     assert FAILURE_STREAK_REQUIRED <= max_points, (
         f"门槛 {FAILURE_STREAK_REQUIRED} 大于默认窗口能提供的 {max_points} 个点："
         "默认配置下这条信号永远不触发"
@@ -984,6 +980,40 @@ def test_failure_streak_threshold_fits_inside_the_default_baseline_window():
     result = failure_streak([{"status": "failed"}] * max_points)
     assert result["all_failed"] is True
     assert result["consecutive_failed"] == max_points
+
+
+def test_failure_streak_threshold_is_three_backed_by_real_run_history():
+    """门槛取 3 有真实数据支撑（R55）。R53 的结论「3 合理」当时没有数据。
+
+    本机 8 个有 run 记录的 workflow、共 40 次 run，把它们当作历史时刻逐点回放
+    （即「每次新 run 落地时，若门槛是 k，会不会报警」）：
+
+    - ``k=2`` 触发 2 次——``flywheel-build`` 真实的 6 连败，**以及**
+      ``flywheel-character`` 的 2 连败（那之后紧接一次 run 就成功了）；
+    - ``k=3`` 与 ``k=4`` 都只触发 1 次（同一个 6 连败事件）。
+
+    所以 3 是「能抓住真实事件、又不把 2 连败报成告警」的最小取值；取 4 会把
+    发现时点推迟一次 run 而没有任何额外精度收益。本测试把**这三个边界**钉住：
+    下面内联的序列就是上面那两段真实历史的形状，不是编出来的数字。
+    """
+    from src.workflow.run_profile import FAILURE_STREAK_REQUIRED, failure_streak
+
+    assert FAILURE_STREAK_REQUIRED == 3
+
+    # 形状一：character 的真实序列 completed, failed, failed（之后又 completed）。
+    # 2 连败之后立刻恢复——取 2 会在那一刻报警，那是一次假告警。
+    character = [{"status": s} for s in ("completed", "failed", "failed")]
+    assert failure_streak(character, required=2)["all_failed"] is True
+    assert failure_streak(character, required=3)["all_failed"] is False
+
+    # 形状二：build 的真实序列里有一段 6 连败。取 3 与取 4 都能抓住，
+    # 但要看「3 更早」——前 3 次结束时取 3 已触发、取 4 还没有。
+    build_streak = [{"status": "failed"}] * 6
+    for required in (3, 4):
+        assert failure_streak(build_streak, required=required)["all_failed"] is True
+    first_three = build_streak[:3]
+    assert failure_streak(first_three, required=3)["all_failed"] is True
+    assert failure_streak(first_three, required=4)["all_failed"] is False
 
 
 def test_failure_streak_threshold_is_reported_so_callers_do_not_hardcode_it():
@@ -1171,3 +1201,234 @@ def test_list_workflows_health_is_absent_and_honest_for_unknown_workflow(
     assert health["run_count"] == 0
     assert health["latest_run_id"] is None
     assert health["all_failed"] is False
+
+
+# ---------- workflow 级趋势（R55） ----------
+
+def _profile_series(statuses_and_rates):
+    """构造 ``build_run_profile`` 形状的序列：[(run_id, day, attempts, failed)]。"""
+    series = []
+    for run_id, day, attempts, failed in statuses_and_rates:
+        series.append({
+            "run_id": run_id,
+            "status": "failed" if failed == attempts else "completed",
+            "started_at": f"2026-10-{day}T00:00:00+08:00",
+            "totals": {"attempts": attempts, "failed": failed},
+            "wall_seconds": None,
+        })
+    return series
+
+
+def test_workflow_trend_regresses_when_the_series_keeps_getting_worse():
+    """连续两次相邻差值都为正 → regressing。判据与任务级共用同一份定义。"""
+    from src.workflow.run_profile import workflow_trend
+
+    block = workflow_trend(_profile_series([
+        ("r1", "01", 10, 0),   # 0%
+        ("r2", "02", 10, 2),   # 20%
+        ("r3", "03", 10, 5),   # 50%
+    ]))
+    assert block["trend"] == "regressing"
+    assert block["comparisons"] == 2
+    assert block["points_considered"] == 3
+    assert block["delta_failure_rate"] == 0.3
+    assert block["latest_run_id"] == "r3"
+
+
+def test_workflow_trend_is_insufficient_without_enough_comparisons():
+    """没有可比的相邻对比时判 insufficient，不冒充 stable。
+
+    这是 ``compare_run_baseline`` 的既有纪律，workflow 级必须继承——「无从判断」
+    被读成「没问题」正是历轮反复批评的那类永远绿的形状。
+    """
+    from src.workflow.run_profile import workflow_trend
+
+    assert workflow_trend([])["trend"] == "insufficient"
+    single = workflow_trend(_profile_series([("r1", "01", 10, 1)]))
+    assert single["trend"] == "insufficient"
+    assert single["points_considered"] == 1
+    assert single["comparisons"] == 0
+    # 两个点只有一次对比，仍不够两次相邻差值。
+    two = workflow_trend(_profile_series([("r1", "01", 10, 0), ("r2", "02", 10, 3)]))
+    assert two["trend"] == "insufficient"
+    assert two["comparisons"] == 1
+
+
+def test_workflow_trend_sorts_by_time_not_input_order():
+    """输入顺序打乱时结论不变——内部按 ``_order_key`` 排序。
+
+    与 ``workflow_health`` 同一条纪律（R54 §2.2）：文件名字典序会把 ``run-10``
+    排在 ``run-9`` 前面，不排序就会把最早那次当成最新，于是判的是错的那一端。
+    这里把最新的放最前面传入，若实现信了调用方顺序，方向就会整个反掉。
+    """
+    from src.workflow.run_profile import workflow_trend
+
+    ordered = _profile_series([
+        ("r1", "01", 10, 0),   # 0%
+        ("r2", "02", 10, 2),   # 20%
+        ("r3", "03", 10, 5),   # 50%
+    ])
+    shuffled = [ordered[2], ordered[0], ordered[1]]
+    a = workflow_trend(ordered)
+    b = workflow_trend(shuffled)
+    assert a["trend"] == b["trend"] == "regressing"
+    assert a["latest_run_id"] == b["latest_run_id"] == "r3"
+    assert a["delta_failure_rate"] == b["delta_failure_rate"]
+
+
+def test_workflow_trend_limit_takes_the_newest_tail():
+    """``limit`` 裁掉的是**最早**那段，不是最新那段。"""
+    from src.workflow.run_profile import workflow_trend
+
+    series = _profile_series([
+        ("r1", "01", 10, 0),
+        ("r2", "02", 10, 2),
+        ("r3", "03", 10, 5),
+    ])
+    # 只留最近 2 条（r2→r3）→ 一次对比 → insufficient。
+    limited = workflow_trend(series, limit=2)
+    assert limited["points_considered"] == 2
+    assert limited["latest_run_id"] == "r3"
+    assert limited["trend"] == "insufficient"
+    # limit=0 表示全部（与 health_limit 的 0 同义）。
+    assert workflow_trend(series, limit=0)["points_considered"] == 3
+
+
+def test_workflow_trend_is_invisible_when_failure_rate_never_changes():
+    """每次都是同一个失败率 → stable，即使那个失败率很高。
+
+    这是 trend 与 health 正交的那个点（R52/R54 已记）：一个每次都 100% 失败的
+    workflow 相邻差值恒为 0，trend 判 stable。本测试把这条边界钉在 workflow 级，
+    防止有人「顺手」让 trend 去兜 health 的活——那会让两个信号混成一个。
+    """
+    from src.workflow.run_profile import workflow_health, workflow_trend
+
+    series = _profile_series([("r1", "01", 10, 10), ("r2", "02", 10, 10),
+                              ("r3", "03", 10, 10)])
+    assert workflow_trend(series)["trend"] == "stable"
+    # 同一批数据的 health 才看得见「一直全挂」。
+    health = workflow_health([
+        {"run_id": p["run_id"], "status": p["status"],
+         "started_at": p["started_at"]} for p in series])
+    assert health["all_failed"] is True
+    assert health["consecutive_failed"] == 3
+
+
+def test_list_workflows_trend_is_opt_in(tmp_path, monkeypatch):
+    """默认不扫 runs/：``with_trend`` 关着时列表响应里没有 trend 块。"""
+    _seed_health_runs(tmp_path, "wf-a",
+                      [("r1", "01", "failed"), ("r2", "02", "completed")])
+    manager = _HealthManager([{"workflow_id": "wf-a", "name": "A"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    body = client.get("/api/workflows").json()
+    assert "trend" not in body[0]
+
+
+def test_list_workflows_trend_aggregates_across_the_whole_workflow(
+        tmp_path, monkeypatch):
+    """workflow 级 trend 沿**整个 workflow** 的 run 序列判，不是单条任务。
+
+    这正是本轮的动机：run JSON 里没有 task_id（实测确认），所以 workflow 级
+    趋势无法由任务级合并而来，只能直接沿 ``runs/`` 目录的时间序列判。
+    """
+    runs_dir = tmp_path / "wf-a" / "runs"
+    runs_dir.mkdir(parents=True)
+    # 失败率 0% → 20% → 50%：两次相邻差值都为正。
+    for run_id, day, attempts, failed in [
+            ("r1", "01", 10, 0), ("r2", "02", 10, 2), ("r3", "03", 10, 5)]:
+        (runs_dir / f"run-{run_id}.json").write_text(json.dumps({
+            "run_id": f"run-{run_id}",
+            "status": "failed" if failed == attempts else "completed",
+            "started_at": f"2026-10-{day}T00:00:00+08:00",
+            "node_executions": [{
+                "node_id": "build",
+                "status": "failed" if failed else "completed",
+                "attempt_count": attempts,
+                "attempt_history": [
+                    {"attempt_number": i + 1, "trigger": "initial",
+                     "status": "failed" if i < failed else "completed"}
+                    for i in range(attempts)],
+            }],
+        }), encoding="utf-8")
+    manager = _HealthManager([{"workflow_id": "wf-a", "name": "A"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    trend = client.get("/api/workflows?with_trend=true").json()[0]["trend"]
+    assert trend["trend"] == "regressing"
+    assert trend["points_considered"] == 3
+    assert trend["comparisons"] == 2
+    assert trend["latest_run_id"] == "run-r3"
+
+
+def test_list_workflows_trend_and_health_can_be_requested_together(
+        tmp_path, monkeypatch):
+    """两个开关同时打开时各出各的块，且都是同一批 run 算出来的。"""
+    _seed_health_runs(tmp_path, "wf-a",
+                      [("r1", "01", "failed"), ("r2", "02", "failed"),
+                       ("r3", "03", "failed")])
+    manager = _HealthManager([{"workflow_id": "wf-a", "name": "A"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    body = client.get("/api/workflows?with_health=true&with_trend=true").json()[0]
+    assert body["health"]["consecutive_failed"] == 3
+    assert body["health"]["all_failed"] is True
+    # 三次失败、每次都没有 node_executions → attempts=0 → 无可比对比。
+    assert body["trend"]["trend"] == "insufficient"
+    assert body["trend"]["points_considered"] == 3
+
+
+def test_list_workflows_trend_is_honest_for_a_workflow_without_runs(
+        tmp_path, monkeypatch):
+    """没有 run 记录时 trend=insufficient 且 points=0，不是 stable。"""
+    manager = _HealthManager([{"workflow_id": "wf-empty", "name": "E"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    trend = client.get("/api/workflows?with_trend=true").json()[0]["trend"]
+    assert trend["trend"] == "insufficient"
+    assert trend["points_considered"] == 0
+    assert trend["latest_run_id"] is None
+
+
+def test_workflow_trend_limit_is_clamped_to_the_shared_maximum():
+    """``trend_limit`` 与 ``baseline_limit`` 用同一个上限常量，不各写一个数。"""
+    from src.workflow.run_profile import MAX_BASELINE_LIMIT
+
+    assert MAX_BASELINE_LIMIT == 20
+    src = Path(workflow_routes.__file__).read_text(encoding="utf-8")
+    # 端点里不该再出现裸的 20 作为上限（改了常量却漏改一处就是漂移）。
+    assert "min(int(trend_limit), MAX_BASELINE_LIMIT)" in src
+    assert "min(int(baseline_limit), MAX_BASELINE_LIMIT)" in src
+
+
+def test_list_workflows_trend_limit_takes_the_newest_runs(tmp_path, monkeypatch):
+    """端点上的 ``trend_limit`` 裁的是**最新**那段，不是最早那段（R55）。
+
+    这条与 ``_newest_metas`` 的分支直接对应：写成 ``[:limit]`` 会把最早的三条
+    留下、丢掉最新的结论，趋势就从「在退步」翻成别的。纯函数侧的
+    ``test_workflow_trend_limit_takes_the_newest_tail`` 钉的是 ``workflow_trend``
+    自己，这里钉的是路由层真的把裁剪接上了。
+    """
+    runs_dir = tmp_path / "wf-a" / "runs"
+    runs_dir.mkdir(parents=True)
+    # 1→6 号，失败率依次 0%,0%,10%,30%,50%,70%（用 attempts=10 构造）。
+    for day, failed in [(1, 0), (2, 0), (3, 1), (4, 3), (5, 5), (6, 7)]:
+        (runs_dir / f"run-r{day}.json").write_text(json.dumps({
+            "run_id": f"run-r{day}",
+            "status": "failed" if failed == 10 else "completed",
+            "started_at": f"2026-10-0{day}T00:00:00+08:00",
+            "node_executions": [{
+                "node_id": "build", "status": "completed", "attempt_count": 10,
+                "attempt_history": [
+                    {"attempt_number": i + 1, "trigger": "initial",
+                     "status": "failed" if i < failed else "completed"}
+                    for i in range(10)],
+            }],
+        }), encoding="utf-8")
+    manager = _HealthManager([{"workflow_id": "wf-a", "name": "A"}])
+    client = _client(tmp_path, monkeypatch, manager=manager)
+    # 只取最近 3 条（r4,r5,r6）→ 两次相邻对比（30→50→70），全为正 → regressing。
+    limited = client.get(
+        "/api/workflows?with_trend=true&trend_limit=3").json()[0]["trend"]
+    assert limited["points_considered"] == 3
+    assert limited["latest_run_id"] == "run-r6"
+    assert limited["trend"] == "regressing"
+    # 若裁错端（留下 r1,r2,r3 = 0,0,10），最后一次对比仍为正但只有一次可比？
+    # 实际 r1→r2 差值为 0，不成立连续两次 >0，会判 stable——所以上面那条
+    # regressing 断言同时钉住了「裁的是最新那段」。

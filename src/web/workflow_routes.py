@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from ..config import SESSIONS_DIR, WORKFLOWS_DIR
 from ..workflow.definition import WorkflowDef
+from ..workflow.run_profile import DEFAULT_BASELINE_LIMIT, MAX_BASELINE_LIMIT
 from ..workflow.task_overrides import TASK_OVERRIDE_ERROR_CODES
 from .workflow_access import (
     _ensure_http_mutation_allowed,
@@ -256,34 +257,49 @@ def _validate_variable_keys(variables: list[dict]) -> None:
 @router.get("")
 async def list_workflows(request: Request,
                          with_health: bool = False,
-                         health_limit: int = 0):
+                         health_limit: int = 0,
+                         with_trend: bool = False,
+                         trend_limit: int = DEFAULT_BASELINE_LIMIT):
     """列出所有工作流。
 
     Query params:
         with_health: 是否给每个 workflow 附 ``health`` 块（R54，默认关）
         health_limit: 每个 workflow 回溯多少个 run（0 = 全部；正数取最近 N 个）
+        with_trend: 是否给每个 workflow 附 ``trend`` 块（R55，默认关）
+        trend_limit: 趋势要回溯多少个历史 run（默认 5，上限 20）
 
     为什么 ``with_health`` 默认关：默认路径（资源选择器、侧栏）只要定义概要，
     这个开关要逐 workflow 扫 ``runs/`` 并解析 JSON，是列表端点里最重的一段
     与 ``list_tasks`` 的 ``with_trend`` 取舍完全相同。
 
-    ``health_limit`` 默认 0（全部）而 ``baseline_limit`` 默认 5，是因为两者问的
-    问题不同：``baseline_limit`` 是「够不够判趋势」，样本少了趋势判不出来；
-    这里问「这个 workflow 最近是不是一直在挂」，样本越少越可能误判成「没有
-    连续失败」——把窗口裁短正好会把全失败序列的头部截掉，反而不安全。所以
+    ``health_limit`` 默认 0（全部）而 ``trend_limit`` 默认 5，是因为两者问的
+    问题不同：趋势是「最近在不在变坏」，窗口裁短只是丢掉过老的对比；health
+    问「这个 workflow 最近是不是一直在挂」，样本越少越可能误判成「没有连续
+    失败」——把窗口裁短正好会把全失败序列的头部截掉，反而不安全。所以 health
     默认看全量，需要限流时由调用方显式给 N。
+
+    ``with_health`` 与 ``with_trend`` 是两个独立开关而不是一个：前者判**状态**
+    （现在是不是全坏），后者判**方向**（是不是在持续变坏）。两者正交，同一次
+    请求都开时共用一遍目录扫描（见 ``_collect_workflow_diagnostics``）。
     """
     mgr = _get_manager(request)
     workflows = mgr.list_workflows()
-    if with_health and isinstance(workflows, list):
-        limit_n = max(0, int(health_limit))
+    if (with_health or with_trend) and isinstance(workflows, list):
+        health_n = max(0, int(health_limit))
+        trend_n = max(1, min(int(trend_limit), MAX_BASELINE_LIMIT))
         for summary in workflows:
             if not isinstance(summary, dict):
                 continue
             workflow_id = str(summary.get("workflow_id") or "")
             if not workflow_id:
                 continue
-            summary["health"] = _collect_workflow_health(workflow_id, limit_n)
+            diagnostics = _collect_workflow_diagnostics(
+                workflow_id, health_n, trend_n,
+                want_health=with_health, want_trend=with_trend)
+            if with_health:
+                summary["health"] = diagnostics["health"]
+            if with_trend:
+                summary["trend"] = diagnostics["trend"]
     return workflows
 
 
@@ -470,7 +486,7 @@ async def list_tasks(workflow_id: str, request: Request,
                      page: int = 1,
                      page_size: int = 20,
                      with_trend: bool = False,
-                     baseline_limit: int = 5):
+                     baseline_limit: int = DEFAULT_BASELINE_LIMIT):
     """列出工作流的所有任务（支持筛选/排序/搜索/分页）。
 
     Query params:
@@ -500,7 +516,7 @@ async def list_tasks(workflow_id: str, request: Request,
         page_size=page_size,
     )
     if with_trend and isinstance(result, dict) and result.get("tasks"):
-        limit_n = max(1, min(int(baseline_limit), 20))
+        limit_n = max(1, min(int(baseline_limit), MAX_BASELINE_LIMIT))
         trends = _collect_workflow_trends(
             workflow_id,
             [{"task_id": t.get("task_id"), "run_id": t.get("run_id")}
@@ -814,7 +830,7 @@ async def get_task_run_profile(workflow_id: str, task_id: str, request: Request,
     if baseline_limit > 0:
         # 上限 20：与 ``--limit`` 一类「最近 N 次」口径一致，也避免一次请求
         # 扫遍整个 runs/ 目录（跑得久的工作流可能有上百条记录）。
-        limit = min(baseline_limit, 20)
+        limit = min(baseline_limit, MAX_BASELINE_LIMIT)
         if metas is None:
             metas = _iter_run_metadata(runs_dir)
         history: list[dict] = []
@@ -898,14 +914,63 @@ def _collect_workflow_health(workflow_id: str, limit: int = 0) -> dict:
     metas = _iter_run_metadata(runs_dir)
     if limit and limit > 0:
         # 与 run_profile 的排序键一致：先按时间升序，再取尾部 N 个。
-        from src.workflow.run_profile import _order_key
-
-        metas = sorted(
-            metas,
-            key=lambda m: (_order_key(m.get("started_at"), m.get("mtime", 0.0)),
-                           str(m.get("run_id", ""))),
-        )[-limit:]
+        metas = _newest_metas(metas, limit)
     return workflow_health(metas)
+
+
+def _collect_workflow_diagnostics(workflow_id: str, health_limit: int,
+                                  trend_limit: int, *,
+                                  want_health: bool, want_trend: bool) -> dict:
+    """一次目录扫描同时算出 health 与 trend（R55）。
+
+    两个开关都打开时，各自扫一遍 ``runs/`` 会把同一个目录读两次、把同样那些
+    run JSON 解析两次。实测单次全量扫是 28ms（R54 §2.4），翻倍后是 56ms——
+    对列表端点已经不能算免费。这里共用一遍元数据，只有 trend 才额外解析
+    run 画像（health 只要 status，元数据里就有）。
+
+    ``trend_limit`` 与 ``health_limit`` 分别作用于两个块，互不牵连：health 默认
+    看全量、trend 默认看最近 5 条，是两个不同的问题（见 ``list_workflows``）。
+    """
+    from src.workflow.run_profile import workflow_health, workflow_trend
+
+    runs_dir = WORKFLOWS_DIR / workflow_id / "runs"
+    metas = _iter_run_metadata(runs_dir)
+
+    health_block = None
+    if want_health:
+        health_metas = metas
+        if health_limit and health_limit > 0:
+            health_metas = _newest_metas(metas, health_limit)
+        health_block = workflow_health(health_metas)
+
+    trend_block = None
+    if want_trend:
+        trend_metas = _newest_metas(metas, trend_limit)
+        profiles = []
+        for meta in trend_metas:
+            loaded = _load_run_profile(runs_dir, meta, workflow_id)
+            if loaded is not None:
+                profiles.append(loaded)
+        trend_block = workflow_trend(profiles, limit=trend_limit)
+
+    return {"health": health_block, "trend": trend_block}
+
+
+def _newest_metas(metas: list[dict], limit: int) -> list[dict]:
+    """按 ``run_profile`` 的排序键取最近的 ``limit`` 条元数据。
+
+    排序键必须与 ``run_profile`` 共用一份：文件名序会把 ``run-10`` 排在
+    ``run-9`` 前面，两处各排一次就会在「哪条是最新」上产生分歧。
+    """
+    if limit <= 0:
+        return metas
+    from src.workflow.run_profile import _order_key
+
+    return sorted(
+        metas,
+        key=lambda m: (_order_key(m.get("started_at"), m.get("mtime", 0.0)),
+                       str(m.get("run_id", ""))),
+    )[-limit:]
 
 
 def _collect_workflow_trends(workflow_id: str, entries: list[dict],
@@ -1444,7 +1509,7 @@ async def list_all_tasks(request: Request,
                          workflow_id: str = "",
                          main_session_id: str = "",
                          with_trend: bool = False,
-                         baseline_limit: int = 5):
+                         baseline_limit: int = DEFAULT_BASELINE_LIMIT):
     """列出全部工作流的所有任务（全局任务历史），支持筛选/排序/搜索/分页。
 
     Query params:
@@ -1470,7 +1535,7 @@ async def list_all_tasks(request: Request,
         main_session_id=main_session_id,
     )
     if with_trend and isinstance(result, dict) and result.get("tasks"):
-        limit_n = max(1, min(int(baseline_limit), 20))
+        limit_n = max(1, min(int(baseline_limit), MAX_BASELINE_LIMIT))
         # 按 workflow 分组：一页 20 条可能跨十几个 workflow，逐条扫目录是
         # N 次全目录解析；分组后每个 workflow 只扫一次（``_collect_workflow_trends``
         # 内部还按 run_id 缓存画像，因为多个任务常指向同一批 run）。

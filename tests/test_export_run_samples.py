@@ -77,14 +77,19 @@ def test_half_width_is_strictly_greater_than_margin_to_trigger_seven() -> None:
 def test_thin_headroom_still_passes_but_warns() -> None:
     """余量很小（但为正）时判合格并告警——不是不合格。
 
-    当前快照 255/10 的所需余量 2.38 距 2.0 只剩 0.38 就是这一档。把它判成
-    不合格会让每次正常重导都红，那是不合格的告警噪音；判成合格而不提，则
-    下一个人不会知道「再厚一点就失效了」。所以两件事都要：通过 + 明确说余量。
+    这一条判的是**告警带的边界行为**，不是「当前快照恰好落在带里」：R55 把中段
+    换成精确界后，255/10 的所需余量从 2.38 升到 2.64，距默认 margin 2.0 的余量
+    变成 0.64——已经**不**在带里了（下一条测试把这个新事实钉住）。所以这里显式
+    给一个让余量落在 (0, 0.5) 带内的 margin，而不是依赖某个 n/k 碰巧越线。
+
+    判成不合格会让每次正常重导都红，那是不合格的告警噪音；判成合格而不提，
+    则下一个人不会知道「再厚一点就失效了」。所以两件事都要：通过 + 明确说余量。
     """
-    ok, message = exporter.half_width_budget(255, 10)
+    # 255/10 的所需余量是 2.639…，取 margin=2.3 → 余量 0.339，落在带内。
+    ok, message = exporter.half_width_budget(255, 10, margin=2.3)
     assert ok is True, message
-    assert "0.38" in message, message
     assert "越线" in message, message
+    assert "0.34" in message, message
 
 
 def test_zero_attempts_is_not_treated_as_safe() -> None:
@@ -336,8 +341,12 @@ def test_exporter_and_gate_agree_on_the_current_snapshot() -> None:
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     totals = meta["totals"]
     ok, message = exporter.half_width_budget(totals["attempts"], totals["failed"])
-    # 当前快照（R52 重导，255/10）判「仍能触发 7 但余量很小」。
+    # R55 换成精确界后，255/10 的所需余量是 2.64，距 margin 2.0 的余量 0.64——
+    # 已越过 0.5 的告警带，所以判「仍有判定力」而不是「越线」。这是实测数字
+    # 变了导致的文案变化，不是判据退化：2.64 > 2.0 仍然成立，反向验证那一步
+    # 仍会以退出码 7 触发。
     assert ok is True, message
-    assert "越线" in message, message
+    assert "仍有判定力" in message, message
+    assert "越线" not in message, message
     needed = sample_size_margin_needed(totals["attempts"], totals["failed"])
     assert needed is not None and needed > exporter.REVERSE_VALIDATION_MARGIN

@@ -22,7 +22,7 @@ const { act } = React;
 Object.assign(globalThis, { React });
 const { createRoot } = await import("react-dom/client");
 const { WorkflowTemplatePanel } = await import("./WorkflowPageParts");
-import type { WorkflowHealth, WorkflowSummary } from "../../types";
+import type { WorkflowHealth, WorkflowSummary, WorkflowTrend } from "../../types";
 
 let root: ReturnType<typeof createRoot> | undefined;
 
@@ -110,4 +110,69 @@ test("no badge when health is absent (with_health not requested)", async () => {
   const text = await renderPanel([summary()]);
   assert.doesNotMatch(text, /全失败/);
   assert.match(text, /示例工作流/);
+});
+
+// ---------- workflow 级趋势徽标（R55） ----------
+
+function trend(overrides: Partial<WorkflowTrend> = {}): WorkflowTrend {
+  return {
+    trend: "regressing",
+    consecutive_required: 2,
+    points_considered: 4,
+    comparisons: 2,
+    delta_failure_rate: 0.3,
+    latest_run_id: "run-d",
+    failure_rate_current: 0.5,
+    failure_rate_previous: 0.2,
+    ...overrides,
+  };
+}
+
+test("renders the regressing badge when the trend keeps rising", async () => {
+  const text = await renderPanel([summary({ trend: trend() })]);
+  assert.match(text, /失败率连续上升/);
+});
+
+test("renders the improving badge when the trend keeps falling", async () => {
+  const text = await renderPanel([summary({
+    trend: trend({ trend: "improving", delta_failure_rate: -0.3 }),
+  })]);
+  assert.match(text, /失败率连续下降/);
+});
+
+test("no trend badge for stable or insufficient", async () => {
+  // stable（有涨有跌/持平）与 insufficient（样本不够）都不是「在变坏」，
+  // 报成告警会变成噪音——与 health 徽标「没有证据不报警」同一纪律。
+  for (const value of ["stable", "insufficient"] as const) {
+    const text = await renderPanel([summary({ trend: trend({ trend: value }) })]);
+    assert.doesNotMatch(text, /失败率连续上升/, value);
+    assert.doesNotMatch(text, /失败率连续下降/, value);
+  }
+});
+
+test("no trend badge when trend is absent", async () => {
+  const text = await renderPanel([summary()]);
+  assert.doesNotMatch(text, /失败率连续/);
+  assert.match(text, /示例工作流/);
+});
+
+test("all-failed and regressing badges can both appear at once", async () => {
+  // 两者正交，不是二选一：一个 workflow 可以既「现在全坏」又「还在变坏」。
+  const text = await renderPanel([summary({
+    health: health({ all_failed: true, consecutive_failed: 4 }),
+    trend: trend(),
+  })]);
+  assert.match(text, /连续 4 次全失败/);
+  assert.match(text, /失败率连续上升/);
+});
+
+test("a constant-100%-failure workflow shows all-failed but not regressing", async () => {
+  // R52/R54/R55 反复强调的那条边界：每次 100% 失败时相邻差值恒为 0，
+  // trend 判 stable，只有 health 看得见。这里是它的 UI 表达。
+  const text = await renderPanel([summary({
+    health: health({ all_failed: true, consecutive_failed: 5 }),
+    trend: trend({ trend: "stable", delta_failure_rate: 0 }),
+  })]);
+  assert.match(text, /连续 5 次全失败/);
+  assert.doesNotMatch(text, /失败率连续上升/);
 });

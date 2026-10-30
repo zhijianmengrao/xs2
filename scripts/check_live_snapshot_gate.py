@@ -317,19 +317,83 @@ def check_coverage(data_dir: Path, source_dir: Path) -> tuple[int, str]:
 #
 # 阈值因此没有常量：它完全由快照自身的 ``attempts/failed`` 与 margin 决定，
 # 重导后自动跟着变，不存在「数字对了才怪」的失准。
-Z_95 = 1.959963984540054  # 双侧 95% 正态分位数
+# 第三种形状（R55 补）：``0 < p < 1`` 的中段原来用正态近似 ``1.96*sqrt(p(1-p)/n)``，
+# 两端用 Clopper-Pearson。三条式子拼在一起会在 ``p`` 从 0 跳到 ``1/n`` 处留下一个
+# **方向错误**的台阶：n=10 时零失败需 25.89 个百分点，一次失败反而只要 18.59——
+# 「多了一次失败」让样本显得更可信。那不是保守与否的问题，是判据在说反话，它会让
+# 「刚出现失败」的样本比「零失败」的样本更容易过闸门。
+#
+# 修法是**全线用同一个精确界**：Clopper-Pearson 的单侧界可以写成二项分布的精确
+# 分位数求解（下面 ``_cp_bounds``），两端恰好有闭式 ``1 - 0.05**(1/n)``——这正是
+# 那个闭式的来历，不是另一个估计。于是三条式子合并成一条，台阶消失，且整段
+# 对 ``k`` 单调（失败越多要求越厚），不会出现「说反话」的形状。
+#
+# 代价（如实记录）：区间比正态近似宽，因此**已经够厚的快照可能被判薄**。实测
+# 入库快照全局 10/255：2.38 → 2.64 个百分点，仍远小于 margin=10，全局闸门不受
+# 影响；per-workflow 诊断里 build（9.81→12.76）与 post-hoc（7.99→14.12）会从
+# 「达标」变「不达标」——但那一块本就恒退出 0（R54 §1），变的是诊断文字不是结论。
+Z_95 = 1.959963984540054  # 双侧 95% 正态分位数（保留：外部测试仍引用它）
+
+# 二分求解的迭代次数：区间 [0,1] 上 80 次 → 约 1e-24 的分辨率，远超所需的
+# 1e-4 个百分点精度。不用 scipy：CI 环境未装，判据不该依赖可选包。
+_CP_BISECTION_STEPS = 80
+
+
+def _binomial_cdf_le(attempts: int, k: int, p: float) -> float:
+    """``P(X <= k)``，X ~ Binomial(attempts, p)。"""
+    if p <= 0:
+        return 1.0
+    if p >= 1:
+        return 0.0 if k < attempts else 1.0
+    k = min(k, attempts)
+    q = 1.0 - p
+    return sum(math.comb(attempts, i) * (p ** i) * (q ** (attempts - i))
+               for i in range(k + 1))
+
+
+def _cp_bounds(attempts: int, failed: int) -> tuple[float, float]:
+    """Clopper-Pearson 的 95% 单侧界 ``(下界, 上界)``。
+
+    上界是满足 ``P(X <= failed) = 0.05`` 的那个 p，下界是满足
+    ``P(X >= failed) = 0.05``（即 ``P(X <= failed-1) = 0.95``）的那个 p。
+    两端恰好等于闭式 ``1 - 0.05**(1/n)`` 到 0/1 的距离——闭式不是另一个估计，
+    就是这个精确界在 ``failed`` 取 0 或 n 时的解析解。
+    """
+    if failed <= 0:
+        lower = 0.0
+    else:
+        lo, hi = 0.0, 1.0
+        for _ in range(_CP_BISECTION_STEPS):
+            mid = (lo + hi) / 2
+            if 1.0 - _binomial_cdf_le(attempts, failed - 1, mid) < 0.05:
+                lo = mid
+            else:
+                hi = mid
+        lower = (lo + hi) / 2
+    if failed >= attempts:
+        upper = 1.0
+    else:
+        lo, hi = 0.0, 1.0
+        for _ in range(_CP_BISECTION_STEPS):
+            mid = (lo + hi) / 2
+            if _binomial_cdf_le(attempts, failed, mid) > 0.05:
+                lo = mid
+            else:
+                hi = mid
+        upper = (lo + hi) / 2
+    return lower, upper
 
 
 def sample_size_margin_needed(attempts: int, failed: int) -> float | None:
     """这段样本的失败率估计「需要多宽的余量」才可信（百分点）。
 
-    返回的是**必须 ≤ margin 的那个量**，三种形状各取各的估计算：
+    返回的是**必须 ≤ margin 的那个量**：Clopper-Pearson 95% 单侧界到点估计
+    ``failed/attempts`` 的最大距离。三种形状（零失败 / 全部失败 / 中间）用的是
+    **同一个**精确界，只是两端可以走闭式快路径（R55 合并，见上方注释）:
 
-    - ``0 < p < 1``：双侧 95% 正态近似半宽。
-    - ``p == 0``：零失败时 95% 单侧上界 ``1 - 0.05**(1/n)``。正态近似在这里
-      退化成 0，直接用它会让「0/n」永远合格。
-    - ``p == 1``：全部失败时到 1 的单侧距离 ``1 - 0.05**(1/n)``。正态近似同样
-      退化成 0，与上一条是镜像关系（R53 补）。
+    - ``p == 0`` 或 ``p == 1``：闭式 ``1 - 0.05**(1/n)``。它与精确界在两端
+      完全相等（有测试钉住），用闭式是为了不为一个能写成解析式的值做二分。
+    - ``0 < p < 1``：两侧精确界里的较大者。
 
     单独抽成函数是为了让**导出脚本**能复用同一份算术
     （``scripts/export_run_samples.py`` 用它判「CI 反向验证还能不能触发退出码
@@ -337,12 +401,11 @@ def sample_size_margin_needed(attempts: int, failed: int) -> float | None:
     """
     if attempts <= 0 or failed < 0 or failed > attempts:
         return None
+    p_hat = failed / attempts
     if failed == 0 or failed == attempts:
-        # 两端都用 Clopper-Pearson 的单侧 95% 界：0.05**(1/n) 是「全成功时 p 的
-        # 下界」，也是「全失败时 p 的上界」，取到边界 0/1 的距离即所需余量。
         return (1 - 0.05 ** (1.0 / attempts)) * 100
-    p = failed / attempts
-    return Z_95 * (p * (1 - p) / attempts) ** 0.5 * 100
+    lower, upper = _cp_bounds(attempts, failed)
+    return max(upper - p_hat, p_hat - lower) * 100
 
 
 def _failure_rate_precision(attempts: int, failed: int,

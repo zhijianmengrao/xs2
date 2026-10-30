@@ -852,6 +852,60 @@ async def scenario_retry_backoff_long_chain_shape_is_honoured(
     )
 
 
+async def scenario_retry_backoff_four_segment_shape_is_honoured(
+        runtime: Runtime, stub) -> ScenarioResult:
+    """四段退避的形状必须与配置一致（R55）。
+
+    三段场景（``retry_backoff_long_chain_shape_is_honoured``）仍留一个盲区：
+    「前三段都对、第四段错」的回归在 ``max_retries=3`` 下不可见——那时不存在
+    第四段。典型形态是实现里 ``delays`` 只读前三项、第四项回落到默认值，或者
+    ``while len(delays) < max_retries`` 的填充逻辑在尾项上取错了源值。
+
+    做法：``[stub:5xx][stub:fail_four_times]`` 让前四次请求都失败，产生四个
+    退避段；配置 ``delays=[0.4, 0.8, 1.6, 3.2]``，逐对断言 1→2、2→3、3→4 三段
+    都递增（``_rising_shape_violations`` 按 ``len(configured)-1`` 循环，本就不
+    需要为段数改判据）。
+
+    为什么量级与三段场景相同（0.4 起、总 6.0s）而**不**为了省时间降到 0.2 起：
+    R53 §11-2 记过 ``min_ratio=1.5`` 的判别力随共模偏移变弱。段长越小，同样的
+    绝对偏移占比越大——0.2 起时 0.15s 的偏移会把首对压到 1.57，离门槛只剩
+    0.07，CI 上很容易翻成假红。0.4 起时同一偏移是 1.73，仍有安全余量。宁可多
+    等 3 秒，也不要一条会偶发变红的判据。
+    """
+    definition = {
+        "name": "retry backoff four segment shape",
+        "nodes": [_agent_node("shaped4", "task [stub:5xx][stub:fail_four_times]")],
+        "edges": [],
+    }
+    problems: list[str] = []
+    configured = [0.4, 0.8, 1.6, 3.2]
+    _install_retry_config(runtime, max_retries=4, delays=configured,
+                          sdk_max_retries=0)
+    stub.requests.clear()
+    stub.reset_claims()
+    status, nodes = await runtime.run_workflow(
+        "wf-e2e-backoff-four-shape", definition)
+    node = nodes.get("shaped4")
+    if status != "completed" or (node is not None and node.status != "completed"):
+        problems.append(
+            f"任务未 completed（status={status}），四段形状场景前提不成立："
+            "四次重试应当救回")
+    else:
+        segments = _backoff_segments(stub, floor=0.2)
+        problems.extend(_rising_shape_violations(segments, configured))
+
+    _install_retry_config(runtime, max_retries=2, delays=[0, 0],
+                          sdk_max_retries=None)
+
+    return ScenarioResult(
+        "retry_backoff_four_segment_shape_is_honoured",
+        not problems,
+        "; ".join(problems) or (
+            f"四段退避形状符合配置 {configured}：实测 "
+            f"{_backoff_segments(stub, floor=0.2)[:4]}"),
+    )
+
+
 SCENARIOS = {
     "happy_path": scenario_happy_path,
     "failure_propagates": scenario_failure_propagates,
@@ -863,6 +917,8 @@ SCENARIOS = {
     "retry_backoff_shape_is_honoured": scenario_retry_backoff_shape_is_honoured,
     "retry_backoff_long_chain_shape_is_honoured": (
         scenario_retry_backoff_long_chain_shape_is_honoured),
+    "retry_backoff_four_segment_shape_is_honoured": (
+        scenario_retry_backoff_four_segment_shape_is_honoured),
 }
 SCENARIO_ORDER = [
     "happy_path",
@@ -874,6 +930,7 @@ SCENARIO_ORDER = [
     "retry_backoff_is_honoured",
     "retry_backoff_shape_is_honoured",
     "retry_backoff_long_chain_shape_is_honoured",
+    "retry_backoff_four_segment_shape_is_honoured",
 ]
 
 

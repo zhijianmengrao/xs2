@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { AlertTriangle, List, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, List, Plus, Trash2, TrendingDown, TrendingUp, X } from "lucide-react";
 
 import type { WorkflowSummary } from "../../types";
 
@@ -62,6 +62,17 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "失败",
   stopped: "已停止",
 };
+
+/**
+ * 失败率 0.0-1.0 → 百分比文本。`null` 表示「无可比数据」，不是 0%。
+ *
+ * 与后端 `compare_run_baseline` 的诚实缺席同一纪律（R55）：把「没有数据」
+ * 显示成 "0%" 会让一个全新 workflow 看起来一片大好。
+ */
+function formatRate(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "无可比数据";
+  return `${(value * 100).toFixed(1)}%`;
+}
 
 const STATUS_COLORS: Record<string, string> = {
   idle: "text-muted-foreground",
@@ -152,6 +163,30 @@ export function WorkflowTemplatePanel({
                   >
                     <AlertTriangle size={12} aria-hidden="true" />
                     连续 {workflow.health.consecutive_failed} 次全失败
+                  </div>
+                )}
+                {workflow.trend?.trend === "regressing" && (
+                  // R55：与上面的全失败徽标**并列**而不是互斥。两者正交：
+                  // health 判「现在是不是全坏」，trend 判「是不是在持续变坏」。
+                  // 一个从 0% 一路涨到 60% 的 workflow 会只出这一个，
+                  // 一个恒定 100% 的会只出上面那一个。
+                  <div
+                    role="status"
+                    title={`失败率连续 ${workflow.trend.comparisons >= workflow.trend.consecutive_required ? workflow.trend.consecutive_required : workflow.trend.comparisons} 次相邻对比都在上升（最近 ${workflow.trend.points_considered} 次 run 中）。最新一次失败率 ${formatRate(workflow.trend.failure_rate_current)}，上一次 ${formatRate(workflow.trend.failure_rate_previous)}。`}
+                    className="inline-flex items-center gap-1 px-2 py-1 mb-3 ml-2 rounded-md bg-warning/10 border border-warning/20 text-warning text-xs"
+                  >
+                    <TrendingUp size={12} aria-hidden="true" />
+                    失败率连续上升
+                  </div>
+                )}
+                {workflow.trend?.trend === "improving" && (
+                  <div
+                    role="status"
+                    title={`失败率连续 ${workflow.trend.comparisons >= workflow.trend.consecutive_required ? workflow.trend.consecutive_required : workflow.trend.comparisons} 次相邻对比都在下降。最新一次失败率 ${formatRate(workflow.trend.failure_rate_current)}，上一次 ${formatRate(workflow.trend.failure_rate_previous)}。`}
+                    className="inline-flex items-center gap-1 px-2 py-1 mb-3 ml-2 rounded-md bg-success/10 border border-success/20 text-success text-xs"
+                  >
+                    <TrendingDown size={12} aria-hidden="true" />
+                    失败率连续下降
                   </div>
                 )}
                 <div className="mt-3 text-xs text-muted-foreground mb-3">

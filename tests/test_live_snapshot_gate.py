@@ -577,18 +577,81 @@ def test_degenerate_ends_are_not_treated_as_zero_width() -> None:
         assert needed is not None and needed > 0, (failed, needed)
 
 
-def test_middle_of_the_range_still_uses_the_normal_approximation() -> None:
-    """非退化区间仍然用双侧半宽——别为了修两端把中间也换成保守界。
+def test_middle_of_the_range_uses_the_exact_bound_not_the_normal_approximation() -> None:
+    """中段也走精确界——R55 推翻了 R53 的「中段保持正态近似」这个决定。
 
-    换成 Clopper-Pearson 会得到更宽的区间，于是本来够厚的快照会被判太薄，
-    快照得导更多 run 才能过。那不是本轮想改的东西。
+    R53 的理由是「换成 Clopper-Pearson 会得到更宽的区间，于是本来够厚的快照会被
+    判太薄」。那个理由站不住：把三种形状拆成两条式子，会在 ``p`` 从 0 跳到
+    ``1/n`` 处留下一个**方向错误**的台阶（见下一条测试）。宁可区间宽一点、全线
+    同一把尺，也不要一把尺在两个区间上得出互相矛盾的结论。
+
+    代价是实测的：入库快照全局 10/255 的所需余量 2.38 → 2.64 个百分点，仍远小于
+    margin=10；但 per-workflow 诊断里 build 与 post-hoc 会从达标变不达标——那一块
+    恒退出 0，变的是诊断文字。
     """
     attempts, failed = 255, 10
     needed = live_gate.sample_size_margin_needed(attempts, failed)
-    p = failed / attempts
-    expected = live_gate.Z_95 * (p * (1 - p) / attempts) ** 0.5 * 100
+    normal = live_gate.Z_95 * ((failed / attempts) * (1 - failed / attempts)
+                              / attempts) ** 0.5 * 100
     assert needed is not None
-    assert abs(needed - expected) < 1e-9, (needed, expected)
+    # 精确界比正态近似宽（这是有意的保守），且两者在同量级（不是差一个数量级）。
+    assert needed > normal, (needed, normal)
+    assert needed < normal * 2, (needed, normal)
+    # 与精确界定义对齐（这不是「背下来的参考值」，而是定义式本身）：上界满足
+    # P(X <= k | p=upper) = 0.05，下界满足 P(X <= k-1 | p=lower) = 0.95。
+    # n=255, k=10 时实测 lower≈2.143%、upper≈6.561%，点估计 3.922%。
+    lower, upper = live_gate._cp_bounds(attempts, failed)
+    assert abs(live_gate._binomial_cdf_le(attempts, failed, upper) - 0.05) < 1e-9
+    assert abs(live_gate._binomial_cdf_le(attempts, failed - 1, lower) - 0.95) < 1e-9
+    assert 0.021 < lower < 0.022, lower
+    assert 0.065 < upper < 0.066, upper
+
+
+def test_a_first_failure_never_makes_the_sample_look_more_trustworthy() -> None:
+    """R55 的核心回归：``p`` 从 0 跳到 ``1/n`` 时，所需余量**必须变大**。
+
+    这是本轮修的那个坑的形状。旧的混合实现下 n=10、k=0 要 25.89 个百分点，
+    而 k=1 只要 18.59——多了一次失败，样本反而显得更可信，判据在说反话。
+    它会让「刚出现失败」的样本比「零失败」的样本更容易过闸门，正好把最该被
+    看见的那一刻放过去。
+
+    只对 n ≥ 5 断言：n ≤ 4 时精确界在低端仍有轻微反转（n=2 时 77.6 → 47.5），
+    但那几个 n 的所有 k 都已经远超任何合理 margin（最小值也在 45 个百分点
+    以上），判决结果不可能因此不同——见下一条测试把它钉住。
+    """
+    for attempts in range(5, 301):
+        zero = live_gate.sample_size_margin_needed(attempts, 0)
+        one = live_gate.sample_size_margin_needed(attempts, 1)
+        assert zero is not None and one is not None
+        assert one > zero, (
+            f"n={attempts}：一次失败（{one:.2f}）没有比零失败（{zero:.2f}）要求更厚——"
+            "判据又在说反话"
+        )
+        # 高端镜像。
+        one_short = live_gate.sample_size_margin_needed(attempts, attempts - 1)
+        all_failed = live_gate.sample_size_margin_needed(attempts, attempts)
+        assert one_short is not None and all_failed is not None
+        assert one_short > all_failed, (attempts, one_short, all_failed)
+
+
+def test_the_small_n_inversion_cannot_change_any_verdict() -> None:
+    """n ≤ 4 的残余反转必须落在「怎么判都太薄」的区域里，不该影响结论。
+
+    上一条测试刻意从 n=5 起断言，把 n=2..4 留给这条：如果哪天有人给 n=3 加了
+    特殊处理让它「变合格」，这里会红。判据是「这些 n 的最小所需余量仍远大于
+    一个现实 margin」——只要成立，反转就不是可观测差异。
+    """
+    realistic_margin = 10.0  # 闸门默认值，也是快照闸门在用的量级
+    for attempts in (2, 3, 4):
+        worst = min(live_gate.sample_size_margin_needed(attempts, k)
+                    for k in range(attempts + 1))
+        assert worst is not None
+        assert worst > realistic_margin * 4, (
+            f"n={attempts} 的最小所需余量只有 {worst:.1f} 个百分点，"
+            "反转可能影响判决：需要重新审视而不是假定它无害")
+    # 反向钉住：n=5 起已无反转，所以「n<=4 无害」这个豁免范围不能再扩大。
+    assert live_gate.sample_size_margin_needed(5, 1) > \
+        live_gate.sample_size_margin_needed(5, 0)
 
 
 def test_sample_size_detects_metadata_drift(tmp_path: Path) -> None:

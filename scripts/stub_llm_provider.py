@@ -65,6 +65,10 @@ R45/R46/R47 连续三轮把「CI e2e」列为最有价值的缺口。它一直�
 「两次重试之间的两个间隔」都可观察：只失败一次时序列里只有一个退避段，量不到
 ``delays`` 的**形状**（递增/递减/恒定三种配置会产生同样的单段时长）。
 
+``[stub:fail_thrice]`` / ``[stub:fail_four_times]`` 继续加段（R53 / R55），用来
+判**只在长链末端显形**的回归：实现里 ``delays`` 只读前几项、或循环边界少一次
+导致最后一段用错下标——这类 bug 在短链上完全不可见，因为那时那些段根本不存在。
+
 **这不是伪造失败语义**（R49 §7-5 拒绝的那件事）：注入的是真实 provider 会
 发出的 HTTP 状态码与错误体，经过的是真实的 ``openai`` SDK → ``provider_errors``
 分类 → ``_should_retry_provider_error`` 判定链路。桩不发明新的失败类型，只
@@ -97,14 +101,19 @@ ERROR_MARKERS: dict[str, int] = {
 # 注入只在前 N 次请求上生效；之后正常回复。没有这些标记就是「每次请求都失败」。
 # ``fail_twice``（R52）为退避形状验证而加：只有一次失败时序列里只有一个退避段，
 # 量不到 delays 的增减形状。``fail_thrice``（R53）同理再加一段，用来判「第二段
-# 对了但第三段没跟上」——那类回归只在三段以上的重试链上显形。
+# 对了但第三段没跟上」——那类回归只在三段以上的重试链上显形。``fail_four_times``
+# （R55）再加一段：判据 ``_rising_shape_violations`` 本就按 ``len(configured)-1``
+# 循环、支持任意段数，缺的只是标记与场景；四段用来覆盖「前两段对、第三段对、
+# 最后一段错」这类只在长链末端显形的回归（例如实现里 delays 只读前三项）。
 FAIL_ONCE_MARKER = "[stub:fail_once]"
 FAIL_TWICE_MARKER = "[stub:fail_twice]"
 FAIL_THRICE_MARKER = "[stub:fail_thrice]"
+FAIL_FOUR_TIMES_MARKER = "[stub:fail_four_times]"
 _FAIL_BUDGETS: dict[str, int] = {
     FAIL_ONCE_MARKER: 1,
     FAIL_TWICE_MARKER: 2,
     FAIL_THRICE_MARKER: 3,
+    FAIL_FOUR_TIMES_MARKER: 4,
 }
 STALL_SECONDS_DEFAULT = 3.0
 

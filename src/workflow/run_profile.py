@@ -376,7 +376,26 @@ TREND_STREAK_REQUIRED = 2
 # 每次都 100% 失败的工作流，相邻差值恒为 0，于是 ``regressing`` 永远不触发，
 # 判出来是 ``stable``——「一直在全挂」被读成「没有变化」。这正是 R45/R46/R47
 # 反复批评的那类盲区：判据只回答了「有没有在变坏」，没回答「现在是不是全坏」。
+#
+# 取值 3 的依据（R55 用真实数据复核，取代 R53 的「3 合理」这个无数据的结论）：
+# 本机 8 个有 run 记录的 workflow、共 40 次 run。把它们当作历史时刻逐点回放，
+# ``required=2`` 会触发 2 次——一次是 ``flywheel-build`` 真实的 6 连败，另一次
+# 是 ``flywheel-character`` 的 2 连败，而那之后紧接着一次 run 就成功了。取 2
+# 等于把「重试一次就恢复」报成运维告警，是噪声。``required=3`` 与 ``4`` 在本
+# 数据上都只触发 1 次（同一个 6 连败事件），但 4 会把发现时点推迟一次 run，
+# 没有任何额外精度收益。所以 3 是「能抓住真实事件、又不报 2 连败」的最小取值。
 FAILURE_STREAK_REQUIRED = 3
+
+# 门槛与默认回溯窗口放在同一处（R55）。R53 只用一条测试钉住了「N 必须 ≤
+# 窗口点数」这个耦合，两个数仍分散在两个文件里——改任一处都不会碰到另一处，
+# 测试红了也只是红在远处。这里建立单一来源：``workflow_routes`` 的
+# ``baseline_limit`` 默认值直接引用 ``DEFAULT_BASELINE_LIMIT``。
+#
+# 约束本身：序列里最多 ``baseline_limit + 1`` 个点（历史 N 条 + 当前一条），
+# 所以 ``FAILURE_STREAK_REQUIRED <= DEFAULT_BASELINE_LIMIT + 1`` 才可能成立。
+# 由 ``tests/test_run_profile.py`` 钉住，而且现在两边读的是同一个常量。
+DEFAULT_BASELINE_LIMIT = 5
+MAX_BASELINE_LIMIT = 20
 
 
 def failure_streak(points: list[dict[str, Any]],
@@ -445,6 +464,69 @@ def workflow_health(runs: list[dict[str, Any]],
         "consecutive_failed": streak["consecutive_failed"],
         "required": streak["required"],
         "all_failed": streak["all_failed"],
+    }
+
+
+def workflow_trend(profiles: list[dict[str, Any]],
+                   limit: int = DEFAULT_BASELINE_LIMIT) -> dict[str, Any]:
+    """把一个 workflow 的 run 画像序列判成趋势（R55）。
+
+    ``profiles`` 是 ``build_run_profile`` 的产物列表，**顺序不限**——与
+    ``workflow_health`` 同一纪律：内部按 ``_order_key`` 排序，不信调用方给的
+    顺序。文件名字典序会把 ``run-10`` 排在 ``run-9`` 前面（R54 §2.2 的实例），
+    不排序就会把「最新的 run」认成错的那一条，于是判的是另一端的方向。
+
+    与任务级 ``trend`` 的差别只在**输入范围**：任务级只沿一条任务的 run 序列
+    看（``_collect_workflow_trends``），workflow 级沿整个 workflow 的 run 序列
+    看。同一个 workflow 里多个任务交替跑时，任务级每条只看到自己那截，任何
+    单条任务都判不出「这个 workflow 整体在变坏」——这正是本函数存在的理由，
+    与 ``workflow_health`` 补的是同一层盲区（一个判状态，一个判方向）。
+
+    判据**复用** ``compare_run_baseline`` 而不是另写一份：趋势的定义（相邻差值
+    连续 N 次同向、``insufficient`` 不冒充 ``stable``）已经在那一处定型，重写
+    一份会让两条路径对「什么叫退步」产生分歧——R53 §2.3 抽
+    ``_rising_shape_violations``、R54 §2.2 复用 ``failure_streak`` 都是同一条
+    理由。
+
+    ``limit`` 只取最近的部分：趋势问的是「最近在不在变坏」，把五年前的 run
+    算进序列既不改结论又白读文件。``limit <= 0`` 时取全部（与 ``health_limit``
+    的 0 = 全部同义）。
+
+    没有 run 记录时 ``trend=insufficient``、``points=[]``——「没有序列」不等于
+    ``stable``，与 ``compare_run_baseline`` 的诚实缺席一致。
+    """
+    ordered = sorted(
+        (p for p in (profiles or []) if isinstance(p, dict)),
+        key=lambda p: (_order_key(p.get("started_at"), p.get("mtime", 0.0)),
+                       str(p.get("run_id", ""))),
+    )
+    if limit and limit > 0:
+        ordered = ordered[-limit:]
+    if not ordered:
+        return {
+            "trend": TREND_INSUFFICIENT,
+            "consecutive_required": TREND_STREAK_REQUIRED,
+            "points_considered": 0,
+            "comparisons": 0,
+            "delta_failure_rate": None,
+            "latest_run_id": None,
+            "failure_rate_current": None,
+            "failure_rate_previous": None,
+        }
+    baseline = compare_run_baseline(ordered[-1], ordered[:-1])
+    deltas = baseline.get("deltas") or []
+    return {
+        "trend": baseline["trend"],
+        "consecutive_required": baseline["consecutive_required"],
+        "points_considered": len(baseline["points"]),
+        "comparisons": len([d for d in deltas if d["comparable"]]),
+        "delta_failure_rate": (deltas[-1]["delta_failure_rate"]
+                               if deltas else None),
+        "latest_run_id": ordered[-1].get("run_id") or None,
+        "failure_rate_current": (baseline.get("totals") or {}).get(
+            "failure_rate_current"),
+        "failure_rate_previous": (baseline.get("totals") or {}).get(
+            "failure_rate_previous"),
     }
 
 

@@ -458,6 +458,8 @@ def test_e2e_scenarios_cover_success_failure_and_termination() -> None:
         "retry_backoff_is_honoured",
         "retry_backoff_shape_is_honoured",
         "retry_backoff_long_chain_shape_is_honoured",
+        # R55：四段形状，覆盖「前三段对、第四段错」那类只在长链末端显形的回归。
+        "retry_backoff_four_segment_shape_is_honoured",
     ]
 
 
