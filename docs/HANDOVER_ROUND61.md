@@ -161,9 +161,11 @@ k≥29（11.37%），**间隔 3 次失败（1.17pp）**。8% 保住了「回归�
 
 ## 11. 推送与 CI 核对（已闭环）
 
-推送 `977863b`（本轮唯一一次代码/文档提交：校准文档 + 闸门/CI 注释），CI run
-**41041804988** **五 job 全绿**（backend / windows-backend / frontend /
-container-config / container-build）。
+推送 `977863b`（校准文档 + 闸门/CI 注释）与 `3273156`（交接文档 +
+PROJECT_INFO 条目）；run **41041804988** 与 **41043045796** 均 **五 job 全绿**
+（backend / windows-backend / frontend / container-config / container-build）。
+下表是 `41041804988` 的逐字实证；`41043045796` 只多两份 docs，同一批快照判据
+在同一份数据上复跑，判决一致。
 
 | 项 | 实证（下载日志解码后逐字比对，不是推断） |
 |---|---|
