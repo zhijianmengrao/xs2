@@ -51,6 +51,10 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
 
     # 样本量厚度（CI 跑；只读快照自身，不需要真实数据面）
     python scripts/check_live_snapshot_gate.py --check-sample-size
+
+    # 按 workflow 判失败率（R56；默认只报告，加 --fail-on-exceeds 才按不合格退出）
+    python scripts/check_live_snapshot_gate.py --check-per-workflow-rate
+    python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds
 """
 
 from __future__ import annotations
@@ -612,6 +616,200 @@ def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     return EXIT_OK, summary
 
 
+def per_workflow_baselines(buckets: dict[str, dict]) -> dict[str, float | None]:
+    """每个 workflow 的**留一法基线税率**（百分点），不含它自己（R56）。
+
+    为什么不能用全局合计当基线——这是本轮最重要的一处设计取舍，理由与
+    ``evaluate`` 那条自指阈值是同一个错误的两个实例：
+
+    全局合计 ``failed_all / attempts_all`` 里**包含了被判的那个 workflow 自己**。
+    一个 workflow 全挂时，它既抬高了自己的观测失败率，也同时抬高了拿它比的
+    那条基线，两者一起涨，于是「比自己所在的总体的平均高」这个条件天然难以成立
+    ——**最该被看见的那一条，恰恰是它自己把自己藏起来的那一条**。留一法把自
+    己那份从基线里扣掉，两者才可比。
+
+    留一法在数学上也正是这个问题该用的估计量：问的是「这个 workflow 的失效率
+    是否高于**其余** workflow 的合并失效率」，其余部分正是 ``(F - k) / (A - n)``。
+
+    返回 ``None`` 当且仅当其余 workflow 一次尝试都没有（只剩一个 workflow 的
+    快照），此时基线无从计算，调用方须把它报成「无法判定」而不是拿 0 当基线。
+    """
+    total_attempts = sum(int(b.get("attempts") or 0) for b in buckets.values())
+    total_failed = sum(int(b.get("failed") or 0) for b in buckets.values())
+    baselines: dict[str, float | None] = {}
+    for name, bucket in buckets.items():
+        rest_attempts = total_attempts - int(bucket.get("attempts") or 0)
+        rest_failed = total_failed - int(bucket.get("failed") or 0)
+        baselines[name] = (rest_failed / rest_attempts * 100.0
+                           if rest_attempts > 0 else None)
+    return baselines
+
+
+def _rate_verdict(attempts: int, failed: int, baseline_pct: float,
+                  margin_pct: float) -> tuple[str, str]:
+    """单个 workflow 相对基线的判决：``exceeds`` / ``normal`` / ``undetermined``。
+
+    三分法而不是二分的过／不过，是这份快照的实测逼出来的（R56）：真实快照 9 个
+    workflow 里，除 character 外每一个的 95% 区间都横跨阈值——区间 [0%, 45%] 与
+    阈值 14% 的关系不是「合格」也不是「不合格」，是**这份样本不足以回答**。
+    强行二分只有两个结果：恒红（把「判不了」当「不合格」）或恒绿（把「判不了」
+    当「合格」），两者都是历轮反复批评的假防护。
+
+    ``undetermined`` 因此是一等判决，不是失败也不是通过的别名。它的处置与
+    两者都不同：调大 ``--limit`` 重导更多 run，而不是去查供应商（1 号退出码的
+    处置）或确认新 workflow 该不该进样本（6 号）。
+
+    判定用**单侧**精确界，与 ``sample_size_margin_needed`` 同一把尺：
+
+    - ``exceeds``：95% 下界 > 基线 + margin。整个区间都在阈值之上，才敢说超。
+    - ``normal``：95% 上界 ≤ 基线 + margin。整个区间都在阈值之内，才敢说正常。
+    - 其余：区间横跨阈值 → ``undetermined``。
+    """
+    if attempts <= 0:
+        return "undetermined", "attempts=0，无观测"
+    threshold = baseline_pct + margin_pct
+    p_hat = failed / attempts * 100.0
+    if failed <= 0:
+        lower, upper = 0.0, (1 - 0.05 ** (1.0 / attempts)) * 100
+    elif failed >= attempts:
+        lower = 0.05 ** (1.0 / attempts) * 100
+        upper = 100.0
+    else:
+        lo, hi = _cp_bounds(attempts, failed)
+        lower, upper = lo * 100.0, hi * 100.0
+    detail = (f"失败率 {p_hat:.2f}%（n={attempts}, 失败 {failed}），"
+              f"95% 区间 [{lower:.2f}%, {upper:.2f}%]，"
+              f"基线 {baseline_pct:.2f}% + 余量 {margin_pct:g} = 阈值 {threshold:.2f}%")
+    if lower > threshold:
+        return "exceeds", detail
+    if upper <= threshold:
+        return "normal", detail
+    return "undetermined", detail
+
+
+def per_workflow_rate_report(buckets: dict[str, dict],
+                             margin: float) -> dict[str, dict]:
+    """逐 workflow 的失败率判决表（纯函数，便于测试与复用）。
+
+    返回 ``{workflow: {attempts, failed, rate_pct, baseline_pct, verdict, detail}}``。
+    排序由调用方决定（报告里按 workflow 名，测试里可任意取）。
+    """
+    baselines = per_workflow_baselines(buckets)
+    report: dict[str, dict] = {}
+    for name, bucket in buckets.items():
+        attempts = int(bucket.get("attempts") or 0)
+        failed = int(bucket.get("failed") or 0)
+        baseline = baselines.get(name)
+        if baseline is None:
+            report[name] = {
+                "attempts": attempts, "failed": failed,
+                "rate_pct": (failed / attempts * 100.0) if attempts else None,
+                "baseline_pct": None, "verdict": "undetermined",
+                "detail": "其余 workflow 没有任何尝试，留一法基线无从计算",
+            }
+            continue
+        verdict, detail = _rate_verdict(attempts, failed, baseline, margin)
+        report[name] = {
+            "attempts": attempts, "failed": failed,
+            "rate_pct": (failed / attempts * 100.0) if attempts else None,
+            "baseline_pct": baseline, "verdict": verdict, "detail": detail,
+        }
+    return report
+
+
+def check_per_workflow_rate(data_dir: Path, margin: float,
+                            fail_on_exceeds: bool = False) -> tuple[int, str]:
+    """按 workflow 判失败率是否高于**其余** workflow 的合并基线（R56）。
+
+    这是 R54 §1 与 R53 §12-3 一路挂账到现在的「真正增量」：此前 per-workflow
+    只做样本量诊断，闸门本身仍用全局合计，而全局合计对「某个 workflow 在变坏」
+    是结构性失明的（一个全挂的 workflow 会把自己拉进基线里，见
+    ``per_workflow_baselines`` 的注释）。
+
+    默认**只报告、恒退出 0**，加 ``--fail-on-exceeds`` 才按不合格退出。这是本轮
+    刻意选的落地形态（用户拍定「先报告一轮，下轮再硬门槛」）：真实快照 9 个
+    workflow 里 8 个是 ``undetermined``，此时若直接硬门槛，红的是「样本太薄」
+    而不是「有 workflow 在变坏」——那又是一个向错方向的假红。先让结论在 CI
+    日志里跑一轮可读，再决定阈值怎么定。
+
+    能红的路径（与 ``check_per_workflow`` 同一纪律）：
+    1. ``per_workflow`` 元数据与内容不一致 → 4（重导）；
+    2. 无样本 → 3；
+    3. 有 workflow 判 ``exceeds`` 且给了 ``--fail-on-exceeds`` → 1。
+    ``undetermined`` 在任何模式下都不判失败：它是「判不了」，处置是重导更多
+    run，不是「不合格」。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判 per-workflow 失败率：{meta_path}"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+
+    recorded = meta.get("per_workflow") or {}
+    if not isinstance(recorded, dict) or not recorded:
+        return EXIT_NO_SAMPLE, (
+            "快照元数据缺 per_workflow 块，无法判 per-workflow 失败率。"
+            "重导一次即可补上：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+
+    actual = recompute_per_workflow(data_dir / "workflows")
+    if not actual:
+        return EXIT_NO_SAMPLE, (
+            f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
+
+    # 与 --check-per-workflow 完全同一层校验：判失败率之前，先确认判的是内容
+    # 而不是一句写在元数据里的话。两处各写一份漂移检查会各自演化出差异。
+    drifts: list[str] = []
+    for name in sorted(set(recorded) | set(actual)):
+        rec = recorded.get(name) or {}
+        act = actual.get(name)
+        if act is None:
+            drifts.append(f"{name}: 元数据有、内容无")
+            continue
+        rec_key = (int(rec.get("runs") or 0), int(rec.get("attempts") or 0),
+                   int(rec.get("failed") or 0))
+        act_key = (act["runs"], act["attempts"], act["failed"])
+        if rec_key != act_key:
+            drifts.append(
+                f"{name}: 元数据 runs/attempts/failed={rec_key}，"
+                f"内容复算={act_key}")
+    if drifts:
+        return EXIT_META_DRIFT, (
+            "per-workflow 元数据与内容不一致（全局合计可能仍然相等，所以全局校验"
+            "看不出来）：" + "；".join(drifts) +
+            "。重导：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+
+    report = per_workflow_rate_report(actual, margin)
+    exceeds = [n for n in sorted(report) if report[n]["verdict"] == "exceeds"]
+    normal = [n for n in sorted(report) if report[n]["verdict"] == "normal"]
+    undetermined = [n for n in sorted(report)
+                    if report[n]["verdict"] == "undetermined"]
+
+    summary = (
+        f"per-workflow 失败率（留一法基线，margin={margin:g}）："
+        f"{len(exceeds)} 个超出 / {len(normal)} 个正常 / "
+        f"{len(undetermined)} 个样本不足无法判定")
+    if exceeds:
+        summary += "。超出基线的：" + "；".join(
+            f"{n}（{report[n]['detail']}）" for n in exceeds)
+    if normal:
+        summary += "。正常的：" + "；".join(
+            f"{n}（{report[n]['detail']}）" for n in normal)
+    if undetermined:
+        summary += (
+            "。样本不足的（**不是**合格也不是不合格，处置是重导更多 run）："
+            + "；".join(f"{n}（{report[n]['detail']}）" for n in undetermined))
+    if not fail_on_exceeds:
+        summary += "。本轮为**报告模式**：不因超出而失败（加 --fail-on-exceeds 才判）"
+
+    if exceeds and fail_on_exceeds:
+        return EXIT_GATE_TRIGGERED, summary
+    return EXIT_OK, summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -629,6 +827,12 @@ def main() -> int:
     parser.add_argument("--check-per-workflow", action="store_true",
                         help="按 workflow 分别报告失败率估计精度，并校验 per_workflow "
                              "元数据与内容一致（只读快照自身，CI 可跑）")
+    parser.add_argument("--check-per-workflow-rate", action="store_true",
+                        help="按 workflow 判失败率是否高于其余 workflow 的合并基线"
+                             "（留一法；只读快照自身，CI 可跑）")
+    parser.add_argument("--fail-on-exceeds", action="store_true",
+                        help="--check-per-workflow-rate 时把 exceeds 判为退出码 1"
+                             "（默认只报告，恒退出 0）")
     parser.add_argument("--source", type=Path, default=None,
                         help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
                              "仅 --check-stale / --check-coverage 使用")
@@ -639,17 +843,33 @@ def main() -> int:
         parser.error("--margin 不能为负")
     if options.max_lag_days < 0:
         parser.error("--max-lag-days 不能为负")
-    # 三种判据互斥：一次调用判一件事，混判会让人看不出是哪种不合格。
+    # 四种判据互斥：一次调用判一件事，混判会让人看不出是哪种不合格。
+    # ``--fail-on-exceeds`` 不是判据而是 ``--check-per-workflow-rate`` 的修饰，
+    # 所以不列入互斥表——它与任何判据同时出现都只是"这个开关没用上"，
+    # 由下面的显式检查报错，而不是静默忽略。
     chosen = [
         flag for flag, on in (
             ("--check-stale", options.check_stale),
             ("--check-coverage", options.check_coverage),
             ("--check-sample-size", options.check_sample_size),
             ("--check-per-workflow", options.check_per_workflow),
+            ("--check-per-workflow-rate", options.check_per_workflow_rate),
         ) if on
     ]
     if len(chosen) > 1:
         parser.error(f"{' 与 '.join(chosen)} 是不同的判据，不能同时使用")
+    if options.fail_on_exceeds and not options.check_per_workflow_rate:
+        # 静默忽略会让「我加了 --fail-on-exceeds，CI 却没红」变成一个无人排查
+        # 的谜。显式报错，与上一行的互斥检查同一纪律。
+        parser.error("--fail-on-exceeds 只能配合 --check-per-workflow-rate 使用")
+
+    if options.check_per_workflow_rate:
+        # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
+        code, message = check_per_workflow_rate(
+            options.data_dir or _default_data_dir(), options.margin,
+            fail_on_exceeds=options.fail_on_exceeds)
+        print(f"[live-gate] {message}", file=sys.stderr)
+        return code
 
     if options.check_per_workflow:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。

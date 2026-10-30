@@ -147,6 +147,45 @@ jobs:
           fi
           echo "OK  per-workflow 判据双向生效：真实快照通过，注入漂移触发 4"
 
+      # per-workflow 失败率（R56）。上一步判的是「单个 workflow 的样本够不够厚」，
+      # 这一步判的是另一个问题：**某个 workflow 的失效率是否高于其余 workflow 的
+      # 合并基线**。此前闸门用全局合计当基线，而全局合计对这个问题是结构性失明的
+      # ——一个全挂的 workflow 会把自己也拉进基线，观测值和阈值一起涨。这一步用
+      # 留一法基线（把被判的那份扣掉）。
+      #
+      # 本轮是**报告模式**：即使有 workflow 判「超出基线」也退出 0（用户拍定的
+      # 两步走）。理由是真实快照当下 9 个 workflow 里 8 个的 95% 区间横跨阈值——
+      # 此时强行硬门槛，红的会是「样本太薄」而冒充成「有 workflow 在变坏」，
+      # 又是一个向错方向的假红。先让结论在 CI 日志里跑一轮，下一轮再定阈值。
+      #
+      # 这一步能红的路径只有元数据漂移与无样本（与上一步同一纪律），所以照例注入
+      # 一处漂移，必须判 4。报告模式不等于恒绿：判据本身仍然在判，只是不拦路。
+      - name: Snapshot per-workflow failure-rate report
+        run: |
+          snapshot=tests/fixtures/live_snapshot
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-rate \
+            --data-dir "$snapshot"
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::per-workflow 失败率判据失败（退出码 $code，4=元数据漂移 3=无样本）"
+            exit "$code"
+          fi
+          # 反向验证：确认这一步不是恒绿——注入漂移必须判 4。
+          # 单行 python -c 而非 heredoc：heredoc 体顶格会提前终止 YAML 块标量。
+          tmp=$(mktemp -d)
+          cp -r "$snapshot"/. "$tmp/"
+          python -c "import json,pathlib,sys;r=pathlib.Path(sys.argv[1]);m=json.loads((r/'snapshot-meta.json').read_text(encoding='utf-8'));pw=m['per_workflow'];k=sorted(pw)[0];pw[k]['failed']=int(pw[k].get('failed',0))+1;(r/'snapshot-meta.json').write_text(json.dumps(m),encoding='utf-8')" "$tmp" \
+            || { echo "::error::无法构造漂移样本"; rm -rf "$tmp"; exit 1; }
+          drift=0
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-rate \
+            --data-dir "$tmp" > /dev/null 2>&1 || drift=$?
+          rm -rf "$tmp"
+          if [ "$drift" -ne 4 ]; then
+            echo "::error::注入漂移后仍判 $drift（期望 4）：判据失去判定力"
+            exit 1
+          fi
+          echo "OK  per-workflow 失败率报告生效：真实快照通过，注入漂移触发 4"
+
       # 工作流编排 e2e（R49）：前三轮（R45/R46/R47）反复记录的「最有价值缺口」。
       # 它一直没做，卡的不是工作量而是凭据——真实 e2e 要一家供应商的 key，而 key
       # 不能进 CI（fork PR 拿不到 secrets），也不该为了跑测试烧额度。
@@ -258,6 +297,42 @@ jobs:
             exit 1
           }
           Write-Host "OK  per-workflow 判据双向生效（Windows/Python 3.14）：真实快照通过，注入漂移触发 4"
+          exit 0
+
+      # per-workflow 失败率（R56）：与 ubuntu 那段一一对应（留一法基线、报告模式、
+      # 注入漂移必须判 4）。单列一个步骤而不是并进上一步：Ubuntu 与 Windows 的
+      # 两个 job 各自独立可读，一处判据一件事，日志里失败点能直接定位。
+      #
+      # 同样受 pwsh 那两个坑约束（见上一步注释）：非零退出要降 $ErrorActionPreference，
+      # 末尾必须显式 exit 0，否则包装器追加的 `exit $LASTEXITCODE` 会把
+      # 「注入漂移故意判 4」那次调用的退出码带出来，让整步在判据正常时变红。
+      - name: Snapshot per-workflow failure-rate report
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $snapshot = "tests/fixtures/live_snapshot"
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --data-dir $snapshot
+          $rateCode = $LASTEXITCODE
+          if ($rateCode -ne 0) {
+            Write-Host "::error::per-workflow 失败率判据失败（退出码 $rateCode，4=元数据漂移 3=无样本）"
+            exit $rateCode
+          }
+          $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("wfrater-" + [guid]::NewGuid().ToString("N"))
+          Copy-Item -Recurse -Force $snapshot $tmp
+          python -c "import json,pathlib,sys;r=pathlib.Path(sys.argv[1]);m=json.loads((r/'snapshot-meta.json').read_text(encoding='utf-8'));pw=m['per_workflow'];k=sorted(pw)[0];pw[k]['failed']=int(pw[k].get('failed',0))+1;(r/'snapshot-meta.json').write_text(json.dumps(m),encoding='utf-8')" $tmp
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::无法构造漂移样本"
+            Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --data-dir $tmp 2>&1
+          $rateDrift = $LASTEXITCODE
+          Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+          if ($rateDrift -ne 4) {
+            Write-Host "::error::注入漂移后仍判 $rateDrift（期望 4）：判据失去判定力"
+            exit 1
+          }
+          Write-Host "OK  per-workflow 失败率报告生效（Windows/Python 3.14）：真实快照通过，注入漂移触发 4"
           exit 0
       # 存储名只读巡检（R23）：Windows 权威基线跑完后对仓库做一次设备名遗留
       # 体检，防新数据回归。CI 克隆不含运行期 data/，此步主要锚定配置面与

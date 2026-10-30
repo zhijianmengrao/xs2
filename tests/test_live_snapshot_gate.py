@@ -916,11 +916,29 @@ def test_per_workflow_reports_no_sample_when_snapshot_has_no_workflows(
     assert code == live_gate.EXIT_NO_SAMPLE
 
 
+def _has_flag(run: str, flag: str) -> bool:
+    """``run`` 里是否出现了**完整**的开关 ``flag``。
+
+    用「后面不能再接 ``-`` 或标识符字符」判边界，而不是要求后跟空格——开关也
+    可能出现在行尾，或后面直接跟续行反斜杠。``--check-per-workflow`` 与
+    ``--check-per-workflow-rate`` 因此能被区分开。
+    """
+    import re
+
+    return re.search(re.escape(flag) + r"(?![-\w])", run) is not None
+
+
 def _per_workflow_step() -> dict:
-    """ubuntu backend 上的 per-workflow 步骤（R54）。"""
+    """ubuntu backend 上的 per-workflow **样本量**步骤（R54）。
+
+    不能按子串 ``--check-per-workflow`` 定位：R56 加了
+    ``--check-per-workflow-rate``，它把前者当词前缀，子串匹配会把两个步骤都算
+    进来（R56 实测踩到，这条断言报的 2 处）。改为按完整开关 token 匹配，
+    以后再加 ``--check-per-workflow-*`` 也不会误伤。
+    """
     hits = [
         s for s in _backend_steps()
-        if "--check-per-workflow" in str(s.get("run", ""))
+        if _has_flag(str(s.get("run", "")), "--check-per-workflow")
     ]
     assert len(hits) == 1, (
         "ci.yml 的 backend job 必须且只能有一处跑 --check-per-workflow"
@@ -959,7 +977,7 @@ def test_windows_runner_also_judges_per_workflow() -> None:
     """Windows job 上有同一段（与 sample-size 同样的理由：判据看似平台无关）。"""
     hits = [
         s for s in _windows_backend_steps()
-        if "--check-per-workflow" in str(s.get("run", ""))
+        if _has_flag(str(s.get("run", "")), "--check-per-workflow")
     ]
     assert len(hits) == 1, (
         "ci.yml 的 windows-backend job 必须且只能有一处跑 --check-per-workflow"
@@ -985,3 +1003,264 @@ def test_judgement_flags_are_mutually_exclusive(monkeypatch) -> None:
     with pytest.raises(SystemExit) as excinfo:
         live_gate.main()
     assert excinfo.value.code == 2
+
+
+# --------------------------------------- per-workflow 失败率（R56）
+# 这一组钉住 R56 的主线：此前闸门用**全局合计**当基线，而全局合计对「某个
+# workflow 在变坏」是结构性失明的——一个全挂的 workflow 会把自己也拉进基线里，
+# 观测值和阈值一起涨，于是它永远判不出自己。留一法基线把被判的那份扣掉。
+def _rate_snapshot(root: Path, spec: dict[str, tuple[int, int]]) -> None:
+    """造一份 per-workflow 快照：``spec`` 是 ``{workflow: (attempts, failed)}``。
+
+    复用 ``_write_per_workflow_snapshot`` 的落盘形状（每个 workflow 一个 run，
+    attempt 数即 attempts），这个包装只是给本组测试一个说得出意图的名字。
+    """
+    _write_per_workflow_snapshot(root, spec)
+
+
+def test_leave_one_out_baseline_excludes_the_judged_workflow() -> None:
+    """留一法基线必须把被判的那份从基线里扣掉——这是全部判据的地基。
+
+    三个 workflow 各 10 次尝试、各 0 失败，再加一个 10/10 的全挂者。全局合计
+    基线是 10/40 = 25%，而留一法给全挂者的基线是 0/30 = 0%。**这两个数字必须
+    不同**：若判据用的是全局合计，全挂者观测 100% 也只比 25% 高 75 个百分点，
+    而它自己的 10 次失败贡献了阈值里的 10 个百分点——自己抬高了自己的门槛。
+
+    这里不测判据结论，只测基线算术：把「基线含不含自己」这件事单独钉住，
+    否则后面所有判决测试都可能建立在错误的基线上而仍然通过。
+    """
+    buckets = {
+        "a": {"runs": 1, "attempts": 10, "failed": 0},
+        "b": {"runs": 1, "attempts": 10, "failed": 0},
+        "c": {"runs": 1, "attempts": 10, "failed": 0},
+        "bad": {"runs": 1, "attempts": 10, "failed": 10},
+    }
+    baselines = live_gate.per_workflow_baselines(buckets)
+    # 全挂者看其余三个：0/30。
+    assert baselines["bad"] == pytest.approx(0.0, abs=1e-12)
+    # 健康者看其余（含那个全挂的）：10/30。
+    assert baselines["a"] == pytest.approx(10 / 30 * 100.0, abs=1e-12)
+    # 与「全局合计」明确不同——这条断言就是「不能拿全局合计当基线」的意思。
+    global_baseline = 10 / 40 * 100.0
+    assert baselines["bad"] != pytest.approx(global_baseline, abs=1e-6)
+
+
+def test_leave_one_out_baseline_is_none_for_a_lone_workflow() -> None:
+    """只剩一个 workflow 时基线无从计算，必须给 None 而不是 0。
+
+    拿 0 当基线会让「唯一那个 workflow」永远跟 0% 比，任何失败都判超出——
+    一个只有单 workflow 的快照会变成恒红，而它实际上无法回答这个问题。
+    """
+    assert live_gate.per_workflow_baselines(
+        {"only": {"runs": 1, "attempts": 20, "failed": 5}}) == {"only": None}
+
+
+def test_a_wildly_failing_workflow_exceeds_its_leave_one_out_baseline(
+        tmp_path: Path) -> None:
+    """本判据存在的全部理由：一个全挂的 workflow 必须被判 ``exceeds``。
+
+    两个健康 workflow 各 30 次尝试零失败，第三个 40 次尝试全失败。它的 95%
+    下界 92.78% 远高于阈值（基线 0% + margin 10 = 10%），整个区间都在阈值之上。
+
+    反向意义：这条判据若失效（比如退回全局合计基线），全挂者在全局口径下
+    观测 100% 对基线 57%，依然会超出——所以**光靠这条测试不能证明用的是留一法**。
+    留一法本身由上一条基线算术测试钉住，两者分工明确。
+    """
+    _rate_snapshot(tmp_path, {"good-a": (30, 0), "good-b": (30, 0), "bad": (40, 40)})
+    report = live_gate.per_workflow_rate_report(
+        live_gate.recompute_per_workflow(tmp_path / "workflows"), margin=10.0)
+    assert report["bad"]["verdict"] == "exceeds", report["bad"]
+    assert report["good-a"]["verdict"] == "normal", report["good-a"]
+    assert report["good-b"]["verdict"] == "normal", report["good-b"]
+
+
+def test_a_thin_workflow_is_undetermined_not_failed_and_not_passed(
+        tmp_path: Path) -> None:
+    """样本太薄时判 ``undetermined``——它既不是合格也不是不合格（R56 的核心）。
+
+    这是真实快照逼出来的形状：9 个 workflow 里 8 个的 95% 区间横跨阈值。
+    把这种样本判「合格」就是恒绿（判不了当通过），判「不合格」就是恒红
+    （判不了当失败）。两者都是历轮反复批评的假防护，所以它必须是第三种判决。
+
+    这里用 1 次尝试 1 次失败：区间 [5.4%, 100%] 横跨阈值 10% 以上。
+    """
+    _rate_snapshot(tmp_path, {"thin": (1, 1), "good-a": (40, 0), "good-b": (40, 0)})
+    report = live_gate.per_workflow_rate_report(
+        live_gate.recompute_per_workflow(tmp_path / "workflows"), margin=10.0)
+    assert report["thin"]["verdict"] == "undetermined", report["thin"]
+    # 明细里必须同时给出区间两端，否则没法看出「为什么判不了」。
+    assert "95% 区间" in report["thin"]["detail"]
+    assert "[" in report["thin"]["detail"] and "]" in report["thin"]["detail"]
+
+
+def test_undetermined_is_never_a_hard_failure_even_with_fail_on_exceeds(
+        tmp_path: Path) -> None:
+    """``--fail-on-exceeds`` 只对 ``exceeds`` 生效，不能被 ``undetermined`` 触发。
+
+    这一条防的是最省事的错误实现：把「不是 normal」一律当失败。那样真实快照
+    （8 个 undetermined）一接进 CI 就恒红，而且红的原因与「有 workflow 在变坏」
+    毫无关系——指向的是错误的处置。
+    """
+    _rate_snapshot(tmp_path, {"thin": (1, 1), "good-a": (40, 0), "good-b": (40, 0)})
+    code, message = live_gate.check_per_workflow_rate(
+        tmp_path, margin=10.0, fail_on_exceeds=True)
+    assert code == live_gate.EXIT_OK, message
+    assert "undetermined" not in message  # 报告用中文，不泄露内部枚举名
+    assert "样本不足" in message
+
+
+def test_report_mode_does_not_fail_on_exceeds(tmp_path: Path) -> None:
+    """默认报告模式：即使有 workflow 超出基线，也恒退出 0（本轮用户拍定的形态）。
+
+    这不是「判据不敢判」，而是 R56 刻意选的两步走：先让真实的 per-workflow 结论
+    在 CI 日志里跑一轮，看清红的是什么、是不是「样本太薄」冒充「在变坏」，
+    再在下一轮决定硬门槛。硬门槛靠 ``--fail-on-exceeds`` 显式打开。
+    """
+    _rate_snapshot(tmp_path, {"bad": (40, 40), "good-a": (30, 0), "good-b": (30, 0)})
+    code, message = live_gate.check_per_workflow_rate(
+        tmp_path, margin=10.0, fail_on_exceeds=False)
+    assert code == live_gate.EXIT_OK, message
+    assert "报告模式" in message
+    # 同一份快照，打开开关就必须红——证明这个开关不是摆设。
+    strict_code, _ = live_gate.check_per_workflow_rate(
+        tmp_path, margin=10.0, fail_on_exceeds=True)
+    assert strict_code == live_gate.EXIT_GATE_TRIGGERED
+
+
+def test_rate_check_reuses_the_per_workflow_drift_check(tmp_path: Path) -> None:
+    """判失败率之前必须先确认判的是内容——漂移同样判 4。
+
+    把一次失败从 a 挪到 b，全局合计不动；此时若直接判失败率，判的是元数据里
+    写的那句话而不是内容。与 ``check_per_workflow`` 同一层校验，不另写一份。
+    """
+    _rate_snapshot(tmp_path, {"wf-a": (20, 1), "wf-b": (20, 1)})
+    meta = json.loads((tmp_path / "snapshot-meta.json").read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-a"]["failed"] = 2
+    meta["per_workflow"]["wf-b"]["failed"] = 0
+    (tmp_path / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "wf-a" in message and "wf-b" in message
+
+
+def test_rate_check_reports_no_sample_without_the_per_workflow_block(
+        tmp_path: Path) -> None:
+    """元数据缺 ``per_workflow`` 块时报无样本（3），不是静默通过。"""
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1)}, declare_meta=False)
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+    assert "per_workflow" in message
+
+
+def test_rate_check_passes_on_the_committed_snapshot() -> None:
+    """入库快照自己必须在报告模式下过——否则 CI 一接就红。
+
+    同时把这个快照当下的三分法结论钉住：9 个 workflow 里**没有一个**超出基线。
+    这不是「快照很健康」的断言，而是「当前真实数据在 per-workflow 粒度上判不出
+    坏样本」这个事实的存档。若哪天它变了，说明真实数据变了，测试红得其所。
+    """
+    code, message = live_gate.check_per_workflow_rate(SNAPSHOT_ROOT, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "0 个超出" in message, message
+    assert "8 个样本不足" in message, message
+
+
+def test_exceeds_is_driven_by_the_interval_not_the_point_estimate(
+        tmp_path: Path) -> None:
+    """判定用区间下界，不是点估计——点估计会让薄样本轻易判超。
+
+    构造一个点估计明显高于阈值、但下界仍在阈值之下的样本：30 次尝试 6 次失败
+    （点估计 20%），其余三个 workflow 零失败时基线 0%、阈值 10%。点估计 20%
+    已经超过 10%，但 95% 下界只有 4.45%，所以必须判 ``undetermined``。
+
+    这是 R55 §1「判据不许说反话」在另一条判据上的延伸：窄样本的点估计几乎必然
+    越过某个阈值，用点估计判就等于「样本越小越容易被判坏」。
+    """
+    _rate_snapshot(tmp_path, {"mild": (30, 6), "good-a": (40, 0), "good-b": (40, 0)})
+    report = live_gate.per_workflow_rate_report(
+        live_gate.recompute_per_workflow(tmp_path / "workflows"), margin=10.0)
+    assert report["mild"]["rate_pct"] == pytest.approx(20.0)
+    assert report["mild"]["verdict"] == "undetermined", report["mild"]
+
+
+def test_fail_on_exceeds_requires_the_rate_check(monkeypatch) -> None:
+    """``--fail-on-exceeds`` 单独出现时报错，而不是被静默忽略。
+
+    静默忽略会让「我加了开关、CI 却没红」变成一个无人排查的谜。与判据互斥
+    检查同一纪律：不确定的配置在参数层就炸掉。
+    """
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-sample-size", "--fail-on-exceeds"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2
+
+
+def _rate_step(job: str) -> dict:
+    """指定 job 上的 per-workflow 失败率步骤（R56）。"""
+    steps = _backend_steps() if job == "backend" else _windows_backend_steps()
+    hits = [s for s in steps
+            if _has_flag(str(s.get("run", "")), "--check-per-workflow-rate")]
+    assert len(hits) == 1, (
+        f"ci.yml 的 {job} job 必须且只能有一处跑 --check-per-workflow-rate"
+        f"（实际 {len(hits)} 处）"
+    )
+    return hits[0]
+
+
+def test_rate_report_is_wired_into_ci() -> None:
+    """与样本量判据同理：只读快照自身，所以能进 CI 检出真判。"""
+    run = str(_rate_step("backend")["run"])
+    assert "python scripts/check_live_snapshot_gate.py" in run
+    assert "tests/fixtures/live_snapshot" in run
+
+
+def test_rate_report_ci_step_is_not_permanently_green() -> None:
+    """报告模式不等于恒绿：必须注入漂移并断言退出码 4。
+
+    没有这一条，判据彻底失效时这一步仍然绿——因为「超出基线」在报告模式下
+    本来就不判失败。漂移注入是本步骤唯一的红路径，必须真的在那儿。
+    """
+    run = str(_rate_step("backend")["run"])
+    assert "per_workflow" in run, "CI 步骤没有注入漂移样本"
+    assert "-ne 4" in run or "-eq 4" in run, (
+        "CI 步骤没有断言退出码 4，判据失去判定力也不会被发现"
+    )
+
+
+def test_rate_report_ci_step_does_not_hard_fail_on_exceeds() -> None:
+    """本轮形态是报告模式：CI 里不得加 ``--fail-on-exceeds``。
+
+    这条不是「以后也不许」——R57 决定上硬门槛时就是要改这里。它钉住的是
+    「改了这一行必须有人意识到」。硬门槛一旦需要，就得同时重估真实快照的
+    样本厚度（8 个 undetermined 会先变成红），那是一次单独的改动。
+    """
+    for job in ("backend", "windows-backend"):
+        run = str(_rate_step(job)["run"])
+        assert "--fail-on-exceeds" not in run, (
+            f"{job} 的失败率报告步骤加了 --fail-on-exceeds：本轮是报告模式，"
+            "硬门槛需要单独一轮决策（真实快照 8 个 undetermined 会先变红）"
+        )
+
+
+def test_windows_runner_also_reports_per_workflow_rate() -> None:
+    """Windows job 上有同一段，且末尾显式 ``exit 0``。
+
+    GHA 的 pwsh 包装器会在末尾追加 ``exit $LASTEXITCODE``，而最后一条原生命令
+    正是那次故意以 4 退出的漂移验证——不显式 exit 0 的话，全部分支判对、日志
+    也打了 OK，步骤仍然红（R52 实测踩到）。
+    """
+    run = str(_rate_step("windows-backend")["run"])
+    assert "per_workflow" in run
+    assert "-ne 4" in run
+    assert "exit 0" in run
+
+
+def test_rate_report_does_not_reintroduce_stale_or_coverage() -> None:
+    """新步骤不得顺手把 --check-stale/--check-coverage 拉进 CI（同一纪律）。"""
+    for job in ("backend", "windows-backend"):
+        run = str(_rate_step(job)["run"])
+        assert "--check-stale" not in run
+        assert "--check-coverage" not in run
