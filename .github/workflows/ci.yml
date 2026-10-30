@@ -141,6 +141,41 @@ jobs:
           fi
           echo "OK  历史基线回归判据双向生效：真实快照不判回归，全挂快照触发 1"
 
+      # 逐 workflow 历史基线回归（R62）：合并层对「一个 workflow 在变坏、被
+      # 其余几个摊薄」是结构性失明的——character 涨到 16/79（20.3%）时全局才
+      # 9.41%，95% 下界 6.57% 仍在回归阈值 6.92% 之下，合并层要 18/79 才开口。
+      # 这一步在 16/79 就判回归（早 2 次失败），mvp 上早 5 次（15/56 vs 20/56）。
+      #
+      # 日志里必须能看见「有多少判定力」，否则「没红」会被读成「每个 workflow
+      # 都健康」：入库快照上只有 2/9 个 workflow 的基线精度达标（character
+      # 2/79、mvp 4/56），其余 7 个判不了；而这 2 个两轮计数完全相同——那说明
+      # 的是「没有新增样本」，不是质量结论。脚本把这两句都写进输出。
+      #
+      # 反向验证与合并层同一形状：全挂快照的 wf-bad 从 0/40 跳到 40/40 必须
+      # 判 1。只跑真实快照会得到一个恒绿步骤。
+      #
+      # margin 10 与 --check-per-workflow 的默认精度余量同一个数：可判集合
+      # 因此与「精度达标」的那批完全重合（两处共用 sample_size_margin_needed）。
+      - name: Snapshot per-workflow regression gate
+        run: |
+          snapshot=tests/fixtures/live_snapshot
+          code=0
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-regression \
+            --margin 10 --data-dir "$snapshot" || code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::逐 workflow 回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            exit "$code"
+          fi
+          strict=0
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-regression \
+            --margin 10 --data-dir tests/fixtures/live_snapshot_exceeds \
+            || strict=$?
+          if [ "$strict" -ne 1 ]; then
+            echo "::error::全挂快照判 $strict（期望 1）：逐 workflow 回归判据失去判定力"
+            exit 1
+          fi
+          echo "OK  逐 workflow 回归判据双向生效：真实快照不判回归，全挂快照的 wf-bad 触发 1"
+
       # 快照样本量（R51）：前三步都在判「这个数字合不合格」，没有一步判
       # 「这个数字的精度够不够当基线」。快照只有 14 次尝试、1 次失败时，实测
       # 7.1% 只是粗估——重导一次就可能变 0% 或 21%，阈值跟着漂。
@@ -351,6 +386,29 @@ jobs:
             exit 1
           }
           Write-Host "OK  历史基线回归判据双向生效（Windows/Python 3.14）：真实快照不判回归，全挂快照触发 1"
+          exit 0
+
+      # 逐 workflow 历史基线回归（R62）：与 backend 的同名步骤一一对应
+      # （margin 10 + 全挂快照反向验证），余量数字两边一致——有测试钉住。
+      # 同样受 pwsh 两个坑约束：反向验证那次故意以 1 退出，末尾必须显式 exit 0。
+      - name: Snapshot per-workflow regression gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $snapshot = "tests/fixtures/live_snapshot"
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-regression --margin 10 --data-dir $snapshot
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Host "::error::逐 workflow 回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            exit $code
+          }
+          $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-regression --margin 10 --data-dir tests/fixtures/live_snapshot_exceeds 2>&1
+          $strict = $LASTEXITCODE
+          if ($strict -ne 1) {
+            Write-Host "::error::全挂快照判 $strict（期望 1）：逐 workflow 回归判据失去判定力"
+            exit 1
+          }
+          Write-Host "OK  逐 workflow 回归判据双向生效（Windows/Python 3.14）：真实快照不判回归，全挂快照的 wf-bad 触发 1"
           exit 0
 
       # 快照样本量（R52）：与 backend job 的同名步骤判同一个东西，但跑在

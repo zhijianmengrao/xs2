@@ -88,6 +88,9 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
     python scripts/check_live_snapshot_gate.py --fail-on-regression
     python scripts/check_live_snapshot_gate.py --fail-if-above 8 --fail-on-regression
 
+    # 逐 workflow 判相对上一轮是否回归（R62；只读快照自身，CI 可跑）
+    python scripts/check_live_snapshot_gate.py --check-per-workflow-regression
+
 R58 补的是 ``undetermined`` 的**次级信号**：一份快照里判不了是正常的（样本薄），
 但**连续多份快照都判不了**就不再是「这一轮样本薄」，而是「这个 workflow 的
 真实数据量支撑不了逐 workflow 判决」。快照元数据的 ``history`` 块记录最近几次
@@ -113,6 +116,24 @@ R59 给主闸门补上**历史基线模式**（``--fail-on-regression``）。R57
 这是刻意选的方向。基线本身太薄（``sample_size_margin_needed`` 超过回归余量）
 或两轮 workflow 集合不同（覆盖变化，失败率不可比）时一律判 ``undetermined``，
 不拿一个不可信的数字去比。
+
+R62 把历史基线扩到**逐 workflow**（``--check-per-workflow-regression``）。合并
+层判不出「一个 workflow 在变坏、被其余几个摊薄」：入库快照的 character 占
+79/255，它涨到 16/79（20.3%）时全局才 9.41%，95% 下界 6.57% 仍低于回归阈值
+6.92%——合并层要到 18/79（22.8%）才开口。逐 workflow 层在同一份数据上是
+16/79 就判回归，**早 2 次失败**；mvp 上早 5 次（15/56 = 26.8% vs 20/56 =
+35.7%）。这是它真实的增量，不是「更细所以更好」之类的空话。
+
+它不是「每个 workflow 都判」。基线精度不够（95% 半宽 > margin）的 workflow
+一律 ``undetermined``——拿 0/5（95% 上界 45 个百分点）当阈值，当前只要出现
+一次失败就会被判回归，那是「向错方向的假红」。**可判集合与
+``--check-per-workflow`` 判「精度达标」的那批完全重合**，两处共用
+``sample_size_margin_needed``：各定一个门槛，迟早出现「诊断说够厚、回归说
+判不了」的分裂。入库快照上可判的只有 2/9（character 2/79、mvp 4/56），且两轮
+计数完全相同——报告里逐字给出 ``unchanged`` 计数，把「自比自」写成文字，不让
+它被读成质量结论。判定力由 ``live_snapshot_exceeds`` 反向验证：wf-bad 从
+0/40 跳到 40/40 必须判 1。``undetermined`` 与「可判 0 个」都不判失败，但都要
+在输出里写明「本步没有判定力」，否则又是一个写着在看回归的恒绿步骤。
 """
 
 from __future__ import annotations
@@ -650,6 +671,40 @@ def recompute_per_workflow(workflows_dir: Path) -> dict[str, dict]:
     return buckets
 
 
+def _per_workflow_drift(recorded: dict, actual: dict[str, dict]) -> list[str]:
+    """``per_workflow`` 元数据与内容复算的差集（空列表=一致）。
+
+    三条判据（``check_per_workflow`` / ``check_per_workflow_rate`` /
+    ``check_per_workflow_regression``）共用这一份检查：三处各写一份，迟早
+    出现「这条判据信元数据、那条信内容」的分裂——而这一层的全部意义就是
+    别拿一句写在元数据里的话当数据。
+    """
+    drifts: list[str] = []
+    for name in sorted(set(recorded) | set(actual)):
+        rec = recorded.get(name) or {}
+        act = actual.get(name)
+        if act is None:
+            drifts.append(f"{name}: 元数据有、内容无")
+            continue
+        rec_key = (int(rec.get("runs") or 0), int(rec.get("attempts") or 0),
+                   int(rec.get("failed") or 0))
+        act_key = (act["runs"], act["attempts"], act["failed"])
+        if rec_key != act_key:
+            drifts.append(
+                f"{name}: 元数据 runs/attempts/failed={rec_key}，"
+                f"内容复算={act_key}")
+    return drifts
+
+
+def _drift_message(drifts: list[str]) -> str:
+    """漂移差集 → 统一说明（三条判据的退出码 4 文案必须是同一句）。"""
+    return (
+        "per-workflow 元数据与内容不一致（全局合计可能仍然相等，所以全局校验"
+        "看不出来）：" + "；".join(drifts) +
+        "。重导：python scripts/export_run_samples.py "
+        "--dest tests/fixtures/live_snapshot --limit 2")
+
+
 def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     """按 workflow 分别判「失败率估计精度够不够」（R54）。
 
@@ -697,26 +752,9 @@ def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
         return EXIT_NO_SAMPLE, (
             f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
 
-    drifts: list[str] = []
-    for name in sorted(set(recorded) | set(actual)):
-        rec = recorded.get(name) or {}
-        act = actual.get(name)
-        if act is None:
-            drifts.append(f"{name}: 元数据有、内容无")
-            continue
-        rec_key = (int(rec.get("runs") or 0), int(rec.get("attempts") or 0),
-                   int(rec.get("failed") or 0))
-        act_key = (act["runs"], act["attempts"], act["failed"])
-        if rec_key != act_key:
-            drifts.append(
-                f"{name}: 元数据 runs/attempts/failed={rec_key}，"
-                f"内容复算={act_key}")
+    drifts = _per_workflow_drift(recorded, actual)
     if drifts:
-        return EXIT_META_DRIFT, (
-            "per-workflow 元数据与内容不一致（全局合计可能仍然相等，所以全局校验"
-            "看不出来）：" + "；".join(drifts) +
-            "。重导：python scripts/export_run_samples.py "
-            "--dest tests/fixtures/live_snapshot --limit 2")
+        return EXIT_META_DRIFT, _drift_message(drifts)
 
     thin: list[str] = []
     thick: list[str] = []
@@ -1142,26 +1180,9 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
 
     # 与 --check-per-workflow 完全同一层校验：判失败率之前，先确认判的是内容
     # 而不是一句写在元数据里的话。两处各写一份漂移检查会各自演化出差异。
-    drifts: list[str] = []
-    for name in sorted(set(recorded) | set(actual)):
-        rec = recorded.get(name) or {}
-        act = actual.get(name)
-        if act is None:
-            drifts.append(f"{name}: 元数据有、内容无")
-            continue
-        rec_key = (int(rec.get("runs") or 0), int(rec.get("attempts") or 0),
-                   int(rec.get("failed") or 0))
-        act_key = (act["runs"], act["attempts"], act["failed"])
-        if rec_key != act_key:
-            drifts.append(
-                f"{name}: 元数据 runs/attempts/failed={rec_key}，"
-                f"内容复算={act_key}")
+    drifts = _per_workflow_drift(recorded, actual)
     if drifts:
-        return EXIT_META_DRIFT, (
-            "per-workflow 元数据与内容不一致（全局合计可能仍然相等，所以全局校验"
-            "看不出来）：" + "；".join(drifts) +
-            "。重导：python scripts/export_run_samples.py "
-            "--dest tests/fixtures/live_snapshot --limit 2")
+        return EXIT_META_DRIFT, _drift_message(drifts)
 
     report = per_workflow_rate_report(actual, margin)
     exceeds = [n for n in sorted(report) if report[n]["verdict"] == "exceeds"]
@@ -1214,6 +1235,188 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
     return EXIT_OK, summary
 
 
+def per_workflow_regression_report(previous: dict[str, tuple[int, int]],
+                                   current: dict[str, tuple[int, int]],
+                                   margin_pct: float) -> dict[str, dict]:
+    """逐 workflow 相对上一轮基线是否回归（纯函数，便于测试与复用）。
+
+    每项返回::
+
+        {"attempts", "failed",                 # 当前轮该 workflow 的计数
+         "baseline_attempts", "baseline_failed" # 上一轮的基线计数
+         "baseline_rate_pct",                  # 上一轮失败率（无可比基线为 None）
+         "eligible",                           # 基线精度够不够判
+         "unchanged",                          # 两轮计数是否完全相同
+         "verdict",                            # exceeds / normal / undetermined
+         "reason"}                             # 判决理由，报告层直接用
+
+    阈值是「上一轮失败率 + ``margin_pct``」，与合并层 ``_baseline_verdict``
+    同一把尺、同一个三分法，只是把总体换成单个 workflow。``eligible`` 用的
+    是 ``_failure_rate_precision``——与 ``--check-per-workflow`` / ``--sample-size``
+    完全同一把尺，可判集合因此与「精度达标」的那批重合。
+
+    ``unchanged`` 单独给出而不是折进 ``normal``：两轮计数一模一样时判决必然
+    是「没有回归」，但那**不是质量结论，是本轮没有新增样本**。把它写成计数，
+    读日志的人一眼能看出这一层当前有多少判定力，而不必去猜。
+    """
+    report: dict[str, dict] = {}
+    for name in sorted(set(previous) | set(current)):
+        prev = previous.get(name)
+        cur = current.get(name)
+        entry: dict = {
+            "attempts": cur[0] if cur else 0,
+            "failed": cur[1] if cur else 0,
+            "baseline_attempts": prev[0] if prev else 0,
+            "baseline_failed": prev[1] if prev else 0,
+            "baseline_rate_pct": (prev[1] / prev[0] * 100.0
+                                  if prev and prev[0] else None),
+            "eligible": False,
+            "unchanged": bool(cur is not None and prev is not None and cur == prev),
+            "verdict": "undetermined",
+            "reason": "",
+        }
+        if prev is None:
+            entry["reason"] = (
+                "上一轮没有这个 workflow（覆盖变化），失败率不可比，判不了回归")
+            report[name] = entry
+            continue
+        if cur is None:
+            entry["reason"] = (
+                "当前轮没有这个 workflow（覆盖变化），失败率不可比，判不了回归")
+            report[name] = entry
+            continue
+        ok = _failure_rate_precision(prev[0], prev[1], margin_pct)[0]
+        if not ok:
+            # 这里不复用 ``_failure_rate_precision`` 的完整文案：它会给每个
+            # workflow 都追加一句「达到余量需要约 N 次尝试」，而 N 只由 margin
+            # 决定、跟 workflow 无关——9 个 workflow 拼起来就是同一句话重复 9 遍。
+            # 判决口径仍是同一个 ``sample_size_margin_needed``，只是 N 在汇总里
+            # 说一次。
+            needed = sample_size_margin_needed(prev[0], prev[1])
+            shape = ("样本形状无效" if needed is None
+                     else f"95% 半宽 {needed:.2f} 个百分点")
+            entry["reason"] = (
+                f"上一轮基线本身太薄，判不了回归（{shape} > 余量 {margin_pct:g}，"
+                f"n={prev[0]}, 失败 {prev[1]}）")
+            report[name] = entry
+            continue
+        entry["eligible"] = True
+        verdict, detail = _baseline_verdict(
+            cur[0], cur[1], prev[0], prev[1], margin_pct)
+        entry["verdict"], entry["reason"] = verdict, detail
+        report[name] = entry
+    return report
+
+
+def check_per_workflow_regression(data_dir: Path,
+                                  margin: float) -> tuple[int, str]:
+    """逐 workflow 判「相对上一轮是否显著变坏」（R62）。
+
+    合并层的回归判据（``--fail-on-regression``）对「一个 workflow 在变坏、被
+    其余几个摊薄」是结构性失明的：character 涨到 16/79（20.3%）时全局才
+    9.41%，95% 下界 6.57% 仍在回归阈值 6.92% 之下；合并层要到 18/79（22.8%）
+    才开口。这一步在 16/79 就判回归（早 2 次失败），mvp 上早 5 次。
+
+    三条设计取舍：
+
+    1. **只在基线够厚时判**：``eligible`` 由 ``_failure_rate_precision`` 决定，
+       与 ``--check-per-workflow`` 的「精度达标」完全同一把尺。拿 0/5（95%
+       上界 45 个百分点）当阈值，当前只要出现一次失败就会判回归——那是向
+       错方向的假红，比判不了更糟。
+    2. **``undetermined`` 不判失败**：区间横跨阈值、覆盖变化、基线太薄都归
+       这一类，处置是重导更多 run，不是「不合格」。
+    3. **「没有判定力」必须写成文字**：可判 0 个、或可判的那几个两轮计数完全
+       相同（没有新增样本）时，退出码仍是 0，但输出里逐字写明这是「判不了/
+       没什么可判」，不是「判过了」。这一步能红的前提是反向验证真能触发：
+       ``live_snapshot_exceeds`` 的 wf-bad 从 0/40 跳到 40/40 必须判 1。
+
+    能红的路径只有一条：某个 ``eligible`` 的 workflow 判 ``exceeds`` → 1。
+    其余（无样本 3 / 元数据漂移 4）与其它判据同一套退出码。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判逐 workflow 回归：{meta_path}"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+
+    recorded = meta.get("per_workflow") or {}
+    if not isinstance(recorded, dict) or not recorded:
+        return EXIT_NO_SAMPLE, (
+            "快照元数据缺 per_workflow 块，无法判逐 workflow 回归。"
+            "重导一次即可补上：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2")
+
+    actual = recompute_per_workflow(data_dir / "workflows")
+    if not actual:
+        return EXIT_NO_SAMPLE, (
+            f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
+
+    # 与另两条 per-workflow 判据同一层校验：先确认判的是内容而不是元数据里
+    # 的一句话，再谈回归。
+    drifts = _per_workflow_drift(recorded, actual)
+    if drifts:
+        return EXIT_META_DRIFT, _drift_message(drifts)
+
+    rounds, invalid_history = snapshot_rounds(meta, actual)
+    if len(rounds) < 2:
+        return EXIT_OK, (
+            "逐 workflow 回归：快照历史只有当前这一轮，没有可比的上一轮"
+            "（重导一次后下一轮才有基线）。**本步没有判定力**，"
+            "退出 0 不代表没有回归")
+
+    report = per_workflow_regression_report(rounds[-2], rounds[-1], margin)
+    eligible = sorted(n for n in report if report[n]["eligible"])
+    exceeds = [n for n in eligible if report[n]["verdict"] == "exceeds"]
+    normal = [n for n in eligible if report[n]["verdict"] == "normal"]
+    straddle = [n for n in eligible if report[n]["verdict"] == "undetermined"]
+    unchanged = [n for n in eligible if report[n]["unchanged"]]
+    ineligible = sorted(n for n in report if not report[n]["eligible"])
+
+    summary = (
+        f"逐 workflow 回归（基线=历史上一轮, margin={margin:g}）："
+        f"{len(report)} 个 workflow 里 {len(eligible)} 个可判"
+        f"（{len(exceeds)} 个判回归 / {len(normal)} 个没有回归 / "
+        f"{len(straddle)} 个区间横跨阈值），{len(ineligible)} 个基线太薄判不了")
+    if exceeds:
+        summary += "。判回归的：" + "；".join(
+            f"{n}（{report[n]['reason']}）" for n in exceeds)
+    if normal:
+        summary += "。没有回归的：" + "；".join(
+            f"{n}（{report[n]['reason']}）" for n in normal)
+    if straddle:
+        summary += "。区间横跨阈值的（判不了回归，不判失败）：" + "；".join(
+            f"{n}（{report[n]['reason']}）" for n in straddle)
+    if unchanged:
+        summary += (
+            f"。其中 {len(unchanged)} 个可判 workflow 两轮计数完全相同"
+            f"（{'、'.join(unchanged)}）：**这是样本没有新增，不是质量结论**")
+    if ineligible:
+        summary += (
+            "。基线太薄的（**不该**被当作逐 workflow 的比较基线，处置是重导"
+            "更多 run）：" + "；".join(
+                f"{n}（{report[n]['reason']}）" for n in ineligible))
+        if margin > 0:
+            # 补齐精度需要多少次尝试只由 margin 决定，与 workflow 无关：
+            # 在汇总里说一次，不在每条里重复。
+            summary += (
+                f"。要把这些基线压到余量 {margin:g} 以内需要约 "
+                f"{math.ceil(math.log(0.05) / math.log(1 - margin / 100))} 次尝试")
+    if not eligible:
+        summary += (
+            "。**本步没有判定力**：没有任何 workflow 的上一轮基线精度达到 "
+            f"margin={margin:g}，退出 0 不代表没有回归")
+    if invalid_history:
+        summary += (f"（另有 {invalid_history} 条历史形状无效已跳过，"
+                    "基线可能不是紧邻的一轮）")
+
+    if exceeds:
+        summary += "。退出码 1 的来源：逐 workflow 回归（" + "、".join(exceeds) + "）"
+        return EXIT_GATE_TRIGGERED, summary
+    return EXIT_OK, summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -1238,6 +1441,10 @@ def main() -> int:
     parser.add_argument("--check-per-workflow-rate", action="store_true",
                         help="按 workflow 判失败率是否高于其余 workflow 的合并基线"
                              "（留一法；只读快照自身，CI 可跑）")
+    parser.add_argument("--check-per-workflow-regression", action="store_true",
+                        help="按 workflow 判失败率是否显著高于快照上一轮基线"
+                             "（只读快照自身，CI 可跑；基线太薄的 workflow "
+                             "判不了，不判失败）")
     parser.add_argument("--fail-on-exceeds", action="store_true",
                         help="--check-per-workflow-rate 时把 exceeds 判为退出码 1"
                              "（默认只报告，恒退出 0）")
@@ -1275,6 +1482,8 @@ def main() -> int:
             ("--check-sample-size", options.check_sample_size),
             ("--check-per-workflow", options.check_per_workflow),
             ("--check-per-workflow-rate", options.check_per_workflow_rate),
+            ("--check-per-workflow-regression",
+             options.check_per_workflow_regression),
         ) if on
     ]
     if len(chosen) > 1:
@@ -1315,6 +1524,13 @@ def main() -> int:
         code, message = check_per_workflow_rate(
             options.data_dir or _default_data_dir(), margin,
             fail_on_exceeds=options.fail_on_exceeds)
+        print(f"[live-gate] {message}", file=sys.stderr)
+        return code
+
+    if options.check_per_workflow_regression:
+        # 只读快照自身（内容 + 元数据里的 history），与 --check-* 同一前提。
+        code, message = check_per_workflow_regression(
+            options.data_dir or _default_data_dir(), margin)
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
 

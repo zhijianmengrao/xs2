@@ -15,6 +15,10 @@ R59 又补了两类：
 5. 主闸门的历史基线回归（``--fail-on-regression``）与政策上限并存时，退出码 1
    的两种来源在报告里可分；
 6. 载荷扫描覆盖**所有**快照 fixture（自动发现），且入库 run 必须是裁剪后的形状。
+
+R62 补第 7 类：历史基线扩到**逐 workflow**（``--check-per-workflow-regression``）——
+合并层看不见「一个 workflow 变坏、被其余几个摊薄」。同时钉住「可判 0 个 / 两轮
+计数完全相同」必须写成文字，不能被读成「逐 workflow 都健康」。
 """
 
 from __future__ import annotations
@@ -1989,3 +1993,257 @@ def test_regression_step_does_not_reintroduce_stale_or_coverage() -> None:
         run = str(_regression_step(job)["run"])
         assert "--check-stale" not in run
         assert "--check-coverage" not in run
+
+
+# ---------------------------------------------------------------------------
+# R62：逐 workflow 历史基线回归
+# ---------------------------------------------------------------------------
+
+
+def test_per_workflow_regression_only_judges_baselines_with_enough_precision() -> None:
+    """基线精度不够的 workflow 判 ``undetermined``，不拿它去比。
+
+    ``thin`` 的上一轮是 0/5（95% 上界 45 个百分点）：拿它当阈值，当前只要有
+    一次失败就会被判回归。这与 ``--check-per-workflow`` 同一把尺——可判集合
+    必须与「精度达标」的那批重合，否则两处会各说各话。
+    """
+    previous = {"thick": (79, 2), "thin": (5, 0)}
+    current = {"thick": (79, 2), "thin": (5, 1)}
+    report = live_gate.per_workflow_regression_report(previous, current, 10.0)
+    assert report["thick"]["eligible"] is True
+    assert report["thick"]["verdict"] == "normal"
+    assert report["thick"]["unchanged"] is True
+    assert report["thin"]["eligible"] is False
+    assert report["thin"]["verdict"] == "undetermined"
+    assert "太薄" in report["thin"]["reason"]
+    assert "判回归" not in report["thin"]["reason"].replace("判不了回归", "")
+
+
+def test_per_workflow_regression_fires_on_a_thick_workflow_jump() -> None:
+    """0/40 → 40/40：区间下界 92.78% 远高于阈值 10%，必须判 ``exceeds``。
+
+    反向钉子：同一份算术在同一测试里对 ``good``（两轮都是 0/40）判 ``normal``。
+    若判据恒红，这里会失败；若恒绿，上一条会失败。
+    """
+    previous = {"bad": (40, 0), "good": (40, 0)}
+    current = {"bad": (40, 40), "good": (40, 0)}
+    report = live_gate.per_workflow_regression_report(previous, current, 10.0)
+    assert report["bad"]["verdict"] == "exceeds"
+    assert report["good"]["verdict"] == "normal"
+    assert report["good"]["unchanged"] is True
+
+
+def test_per_workflow_regression_calls_a_straddling_interval_undetermined() -> None:
+    """2/100 → 9/100：区间 [4.58%, 16.35%] 横跨阈值 12%，判不了回归。
+
+    与 ``_rate_verdict`` 同一个三分法：横跨阈值既不是「回归」也不是「没有
+    回归」，强行二分就会变成向某一侧的假红/假绿。
+    """
+    report = live_gate.per_workflow_regression_report(
+        {"a": (100, 2)}, {"a": (100, 9)}, 10.0)
+    assert report["a"]["eligible"] is True
+    assert report["a"]["verdict"] == "undetermined"
+    assert "横跨阈值" in report["a"]["reason"]
+
+
+def test_per_workflow_regression_marks_coverage_changes_as_unjudgeable() -> None:
+    """某个 workflow 只在一侧出现时，它的失败率不可比，判不了回归。"""
+    report = live_gate.per_workflow_regression_report(
+        {"a": (40, 0)}, {"a": (40, 0), "b": (40, 0)}, 10.0)
+    assert report["b"]["eligible"] is False
+    assert report["b"]["verdict"] == "undetermined"
+    assert "覆盖变化" in report["b"]["reason"]
+    assert report["a"]["eligible"] is True
+
+
+def test_per_workflow_regression_without_history_reports_no_power(
+        tmp_path: Path) -> None:
+    """只有当前一轮时明说「没有可比上一轮，本步没有判定力」。"""
+    _rate_snapshot(tmp_path, {"a": (79, 2)})
+    code, message = live_gate.check_per_workflow_regression(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "没有可比的上一轮" in message
+    assert "本步没有判定力" in message
+    assert "判没有回归" not in message
+
+
+def test_per_workflow_regression_gate_passes_the_committed_snapshot() -> None:
+    """入库快照：2/9 个 workflow 可判、两个都判没有回归、且计数完全相同。
+
+    「完全相同」必须被写成「样本没有新增，不是质量结论」——否则这一步在真实
+    快照上会被读成「逐 workflow 都健康」，而它其实什么也没判。
+    """
+    code, message = live_gate.check_per_workflow_regression(
+        SNAPSHOT_ROOT, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "9 个 workflow 里 2 个可判" in message
+    assert "两轮计数完全相同" in message
+    assert "样本没有新增，不是质量结论" in message
+
+
+def test_the_exceeds_fixture_fires_the_per_workflow_regression_gate() -> None:
+    """CI 的反向验证样本：wf-bad 从 0/40 跳到 40/40，必须判 1。
+
+    它同时是合并层回归与逐 workflow 回归的反向样本——两处用同一份数据，
+    判定力不会漂开。
+    """
+    code, message = live_gate.check_per_workflow_regression(
+        EXCEEDS_ROOT, margin=10.0)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "wf-bad" in message
+    assert "退出码 1 的来源：逐 workflow 回归（wf-bad）" in message
+
+
+def test_per_workflow_regression_rejects_metadata_content_drift(
+        tmp_path: Path) -> None:
+    """元数据与内容不一致时以 4 拒绝：判的是内容，不是元数据里的一句话。"""
+    _rate_snapshot(tmp_path, {"a": (40, 0)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["a"]["failed"] = 3
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow_regression(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "per-workflow 元数据与内容不一致" in message
+
+
+def test_three_per_workflow_judges_share_one_drift_message(tmp_path: Path) -> None:
+    """三条 per-workflow 判据的漂移文案必须逐字相同（R62 抽出共用助手）。
+
+    三处各写一份检查，迟早出现「这条判据信元数据、那条信内容」的分裂。
+    """
+    _rate_snapshot(tmp_path, {"a": (40, 0)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["a"]["failed"] = 3
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    messages = {
+        live_gate.check_per_workflow(tmp_path, margin=10.0)[1],
+        live_gate.check_per_workflow_rate(tmp_path, margin=10.0)[1],
+        live_gate.check_per_workflow_regression(tmp_path, margin=10.0)[1],
+    }
+    assert len(messages) == 1, f"三条判据的漂移文案不一致：{messages}"
+
+
+def test_per_workflow_regression_skips_malformed_history_but_reports_it(
+        tmp_path: Path) -> None:
+    """形状无效的历史条目跳过并计数：基线可能不是紧邻的一轮，必须让人看见。"""
+    _rate_snapshot(tmp_path, {"a": (40, 40)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["history"] = [
+        {"per_workflow": "not-a-dict"},
+        {"per_workflow": {"a": {"attempts": 40, "failed": 0}}},
+    ]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow_regression(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "1 条历史形状无效已跳过" in message
+
+
+@pytest.mark.parametrize("other", [
+    "--check-stale",
+    "--check-coverage",
+    "--check-sample-size",
+    "--check-per-workflow",
+    "--check-per-workflow-rate",
+])
+def test_per_workflow_regression_is_exclusive_with_other_check_modes(
+        monkeypatch, other: str) -> None:
+    """一次调用判一件事：与其它判据同时给出时在参数层炸掉。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-per-workflow-regression", other])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2, f"与 {other} 同时给出应被拒绝"
+
+
+def test_cli_per_workflow_regression_mode_is_wired(monkeypatch) -> None:
+    """``main()`` 要把 ``--check-per-workflow-regression`` 真的传下去。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-per-workflow-regression",
+        "--data-dir", str(EXCEEDS_ROOT)])
+    assert live_gate.main() == live_gate.EXIT_GATE_TRIGGERED
+
+
+def _per_workflow_regression_step(job: str) -> dict:
+    """指定 job 上的逐 workflow 回归步骤（R62）。"""
+    steps = _backend_steps() if job == "backend" else _windows_backend_steps()
+    hits = [s for s in steps if _has_flag(
+        str(s.get("run", "")), "--check-per-workflow-regression")]
+    assert len(hits) == 1, (
+        f"ci.yml 的 {job} job 必须且只能有一处跑 "
+        f"--check-per-workflow-regression（实际 {len(hits)} 处）")
+    return hits[0]
+
+
+def test_per_workflow_regression_gate_is_wired_into_both_runners() -> None:
+    """两个 runner 上都要真跑，且**每一次**调用都带开关与余量。
+
+    只断言「这一段里出现过开关」会被「真实判定那次不带、只有反向验证带」
+    骗过去（R58 的纪律）。
+    """
+    for job in ("backend", "windows-backend"):
+        run = str(_per_workflow_regression_step(job)["run"])
+        invocations = [line for line in run.replace("\\\n", " ").splitlines()
+                       if "check_live_snapshot_gate.py" in line]
+        assert len(invocations) >= 2, (
+            f"{job} 应同时有真实快照与全挂快照两次调用"
+            f"（实际 {len(invocations)} 次）")
+        for line in invocations:
+            assert _has_flag(line, "--check-per-workflow-regression"), (
+                f"{job} 有一次调用没带 --check-per-workflow-regression："
+                f"{line.strip()}")
+            assert _has_flag(line, "--margin"), (
+                f"{job} 有一次调用没带 --margin：{line.strip()}")
+
+
+def test_per_workflow_regression_reverse_verifies_that_it_can_fire() -> None:
+    """只跑真实快照会得到一个恒绿步骤：必须断言全挂快照判 1。"""
+    for job in ("backend", "windows-backend"):
+        run = str(_per_workflow_regression_step(job)["run"])
+        assert "live_snapshot_exceeds" in run, (
+            f"{job} 的逐 workflow 回归步骤没有全挂快照的反向验证")
+        assert "-ne 1" in run, f"{job} 没有断言全挂快照的退出码 1"
+        assert run.index("live_snapshot_exceeds") < run.index("-ne 1"), (
+            f"{job} 的「期望 1」断言出现在全挂快照调用之前：它断言的不是那一次")
+
+
+def test_both_runners_use_the_same_per_workflow_regression_margin() -> None:
+    """两个 runner 的余量必须一致，且等于 ``--check-per-workflow`` 的默认值。
+
+    可判集合与「精度达标」那批重合的前提就是这个数相同：两边漂开，就会在
+    两个平台上判出不同的可判集合。
+    """
+    import re
+
+    values: dict[str, float] = {}
+    for job in ("backend", "windows-backend"):
+        run = str(_per_workflow_regression_step(job)["run"])
+        found = [float(v) for v in re.findall(r"--margin\s+([0-9.]+)", run)]
+        assert found, f"{job} 的逐 workflow 回归步骤没有显式给 --margin"
+        values[job] = found[0]
+    assert values["backend"] == values["windows-backend"], (
+        f"两个 runner 的逐 workflow 回归余量不一致：{values}")
+    assert values["backend"] == 10.0
+
+
+def test_windows_per_workflow_regression_step_ends_with_exit_zero() -> None:
+    """pwsh 包装器会追加 ``exit $LASTEXITCODE``，而最后一条命令故意以 1 退出。"""
+    run = str(_per_workflow_regression_step("windows-backend")["run"])
+    assert run.rstrip().endswith("exit 0"), (
+        "windows 的逐 workflow 回归步骤末尾必须显式 exit 0（R52 踩过的坑）")
+    assert "$ErrorActionPreference" in run
+
+
+def test_per_workflow_regression_step_does_not_reintroduce_stale_or_coverage() -> None:
+    """这一步只读快照自身：不得顺手把需要真实数据面的判据拉进 CI。"""
+    for job in ("backend", "windows-backend"):
+        run = str(_per_workflow_regression_step(job)["run"])
+        assert "--check-stale" not in run
+        assert "--check-coverage" not in run
+
