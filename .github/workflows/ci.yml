@@ -101,6 +101,41 @@ jobs:
           fi
           echo "OK  真实失败率闸门双向生效：8% 上限通过，1% 上限触发 1"
 
+      # 历史基线回归（R59）：上一步判的是**绝对**失败率是否越过政策上限，
+      # 这一步判**相对**上一轮是否显著变坏。一次从 2% 抬到 7% 的回归仍在 8%
+      # 上限之内，上限判不出来；两条判据并存，退出码都是 1，报告里写明来源。
+      #
+      # 基线取快照 ``history`` 的上一轮。入库快照目前只有一轮（那条历史是它
+      # 自己那次导出），所以真实快照这一步现在判 ``undetermined`` 并退出 0
+      # ——「判不了」不等于「没有回归」，报告里写明了。重导一次后它开始真判。
+      #
+      # 反向验证用全挂快照：它的 history 里上一轮是 0/120 的健康样本，当前
+      # 40/120，必须判 1。只跑真实快照会得到一个恒绿步骤——和 R57/R58 一样，
+      # 「没红过」不算证据。
+      #
+      # --regression-margin 3 的依据：入库快照 10/255 的精确界半宽是 2.64 个
+      # 百分点，再小会被重导噪声触发；阈值 3.92 + 3 = 6.92% 低于 8% 上限，
+      # 回归判据因此能在政策上限之前先开口（约 10% 时回归红，11.4% 才上限红）。
+      - name: Snapshot historical-baseline regression gate
+        run: |
+          snapshot=tests/fixtures/live_snapshot
+          code=0
+          python scripts/check_live_snapshot_gate.py --fail-on-regression \
+            --regression-margin 3 --data-dir "$snapshot" || code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::历史基线回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            exit "$code"
+          fi
+          strict=0
+          python scripts/check_live_snapshot_gate.py --fail-on-regression \
+            --regression-margin 3 --data-dir tests/fixtures/live_snapshot_exceeds \
+            || strict=$?
+          if [ "$strict" -ne 1 ]; then
+            echo "::error::全挂快照判 $strict（期望 1）：回归判据失去判定力"
+            exit 1
+          fi
+          echo "OK  历史基线回归判据双向生效：真实快照不判回归，全挂快照触发 1"
+
       # 快照样本量（R51）：前三步都在判「这个数字合不合格」，没有一步判
       # 「这个数字的精度够不够当基线」。快照只有 14 次尝试、1 次失败时，实测
       # 7.1% 只是粗估——重导一次就可能变 0% 或 21%，阈值跟着漂。
@@ -288,6 +323,29 @@ jobs:
             exit 1
           }
           Write-Host "OK  真实失败率闸门双向生效（Windows/Python 3.14）：8% 上限通过，1% 上限触发 1"
+          exit 0
+
+      # 历史基线回归（R59）：与 backend 的同名步骤一一对应（余量 3 + 全挂快照
+      # 反向验证）。余量数字两边必须一致——有测试钉住。同样受 pwsh 两个坑约束：
+      # 反向验证那次故意以 1 退出，末尾必须显式 exit 0。
+      - name: Snapshot historical-baseline regression gate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $snapshot = "tests/fixtures/live_snapshot"
+          python scripts/check_live_snapshot_gate.py --fail-on-regression --regression-margin 3 --data-dir $snapshot
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Host "::error::历史基线回归闸门判 $code（1=回归 3=无样本 4=元数据漂移）"
+            exit $code
+          }
+          $null = python scripts/check_live_snapshot_gate.py --fail-on-regression --regression-margin 3 --data-dir tests/fixtures/live_snapshot_exceeds 2>&1
+          $strict = $LASTEXITCODE
+          if ($strict -ne 1) {
+            Write-Host "::error::全挂快照判 $strict（期望 1）：回归判据失去判定力"
+            exit 1
+          }
+          Write-Host "OK  历史基线回归判据双向生效（Windows/Python 3.14）：真实快照不判回归，全挂快照触发 1"
           exit 0
 
       # 快照样本量（R52）：与 backend job 的同名步骤判同一个东西，但跑在

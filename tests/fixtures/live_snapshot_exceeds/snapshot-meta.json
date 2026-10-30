@@ -18,6 +18,42 @@
       "failed": 40
     }
   },
+  "history": [
+    {
+      "exported_at": "2026-01-15T00:00:00+00:00",
+      "per_workflow": {
+        "wf-good-a": {
+          "attempts": 40,
+          "failed": 0
+        },
+        "wf-good-b": {
+          "attempts": 40,
+          "failed": 0
+        },
+        "wf-bad": {
+          "attempts": 40,
+          "failed": 0
+        }
+      }
+    },
+    {
+      "exported_at": "2026-02-01T00:00:00+00:00",
+      "per_workflow": {
+        "wf-good-a": {
+          "attempts": 40,
+          "failed": 0
+        },
+        "wf-good-b": {
+          "attempts": 40,
+          "failed": 0
+        },
+        "wf-bad": {
+          "attempts": 40,
+          "failed": 40
+        }
+      }
+    }
+  ],
   "totals": {
     "runs": 3,
     "attempts": 120,

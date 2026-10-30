@@ -10,6 +10,11 @@ R46 把闸门接进了 CI，但判的是 ``tests/fixtures/run_samples`` ——**
 3. 阈值来自**调用方给的政策上限**，精度（区间）由快照自身算——R57 修掉了
    「阈值 = 实测 + 余量」的自指写法，那种写法判据恒假（见下方 R57 一组）；
 4. 快照不含内容载荷（小说正文/轨迹/token 明细不该进仓库）。
+
+R59 又补了两类：
+5. 主闸门的历史基线回归（``--fail-on-regression``）与政策上限并存时，退出码 1
+   的两种来源在报告里可分；
+6. 载荷扫描覆盖**所有**快照 fixture（自动发现），且入库 run 必须是裁剪后的形状。
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from scripts import check_live_snapshot_gate as live_gate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+FIXTURES_ROOT = REPO_ROOT / "tests" / "fixtures"
 SNAPSHOT_ROOT = REPO_ROOT / "tests" / "fixtures" / "live_snapshot"
 # 反向验证用的合成快照（R58）：一个 workflow 全挂、两个健康。它必须判 exceeds，
 # 否则 CI 的硬门槛反向验证就是在测一个恒绿步骤。
@@ -34,6 +40,18 @@ def _load_ci() -> dict:
     document = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(document, dict)
     return document
+
+
+def _has_flag(run: str, flag: str) -> bool:
+    """``run`` 里是否出现了**完整**的开关 ``flag``。
+
+    用「后面不能再接 ``-`` 或标识符字符」判边界，而不是要求后跟空格——开关也
+    可能出现在行尾，或后面直接跟续行反斜杠。``--check-per-workflow`` 与
+    ``--check-per-workflow-rate`` 因此能被区分开。
+    """
+    import re
+
+    return re.search(re.escape(flag) + r"(?![-\w])", run) is not None
 
 
 def _backend_steps() -> list[dict]:
@@ -52,11 +70,15 @@ def _live_gate_step() -> dict:
     R51 给同一脚本加了 ``--check-sample-size`` 的第二处调用，所以不能再按
     「有几个 step 调了这个脚本」来定位——那样每加一条判据都要改一处测试。
     这里按「调了脚本但没带任何 ``--check-*`` 开关」找失败率闸门本身。
+    R59 又加了一步 ``--fail-on-regression``（同样是默认判定模式、同样不带
+    ``--check-*``），所以再按完整开关 token 把它排除——与 R58 对
+    ``--check-per-workflow`` / ``--check-per-workflow-rate`` 的处理同一纪律。
     """
     hits = [
         s for s in _backend_steps()
         if "check_live_snapshot_gate.py" in str(s.get("run", ""))
         and "--check-" not in str(s.get("run", ""))
+        and not _has_flag(str(s.get("run", "")), "--fail-on-regression")
     ]
     assert len(hits) == 1, (
         "ci.yml 的 backend job 必须且只能有一处调用失败率闸门（不带 --check-*）"
@@ -145,6 +167,7 @@ def _windows_main_gate_step() -> dict:
         s for s in _windows_backend_steps()
         if "check_live_snapshot_gate.py" in str(s.get("run", ""))
         and "--check-" not in str(s.get("run", ""))
+        and not _has_flag(str(s.get("run", "")), "--fail-on-regression")
     ]
     assert len(hits) == 1, (
         "ci.yml 的 windows-backend job 必须且只能有一处调用失败率闸门（不带 --check-*）"
@@ -348,18 +371,57 @@ def test_gate_reports_no_sample_when_snapshot_missing(tmp_path: Path) -> None:
 
 
 # ------------------------------------------------- 快照不含内容载荷
-def test_snapshot_has_no_content_payload() -> None:
+# R59 §11-1：R58 新增的 ``live_snapshot_exceeds`` 没进这条扫描——扫描只写死了
+# ``live_snapshot`` 一个根。一份合成的反向验证快照如果被人手工扩写（贴进真实
+# run 的正文/轨迹），仓库里就多了一份没被检查的内容载荷。改为**自动发现**所有
+# 带 ``snapshot-meta.json`` 的 fixture 根：以后再加快照 fixture 自动纳入，不会
+# 因为忘记改名单而留一个盲区。
+def _snapshot_roots() -> list[Path]:
+    return sorted(
+        p for p in FIXTURES_ROOT.iterdir()
+        if p.is_dir() and (p / "snapshot-meta.json").is_file()
+    )
+
+
+def test_payload_scan_covers_every_snapshot_fixture() -> None:
+    """自动发现不能静默退化成空集：两个已知快照 fixture 必须在扫描范围内。"""
+    names = {p.name for p in _snapshot_roots()}
+    assert {"live_snapshot", "live_snapshot_exceeds"} <= names, (
+        f"载荷扫描没有覆盖全部快照 fixture：{sorted(names)}")
+
+
+@pytest.mark.parametrize("root", _snapshot_roots(), ids=lambda p: p.name)
+def test_snapshot_has_no_content_payload(root: Path) -> None:
     """裁剪纪律：小说正文/轨迹/token 明细不得进仓库（快照要入库）。"""
     forbidden = {"summary", "input_snapshot", "iteration_history", "outputs",
                  "token_usage_calls", "upstream_summary_snapshot",
                  "output_repair_history"}
-    files = sorted(SNAPSHOT_ROOT.glob("workflows/*/runs/run-*.json"))
-    assert files, "快照为空"
+    files = sorted(root.glob("workflows/*/runs/run-*.json"))
+    assert files, f"{root.name} 快照为空"
     for path in files:
         payload = json.loads(path.read_text(encoding="utf-8"))
         for node in payload["node_executions"]:
             leaked = forbidden & set(node)
             assert not leaked, f"{path.name} 的 {node.get('node_id')} 仍带载荷字段 {leaked}"
+
+
+@pytest.mark.parametrize("root", _snapshot_roots(), ids=lambda p: p.name)
+def test_fixture_runs_are_already_trimmed_by_the_export_contract(root: Path) -> None:
+    """入库 run 必须**已经是裁剪后的形状**：``trim_run`` 对它是恒等变换。
+
+    这比「没有出现那 7 个已知载荷字段」更强：任何后来手工加进去的字段（哪怕
+    名字不在黑名单里）都会让裁剪结果与文件不同。合成 fixture 尤其需要这条——
+    它不由导出脚本产出，没有生成侧的 ``find_forbidden_fields`` 兜底。
+    """
+    from scripts.export_run_samples import trim_run
+
+    files = sorted(root.glob("workflows/*/runs/run-*.json"))
+    assert files, f"{root.name} 快照为空"
+    for path in files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert trim_run(payload) == payload, (
+            f"{path.name} 不是裁剪后的形状：文件里含有导出契约之外的字段"
+            "（或节点/尝试的形状被手工扩写）")
 
 
 def test_snapshot_is_small_enough_to_commit() -> None:
@@ -1050,18 +1112,6 @@ def test_per_workflow_reports_no_sample_when_snapshot_has_no_workflows(
     assert code == live_gate.EXIT_NO_SAMPLE
 
 
-def _has_flag(run: str, flag: str) -> bool:
-    """``run`` 里是否出现了**完整**的开关 ``flag``。
-
-    用「后面不能再接 ``-`` 或标识符字符」判边界，而不是要求后跟空格——开关也
-    可能出现在行尾，或后面直接跟续行反斜杠。``--check-per-workflow`` 与
-    ``--check-per-workflow-rate`` 因此能被区分开。
-    """
-    import re
-
-    return re.search(re.escape(flag) + r"(?![-\w])", run) is not None
-
-
 def _per_workflow_step() -> dict:
     """ubuntu backend 上的 per-workflow **样本量**步骤（R54）。
 
@@ -1659,5 +1709,283 @@ def test_rate_report_does_not_reintroduce_stale_or_coverage() -> None:
     """新步骤不得顺手把 --check-stale/--check-coverage 拉进 CI（同一纪律）。"""
     for job in ("backend", "windows-backend"):
         run = str(_rate_step(job)["run"])
+        assert "--check-stale" not in run
+        assert "--check-coverage" not in run
+
+
+
+# ------------------------------------- 主闸门的历史基线回归（R59 §11-2）
+# R57 只有政策上限：它判「绝对失败率是否不可接受」。这一组钉住 R59 补的那一半
+# ——「相对上一轮是否显著变坏」。两条判据都退出 1，所以报告必须写清 1 的来源，
+# 否则「查供应商」与「查回归」两种处置会互相冒充。
+def _regression_message(tmp_path: Path,
+                        *, ceiling: float | None = None) -> tuple[int, str]:
+    return live_gate.evaluate(
+        tmp_path, ceiling=ceiling, regression_margin=live_gate.REGRESSION_MARGIN)
+
+
+def test_regression_without_history_is_undetermined_not_a_failure(
+        tmp_path: Path) -> None:
+    """没有上一轮时判不了回归：退出 0，且不冒充「没有回归」。"""
+    _write_snapshot_with_totals(tmp_path, attempts=120, failed=40)
+    code, message = _regression_message(tmp_path)
+    assert code == live_gate.EXIT_OK, message
+    assert "快照历史只有当前这一轮" in message
+    assert "判不了回归" in message
+    assert "判没有回归" not in message
+    assert "退出码 1 的来源：无" in message
+
+
+def test_regression_fires_when_current_jumps_above_the_previous_round(
+        tmp_path: Path) -> None:
+    """上一轮 0/120、当前 40/120：区间下界 26.21% 远高于阈值 3%，必须判回归。"""
+    _write_snapshot_with_totals(tmp_path, attempts=120, failed=40)
+    _write_history(tmp_path, [{"wf-a": (120, 0)}])
+    code, message = _regression_message(tmp_path)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "判回归" in message
+    assert "退出码 1 的来源：回归" in message
+    # 报告模式（不给 --fail-if-above）也判回归：红是这条判据带来的。
+    assert "未给 --fail-if-above" in message
+
+
+def test_regression_is_normal_when_current_stays_near_the_baseline(
+        tmp_path: Path) -> None:
+    """当前 5/255（上界约 4.1%）整个落在阈值 6.92% 之内 → 判没有回归。
+
+    反向钉子：这条与上一条用同一份 ``evaluate``，只换数据。判据若恒红，这里
+    会失败；若恒绿，上一条会失败。
+    """
+    _write_snapshot_with_totals(tmp_path, attempts=255, failed=5)
+    _write_history(tmp_path, [{"wf-a": (255, 10)}])
+    code, message = _regression_message(tmp_path)
+    assert code == live_gate.EXIT_OK, message
+    assert "判没有回归" in message
+    assert "退出码 1 的来源：无" in message
+
+
+def test_regression_does_not_treat_a_thin_baseline_as_a_verdict(
+        tmp_path: Path) -> None:
+    """基线 0/10 的 95% 上界高达 25.9 个百分点：拿它当阈值会误报回归。
+
+    与 ``--check-sample-size`` 同一把尺：基线本身的精度不够时判 ``undetermined``，
+    不判失败，也不冒充「没有回归」。
+    """
+    _write_snapshot_with_totals(tmp_path, attempts=120, failed=40)
+    _write_history(tmp_path, [{"wf-a": (10, 0)}])
+    code, message = _regression_message(tmp_path)
+    assert code == live_gate.EXIT_OK, message
+    assert "历史基线本身的失败率估计太薄" in message
+    assert "判回归" not in message.replace("判不了回归", "")
+    assert "退出码 1 的来源：无" in message
+
+
+def test_regression_requires_the_same_workflow_set_as_the_baseline(
+        tmp_path: Path) -> None:
+    """覆盖变化时失败率不可比：新增/消失的 workflow 会让「回归」变成误报。
+
+    与 ``undetermined_streaks`` 的「缺席即中断」同一条纪律——集合不同，
+    「相对上一轮变坏」这个命题本身就不成立。
+    """
+    _rate_snapshot(tmp_path, {"wf-a": (40, 0), "wf-b": (40, 0)})
+    _write_history(tmp_path, [{"wf-a": (40, 0)}])
+    code, message = _regression_message(tmp_path)
+    assert code == live_gate.EXIT_OK, message
+    assert "workflow 集合不同" in message
+    assert "判不了回归" in message
+
+
+def test_combined_gate_reports_both_sources_of_exit_code_one() -> None:
+    """政策突破与回归同时成立时，1 的来源必须两个都写出来。"""
+    code, message = live_gate.evaluate(
+        EXCEEDS_ROOT, ceiling=8.0, regression_margin=live_gate.REGRESSION_MARGIN)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "退出码 1 的来源：政策突破；回归" in message
+    assert "判超阈" in message
+    assert "判回归" in message
+
+
+def test_combined_gate_names_the_only_triggering_source(tmp_path: Path) -> None:
+    """只有回归成立时不得把政策突破也写进来源（反之亦然）。
+
+    上限取 50%：当前区间上界约 41% 在限内，政策判正常；回归仍判 1。
+    """
+    _write_snapshot_with_totals(tmp_path, attempts=120, failed=40)
+    _write_history(tmp_path, [{"wf-a": (120, 0)}])
+    code, message = live_gate.evaluate(
+        tmp_path, ceiling=50.0, regression_margin=live_gate.REGRESSION_MARGIN)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "退出码 1 的来源：回归" in message
+    assert "政策突破" not in message
+    assert "判正常" in message
+
+
+def test_regression_off_is_reported_not_silently_skipped() -> None:
+    """不给 ``--fail-on-regression`` 时明说「没判回归」，不把沉默当通过。
+
+    与 ``--fail-if-above`` 的报告模式同一条纪律：没给开关 ≠ 判过。
+    """
+    code, message = live_gate.evaluate(SNAPSHOT_ROOT, ceiling=8.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "未给 --fail-on-regression" in message
+    assert "不判回归" in message
+
+
+def test_regression_skips_malformed_history_but_reports_it(tmp_path: Path) -> None:
+    """形状无效的历史条目跳过并计数：基线可能不是紧邻的一轮，必须让人看见。"""
+    _write_snapshot_with_totals(tmp_path, attempts=120, failed=40)
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["history"] = [
+        {"per_workflow": "not-a-dict"},
+        {"per_workflow": {"wf-a": {"attempts": 120, "failed": 0}}},
+    ]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = _regression_message(tmp_path)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "1 条历史形状无效已跳过" in message
+
+
+def test_the_exceeds_fixture_regresses_against_its_healthy_history() -> None:
+    """CI 拿它做回归判据的反向验证，所以它自己的判决必须先被钉住。
+
+    历史上一轮 0/120、当前 40/120：同一份 fixture 同时是硬门槛与回归判据的
+    反向样本，两处用的是同一份数据，不会漂开。
+    """
+    code, message = live_gate.evaluate(
+        EXCEEDS_ROOT, regression_margin=live_gate.REGRESSION_MARGIN)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "判回归" in message
+
+
+def test_regression_gate_passes_the_committed_snapshot() -> None:
+    """入库快照在回归判据下必须退出 0——否则 CI 一接就红。
+
+    历史只有一轮时它是 ``undetermined``（判不了不等于回归）；重导累积到两轮
+    之后，它开始真判——那时这条测试与 CI 一起判的是同一份数据。
+    """
+    code, message = live_gate.evaluate(
+        SNAPSHOT_ROOT, regression_margin=live_gate.REGRESSION_MARGIN)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_regression_margin_requires_fail_on_regression(monkeypatch) -> None:
+    """``--regression-margin`` 单独出现时报错，而不是被静默忽略。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--regression-margin", "3"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2
+
+
+def test_fail_on_regression_is_rejected_on_check_modes(monkeypatch) -> None:
+    """回归是默认判定模式的一部分，与 ``--check-*`` 同给时报错。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-sample-size",
+        "--fail-on-regression"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2
+
+
+def test_regression_margin_out_of_range_is_rejected(monkeypatch) -> None:
+    """``>=100`` 是「永不判回归」的恒绿配置，负数则任何持平都算回归。"""
+    import sys
+
+    for value in ("100", "101", "-0.5"):
+        monkeypatch.setattr(sys, "argv", [
+            "check_live_snapshot_gate.py", "--fail-on-regression",
+            "--regression-margin", value])
+        with pytest.raises(SystemExit) as excinfo:
+            live_gate.main()
+        assert excinfo.value.code == 2, f"--regression-margin {value} 应被拒绝"
+
+
+def test_cli_regression_mode_honours_the_margin(monkeypatch) -> None:
+    """``main()`` 要把 ``--fail-on-regression`` 真的传下去：全挂快照必须判 1。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--fail-on-regression",
+        "--data-dir", str(EXCEEDS_ROOT)])
+    assert live_gate.main() == live_gate.EXIT_GATE_TRIGGERED
+
+
+def _regression_step(job: str) -> dict:
+    """指定 job 上的历史基线回归步骤（R59）。"""
+    steps = _backend_steps() if job == "backend" else _windows_backend_steps()
+    hits = [s for s in steps
+            if _has_flag(str(s.get("run", "")), "--fail-on-regression")]
+    assert len(hits) == 1, (
+        f"ci.yml 的 {job} job 必须且只能有一处跑 --fail-on-regression"
+        f"（实际 {len(hits)} 处）")
+    return hits[0]
+
+
+def _regression_margins(run: str) -> list[float]:
+    import re
+
+    return [float(v) for v in
+            re.findall(r"--regression-margin\s+([0-9.]+)", run)]
+
+
+def test_regression_gate_is_wired_into_ci() -> None:
+    """两个 runner 上都要真跑，且**每一次**调用都带开关与余量。
+
+    与 R58 对硬门槛的纪律一致：只断言「这一段里出现过开关」会被「真实判定
+    那次不带、只有反向验证带」骗过去。
+    """
+    for job in ("backend", "windows-backend"):
+        run = str(_regression_step(job)["run"])
+        invocations = [line for line in run.replace("\\\n", " ").splitlines()
+                       if "check_live_snapshot_gate.py" in line]
+        assert len(invocations) >= 2, (
+            f"{job} 应同时有真实快照与全挂快照两次回归调用"
+            f"（实际 {len(invocations)} 次）")
+        for line in invocations:
+            assert _has_flag(line, "--fail-on-regression"), (
+                f"{job} 有一次调用没带 --fail-on-regression：{line.strip()}")
+            assert _has_flag(line, "--regression-margin"), (
+                f"{job} 有一次调用没带 --regression-margin：{line.strip()}")
+
+
+def test_regression_gate_reverse_verifies_that_it_can_fire() -> None:
+    """只跑真实快照会得到一个恒绿步骤：必须断言全挂快照判 1。"""
+    for job in ("backend", "windows-backend"):
+        run = str(_regression_step(job)["run"])
+        assert "live_snapshot_exceeds" in run, (
+            f"{job} 的回归步骤没有全挂快照的反向验证")
+        assert "-ne 1" in run, f"{job} 没有断言全挂快照的退出码 1"
+        assert run.index("live_snapshot_exceeds") < run.index("-ne 1"), (
+            f"{job} 的「期望 1」断言出现在全挂快照调用之前：它断言的不是那一次")
+
+
+def test_both_runners_use_the_same_regression_margin() -> None:
+    """两个 runner 的回归余量必须一致：漂开就会在两个平台自相矛盾。"""
+    values = {job: _regression_margins(str(_regression_step(job)["run"]))[0]
+              for job in ("backend", "windows-backend")}
+    assert values["backend"] == values["windows-backend"], (
+        f"两个 runner 的回归余量不一致：{values}")
+    assert values["backend"] == live_gate.REGRESSION_MARGIN, (
+        f"CI 的回归余量 {values['backend']} 与脚本默认值 "
+        f"{live_gate.REGRESSION_MARGIN} 不一致")
+
+
+def test_windows_regression_step_ends_with_exit_zero() -> None:
+    """pwsh 包装器会追加 ``exit $LASTEXITCODE``，而最后一条命令故意以 1 退出。"""
+    run = str(_regression_step("windows-backend")["run"])
+    assert run.rstrip().endswith("exit 0"), (
+        "windows 的回归步骤末尾必须显式 exit 0（R52 踩过的坑）")
+    assert "$ErrorActionPreference" in run
+
+
+def test_regression_step_does_not_reintroduce_stale_or_coverage() -> None:
+    """回归步骤只读快照自身：不得顺手把需要真实数据面的判据拉进 CI。"""
+    for job in ("backend", "windows-backend"):
+        run = str(_regression_step(job)["run"])
         assert "--check-stale" not in run
         assert "--check-coverage" not in run

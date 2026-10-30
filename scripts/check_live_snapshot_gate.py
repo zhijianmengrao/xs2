@@ -26,7 +26,7 @@ R46 的 CI 闸门 step 判的是 ``tests/fixtures/run_samples`` ——**固定**
    精度的快照去查供应商。
 
 不给 ``--fail-if-above`` 时是**报告模式**：打印实测失败率与 95% 区间，退出 0，
-并在说明里显式写明「未给上限，本步只报告不判定」——静默当通过正是本轮修掉的
+并在说明里显式写明「未给上限，政策上限这一层只报告不判定」——静默当通过正是本轮修掉的
 那个缺陷的另一种写法，不能靠沉默表达。
 
 R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自动更新，旧数据自身
@@ -73,6 +73,10 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
     python scripts/check_live_snapshot_gate.py --check-per-workflow-rate
     python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds
 
+    # 主闸门加判历史基线回归（R59；可与 --fail-if-above 并存）
+    python scripts/check_live_snapshot_gate.py --fail-on-regression
+    python scripts/check_live_snapshot_gate.py --fail-if-above 8 --fail-on-regression
+
 R58 补的是 ``undetermined`` 的**次级信号**：一份快照里判不了是正常的（样本薄），
 但**连续多份快照都判不了**就不再是「这一轮样本薄」，而是「这个 workflow 的
 真实数据量支撑不了逐 workflow 判决」。快照元数据的 ``history`` 块记录最近几次
@@ -85,6 +89,19 @@ R58 补的是 ``undetermined`` 的**次级信号**：一份快照里判不了是
 判的数据一起入库，否则「连续 3 轮」在 CI 里永远等于「1 轮」——那又是一个
 写着「在看趋势」的恒绿防护。历史条目只用于数连续性，**不参与**漂移校验：
 它们描述的是过去几轮各自的快照，拿它们跟当前内容比是拿错了尺。
+
+R59 给主闸门补上**历史基线模式**（``--fail-on-regression``）。R57 只有政策
+上限，它判的是「绝对失败率是否不可接受」；这一层判的是「相对上一轮是否显著
+变坏」——一次从 2% 抬到 7% 的回归仍在 8% 上限之内，上限判不出来。两条判据
+并存，退出码都是 1，所以说明里必须写清 **1 的来源**（政策突破 / 回归），否则
+日志里分不清该查供应商还是查回归。
+
+基线取快照 ``history`` 里的**上一轮**，不取多轮合并：相邻两次导出常常包含
+同一批 run，把重叠样本当独立样本会伪造精度（区间假性收窄）。同一份数据里的
+两轮仍有重叠，忽略重叠只会让区间偏宽——偏向「判不出回归」而不是「误报回归」，
+这是刻意选的方向。基线本身太薄（``sample_size_margin_needed`` 超过回归余量）
+或两轮 workflow 集合不同（覆盖变化，失败率不可比）时一律判 ``undetermined``，
+不拿一个不可信的数字去比。
 """
 
 from __future__ import annotations
@@ -129,6 +146,18 @@ EXIT_THIN_SAMPLE = 7
 # 测试里同步的口径。
 UNDETERMINED_ROUND_STREAK = 3
 
+# 回归判据的默认余量（百分点，R59）：当前失败率相对历史基线高出这么多、且 95%
+# 区间下界仍在阈值之上，才判回归。取 3 的依据是入库快照当前的估计噪声——
+# 10/255 的精确界半宽是 2.64 个百分点，再小就会被重导噪声触发。它**不是**
+# ``--margin``（精度余量）的别名：后者问「估计够不够准」，这里问「变化够不够
+# 大」，两个量混用一个开关就会出现「调精度顺手改了判据」的暗耦合。
+#
+# 3 也让回归判据有真实的判定窗口：入库快照基线 3.92% + 3 = 阈值 6.92%，低于
+# 8% 政策上限——约 10% 的失败率会先触发回归，11.4% 才触发上限。若余量取 10
+# （per-workflow 诊断的历史默认值），阈值 13.92% 恒高于上限，回归这一层就永远
+# 轮不到它开口，等于一个写着「在看回归」的恒绿步骤。
+REGRESSION_MARGIN = 3.0
+
 
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
     """从快照内容复算 (attempts, failed)——与闸门脚本同一口径。"""
@@ -157,12 +186,18 @@ def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
     return attempts, failed
 
 
-def evaluate(data_dir: Path, ceiling: float | None = None) -> tuple[int, str]:
+def evaluate(data_dir: Path, ceiling: float | None = None,
+             regression_margin: float | None = None) -> tuple[int, str]:
     """返回 (退出码, 说明)。纯逻辑，便于测试注入临时目录。
 
     ``ceiling`` 是外部给定的失败率政策上限（百分点），判决算术见
     ``_ceiling_verdict``。``None`` 表示报告模式：仍然判漂移（4）与无样本（3），
     但不把「调用方没给上限」沉默成通过——说明里会写明本轮没有判定。
+
+    ``regression_margin`` 非 ``None`` 时加判**历史基线回归**（R59）：当前失败率
+    相对快照 ``history`` 上一轮（且 workflow 集合相同）的合并失败率高出这么多，
+    且 95% 区间下界仍在阈值之上，才判回归。``None`` 表示不判回归，说明里同样
+    写明这一层没有判定——「没给开关」与「判了通过」是两件事。
     """
     meta_path = data_dir / "snapshot-meta.json"
     if not meta_path.is_file():
@@ -186,10 +221,56 @@ def evaluate(data_dir: Path, ceiling: float | None = None) -> tuple[int, str]:
             "改过快照就要重导：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
 
-    verdict, detail = _ceiling_verdict(rec_attempts, rec_failed, ceiling)
-    if verdict == "exceeds":
-        return EXIT_GATE_TRIGGERED, detail
-    return EXIT_OK, detail
+    policy_verdict, policy_detail = _ceiling_verdict(
+        rec_attempts, rec_failed, ceiling)
+    parts = [policy_detail]
+    regression_verdict = "report"
+    if regression_margin is not None:
+        # 与 ``snapshot_rounds`` 同一口径：当前轮取快照**内容**复算的分组计数，
+        # 不取元数据里的一句话。全局漂移校验只比总数，把一次失败从 A 挪到 B
+        # 它看不出来，而那种改动恰好会改变「当前这一轮」的身份。
+        current = recompute_per_workflow(data_dir / "workflows")
+        baseline, invalid_history, note = historical_baseline(meta, current)
+        if baseline is None:
+            regression_verdict = "undetermined"
+            reg_detail = f"判不了回归：{note}"
+        else:
+            baseline_rate = baseline["failed"] / baseline["attempts"] * 100.0
+            regression_verdict, reg_detail = _baseline_verdict(
+                rec_attempts, rec_failed,
+                baseline["attempts"], baseline["failed"], regression_margin)
+            reg_detail = f"{note}；{reg_detail}"
+            if ceiling is not None and baseline_rate + regression_margin >= ceiling:
+                # 配置层就能看出这一层不会先开口。不报的话，日志里永远是政策
+                # 上限先红，而回归判据看起来「在工作」——那是恒绿防护的另一种
+                # 形状（永远被别的判据挡在前面）。
+                reg_detail += (
+                    f"。注意：基线 {baseline_rate:.2f}% + 回归余量 "
+                    f"{regression_margin:g} ≥ 政策上限 {ceiling:g}%，"
+                    "回归判据不会先于政策上限触发")
+        if invalid_history:
+            reg_detail += (
+                f"（另有 {invalid_history} 条历史形状无效已跳过，"
+                "基线可能不是紧邻的一轮）")
+        parts.append(f"[历史基线回归] {reg_detail}")
+    else:
+        parts.append(
+            "[历史基线回归] 未给 --fail-on-regression，本步不判回归"
+            "（退出 0 不代表没有回归）")
+
+    sources: list[str] = []
+    if policy_verdict == "exceeds":
+        sources.append("政策突破")
+    if regression_verdict == "exceeds":
+        sources.append("回归")
+    if sources:
+        # 两条判据都退出 1，日志里必须能分清是哪一个——否则「查供应商」与
+        # 「查回归」两种处置会互相冒充。
+        parts.append("退出码 1 的来源：" + "；".join(sources))
+    elif ceiling is not None or regression_margin is not None:
+        parts.append("退出码 1 的来源：无（已启用的判据都没有判失败）")
+
+    return (EXIT_GATE_TRIGGERED if sources else EXIT_OK), "。".join(parts)
 
 
 def _parse_ts(value: object) -> "datetime | None":
@@ -774,7 +855,7 @@ def _ceiling_verdict(attempts: int, failed: int,
                 f"95% 区间 [{lower:.2f}%, {upper:.2f}%]")
     if ceiling_pct is None:
         return "report", (
-            f"{measured}；未给 --fail-if-above，本步只报告不判定"
+            f"{measured}；未给 --fail-if-above，政策上限这一层只报告不判定"
             "（退出 0 不代表失败率合格）")
     threshold_text = f"阈值（政策上限）{ceiling_pct:.2f}%"
     verdict = _verdict_of_interval(lower, upper, ceiling_pct)
@@ -927,6 +1008,82 @@ def undetermined_streaks(rounds: list[dict[str, tuple[int, int]]],
     return streaks
 
 
+def historical_baseline(meta: dict, current: dict[str, dict]
+                        ) -> tuple[dict | None, int, str]:
+    """当前这一轮之前的最近一轮合计，用作回归判据的基线（R59）。
+
+    返回 ``(baseline, invalid_entries, note)``；``baseline`` 形如
+    ``{"attempts": n, "failed": k, "workflows": m}``，没有可用基线时给 ``None``，
+    ``note`` 说明原因。三种「没有基线」都显式成文字，不拿 0 或当前轮顶替：
+
+    - 历史只有当前这一轮（刚重导过、或旧快照没有 ``history`` 块）；
+    - 两轮的 workflow 集合不同。覆盖变化会让两个失败率不可比（新工作流带着
+      自己的失败率进来，旧的又可能因为窗口滚动而消失），此时判「回归」等于
+      把一次覆盖面变化说成「东西在变坏」。与 ``undetermined_streaks`` 的
+      「缺席即中断」同一条纪律。
+    - 形状无效的历史条目被跳过并计数，由调用方在报告里写明——跳过之后基线
+      可能不是紧邻的一轮。
+
+    **只取上一轮，不合并多轮**：相邻两次导出常常包含同一批 run，把重叠样本
+    当独立样本会伪造精度（区间假性收窄），从而把噪声判成回归。单轮比较在
+    同一份数据内仍有重叠，但忽略重叠只会让区间偏宽，方向偏向「判不出」。
+    """
+    rounds, invalid = snapshot_rounds(meta, current)
+    if len(rounds) < 2:
+        return None, invalid, (
+            "快照历史只有当前这一轮，没有可比的上一轮"
+            "（重导一次后下一轮才有基线）")
+    previous = rounds[-2]
+    current_names = set(rounds[-1])
+    previous_names = set(previous)
+    if current_names != previous_names:
+        added = sorted(current_names - previous_names)
+        gone = sorted(previous_names - current_names)
+        return None, invalid, (
+            f"上一轮与当前的 workflow 集合不同（新增 {added or '无'}，"
+            f"消失 {gone or '无'}），失败率不可比，判不了回归")
+    attempts = sum(a for a, _ in previous.values())
+    failed = sum(f for _, f in previous.values())
+    note = (f"基线取自历史上一轮（{len(previous)} 个 workflow，"
+            f"{failed}/{attempts}）")
+    return {"attempts": attempts, "failed": failed,
+            "workflows": len(previous)}, invalid, note
+
+
+def _baseline_verdict(attempts: int, failed: int,
+                      baseline_attempts: int, baseline_failed: int,
+                      margin_pct: float) -> tuple[str, str]:
+    """当前轮相对历史基线是否回归：``exceeds`` / ``normal`` / ``undetermined``。
+
+    与 ``_rate_verdict`` 共用同一把尺（同一条 Clopper-Pearson 区间、同一个三分
+    法），只是「基线」换成上一轮的真实失败率。判决名沿用 ``exceeds``——对
+    调用方来说它就是「超出基线」，报告层再翻成「回归」。
+
+    基线本身太薄时先判 ``undetermined``：拿一个 ``0/10``（95% 上界 25.9 个
+    百分点）当阈值，当前只要不是零失败就会被判回归，而那个基线根本区分不了
+    0% 与 20%。判定用的是 ``_failure_rate_precision``——与 ``--check-sample-size``
+    同一把尺，不在这里另发明一个样本量门槛。
+    """
+    if baseline_attempts <= 0:
+        return "undetermined", "历史基线没有尝试，判不了回归"
+    ok, precision_detail = _failure_rate_precision(
+        baseline_attempts, baseline_failed, margin_pct)
+    if not ok:
+        return "undetermined", (
+            f"历史基线本身的失败率估计太薄，判不了回归：{precision_detail}")
+    baseline_rate = baseline_failed / baseline_attempts * 100.0
+    verdict, detail = _rate_verdict(attempts, failed, baseline_rate, margin_pct)
+    # 判决措辞必须写出来：只有阈值数字时，日志里「没红」会被读成「判过了」，
+    # 而 ``undetermined`` 既不是过也不是不过。
+    if verdict == "exceeds":
+        detail += "：整个区间都在阈值之上，判回归"
+    elif verdict == "normal":
+        detail += "：整个区间都在阈值之内，判没有回归"
+    else:
+        detail += "：区间横跨阈值，样本不足以判是否回归（不判失败）"
+    return verdict, detail
+
+
 def check_per_workflow_rate(data_dir: Path, margin: float,
                             fail_on_exceeds: bool = False) -> tuple[int, str]:
     """按 workflow 判失败率是否高于**其余** workflow 的合并基线（R56）。
@@ -1073,6 +1230,13 @@ def main() -> int:
     parser.add_argument("--fail-on-exceeds", action="store_true",
                         help="--check-per-workflow-rate 时把 exceeds 判为退出码 1"
                              "（默认只报告，恒退出 0）")
+    parser.add_argument("--fail-on-regression", action="store_true",
+                        help="默认判定模式加判历史基线回归：当前失败率相对快照"
+                             "上一轮高出 --regression-margin 且 95%% 区间下界仍在"
+                             "阈值之上才退出 1（可与 --fail-if-above 并存）")
+    parser.add_argument("--regression-margin", type=float, default=None,
+                        help="回归判据允许的基线抬升（百分点，默认 "
+                             f"{REGRESSION_MARGIN:g}）；不能用来替代 --margin")
     parser.add_argument("--source", type=Path, default=None,
                         help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
                              "仅 --check-stale / --check-coverage 使用")
@@ -1108,6 +1272,20 @@ def main() -> int:
         # 静默忽略会让「我加了 --fail-on-exceeds，CI 却没红」变成一个无人排查
         # 的谜。显式报错，与上一行的互斥检查同一纪律。
         parser.error("--fail-on-exceeds 只能配合 --check-per-workflow-rate 使用")
+    if options.fail_on_regression and chosen:
+        # 回归是默认判定模式的一部分，与四条 --check-* 判据互斥：混在一次调用
+        # 里会让人看不出红的是哪一层（与「一次调用判一件事」同一纪律）。
+        parser.error(
+            f"--fail-on-regression 不能与 {' 与 '.join(chosen)} 同时使用")
+    if options.regression_margin is not None:
+        if not options.fail_on_regression:
+            # 与 --margin/--fail-on-exceeds 同一纪律：不确定的配置在参数层炸掉，
+            # 而不是静默忽略。
+            parser.error("--regression-margin 只能配合 --fail-on-regression 使用")
+        if not 0.0 <= options.regression_margin < 100.0:
+            # 100 与 >100 永远等不到「整个区间在阈值之上」，是写着「不判回归」
+            # 的恒绿配置；负数则相当于把阈值压到基线以下，任何持平都算回归。
+            parser.error("--regression-margin 需在 0 到 100 之间（不含 100，单位是百分比）")
     if options.fail_if_above is not None and chosen:
         # 上限只属于默认判定模式。混着给会让人以为「样本量判据也按这个上限判」，
         # 而它判的是精度，与上限无关。
@@ -1115,11 +1293,11 @@ def main() -> int:
             "--fail-if-above 只用于默认判定模式，不能与 "
             f"{' 与 '.join(chosen)} 同时使用")
     if options.margin is not None and not chosen:
-        # 默认模式的阈值只来自 --fail-if-above（R57）。静默忽略会让「我把余量
-        # 收紧到 2，CI 却没变」变成一个无人排查的谜——与 --fail-on-exceeds
-        # 同一纪律：不确定的配置在参数层就炸掉。
+        # 默认模式的阈值只来自 --fail-if-above / --regression-margin（R57/R59）。
+        # 静默忽略会让「我把余量收紧到 2，CI 却没变」变成一个无人排查的谜——
+        # 与 --fail-on-exceeds 同一纪律：不确定的配置在参数层就炸掉。
         parser.error("--margin 只用于 --check-* 判据；"
-                     "默认判定模式的阈值请用 --fail-if-above")
+                     "默认判定模式的阈值请用 --fail-if-above / --regression-margin")
 
     if options.check_per_workflow_rate:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
@@ -1157,8 +1335,13 @@ def main() -> int:
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
 
+    regression_margin = None
+    if options.fail_on_regression:
+        regression_margin = (REGRESSION_MARGIN if options.regression_margin is None
+                             else options.regression_margin)
     code, message = evaluate(
-        options.data_dir or _default_data_dir(), options.fail_if_above)
+        options.data_dir or _default_data_dir(), options.fail_if_above,
+        regression_margin=regression_margin)
     print(f"[live-gate] {message}", file=sys.stderr)
     return code
 
