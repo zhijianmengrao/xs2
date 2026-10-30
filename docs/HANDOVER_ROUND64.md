@@ -160,6 +160,25 @@ post-hoc 14.12、reader-sim 22.09、story-plan 17.07；全局 10/255 仍是 2.64
 其余：快照三条判据与保鲜全绿；大陆下载加速维持现状（R44 结论）；快照保鲜容忍
 7 天维持（R49 确认）；「轮」按导出轮推进（R59 拍定，CI 不写回仓库）。
 
-## 10. 推送与 CI 核对
+## 10. 推送与 CI 核对（run 41076097743 五 job 全绿）
 
-（待补：推送后逐字核对五 job 日志，与本轮 §7 的本地数字对齐。）
+推送 `24d661c`（对数空间求和 + 退出码 8 + 12 条用例）与 `ea82731`（交接文档 +
+PROJECT_INFO 条目），**一次推送**（两个 commit 同一次 `git push`），于是
+`head_sha` 只产生一个 run：**41076097743**，五 job 全部 `success`
+（backend / windows-backend / frontend / container-config / container-build）。
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | 五个全部 `conclusion=success`；轮询里先后完成，无重跑 |
+| 改后的算术在 CI 上真跑 | ubuntu `backend` 第 **10** 个 Run 块（`Snapshot sample-size gate`）：`快照样本量足够支撑失败率判定：失败率 3.92% 的 95% 半宽 2.64 个百分点≤ 余量 10.0（n=255, 失败 10）` + `OK  样本量判据双向生效：默认余量通过，余量 2 触发 7`；windows 第 **9** 个 Run 块同一句（日志里是 `\uXXXX` 转义，解码后为 **2.64**） |
+| 判决与 R63 逐字相同 | 两 runner 都打印 `失败率 3.92%（n=255, 失败 10），95% 区间 [2.14%, 6.56%]`；per-workflow rate `0 个超出 / 1 个正常 / 8 个样本不足`；逐 workflow 回归 `2 个可判 / 7 个基线太薄判不了 / 0 个判回归`；ubuntu 另打印全挂 fixture 的 `wf-bad 判回归（100.00%，下界 92.78%）` |
+| windows 的边界 | 该 job **11 个 Run 块**、最后一块是 `audit_storage_names.py`，**没有** e2e 步骤——与 R63 §8-9 一致，不写成「两 runner 都验证了 e2e」 |
+| 四面用例总数一致 | ubuntu `2201 / 64` = **2265**、windows `2236 / 29` = **2265**、本机 Low-IL `2152 / 113` = **2265**、High-IL `2237 / 28` = **2265** |
+| 前端 | 日志里 8 个 `# pass` 块合计 **490**（48+60+137+81+139+1+18+6）、8 个 `# fail` 块合计 **0** |
+| 容器 | `container-config`：`docker compose config -q` 通过；`container-build`：`docker/build-push-action@v6` 真构建（导出 manifest `sha256:37e69c11…`），随后 `smoke_container.py --skip-build` 冒烟通过 |
+| e2e | ubuntu 第 **13** 个 Run 块：`[e2e] 10/10 场景通过`，三个形状场景详情带 R63 的预算与实测（两段 0.003s → 133 倍、三段 0.003s → 133 倍、四段 0.004s → 100 倍） |
+
+推送通道：本轮 **socks5 与直连同时可用**（`curl --socks5 127.0.0.1:10808` 与
+`--noproxy '*'` 访问 api.github.com 都返回 200），按仓库配置走 socks5 成功。
+R59–R63 五轮出现了四种不同的可用组合，再次确认「每轮先探测再选路」。
+
