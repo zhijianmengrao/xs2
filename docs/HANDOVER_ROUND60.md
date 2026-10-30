@@ -119,7 +119,7 @@
 
 ## 8. 推送与 CI 核对（已闭环）
 
-推送 `818faf5`（唯一的提交，只含 `snapshot-meta.json`），CI run **41034747483**
+推送 `818faf5`（唯一的代码/数据提交，只含 `snapshot-meta.json`），CI run **41034747483**
 **五 job 全绿**（backend / windows-backend / frontend / container-config /
 container-build）。
 
@@ -136,4 +136,7 @@ api.github.com 返回 200），`git push` 直接走配置代理成功；先试�
 `curloptResolve` 三个 IP」全部 `Connection was reset`。这与 R59 记录的通道状态
 **相反**（R59 是 socks5 未运行、直连可用），所以下轮先探测再选路，不要照抄上一轮
 的方向。
+
+文档提交 `dc1822b` 的 run **41035614394** 同样**五 job 全绿**（同一批快照判据在
+同一份数据上复跑，判决与上表一致）。
 
