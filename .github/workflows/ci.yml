@@ -72,17 +72,34 @@ jobs:
       # 为什么不是「又一个恒绿」：阈值由快照自身实测失败率 + 余量算出，且脚本
       # 先校验「元数据与内容复算一致」——内容变了而没重导元数据会以退出码 4
       # 失败。退出码语义与 R45/R46 的闸门一致：0 通过 / 1 超阈 / 3 无样本。
+      # 真实失败率闸门（R47 接、R57 修）。R47 的原写法是「阈值 = 实测 + 余量」，
+      # 判据又是「实测 > 阈值」——而余量禁止为负，于是阈值恒 ≥ 实测，**任何数据
+      # 都判不出超阈**（R57 实测：20 次尝试全失败仍判退出 0）。R57 把阈值移出被
+      # 测量的量：这里给一个写明数字的政策上限，判据用 95% 区间下界（整个区间都
+      # 在上限之上才红）。取 8% 的依据：入库快照 10/255 = 3.92%，区间
+      # [2.14%, 6.56%] 明确在限内；要判红需要 255 次尝试里至少 29 次失败（11.4%）。
+      # 上限是政策值，不随快照漂移；改它必须同时改这里与 windows 那段（有测试钉住）。
+      #
+      # 反向验证压到 1%：区间下界 2.14% 高于它必须判 1。没有这一步，「上限写得
+      # 比谁都高」同样恒绿，而日志里看不出它从不说话。
       - name: Provider failure-rate gate against real snapshot
         env:
           DETERMINFLOW_DATA_DIR: ${{ github.workspace }}/tests/fixtures/live_snapshot
         run: |
           # 先跑闸门再解释退出码；不能靠 `set -e` 抢走退出码（$? 会是 0）。
           code=0
-          python scripts/check_live_snapshot_gate.py || code=$?
-          cat <<'EOF'
-          退出码：0=通过 1=超阈 3=无样本 4=元数据漂移（改过快照但没重导）
-          EOF
-          exit $code
+          python scripts/check_live_snapshot_gate.py --fail-if-above 8 || code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::真实失败率闸门判 $code（1=超 8% 上限 3=无样本 4=元数据漂移）"
+            exit "$code"
+          fi
+          tight=0
+          python scripts/check_live_snapshot_gate.py --fail-if-above 1 || tight=$?
+          if [ "$tight" -ne 1 ]; then
+            echo "::error::上限压到 1% 后仍判 $tight（期望 1）：闸门没有判定力"
+            exit 1
+          fi
+          echo "OK  真实失败率闸门双向生效：8% 上限通过，1% 上限触发 1"
 
       # 快照样本量（R51）：前三步都在判「这个数字合不合格」，没有一步判
       # 「这个数字的精度够不够当基线」。快照只有 14 次尝试、1 次失败时，实测
@@ -232,6 +249,34 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-dev.lock
       - run: python -m pytest -q
+      # 真实失败率闸门（R57）：与 ubuntu 的同名步骤一一对应（政策上限 8% +
+      # 反向验证 1%）。上限数字两边必须一致——有测试钉住；漂开就会在两个 runner
+      # 上给出互相矛盾的结论，而那种矛盾最难排查。
+      #
+      # 两个 pwsh 坑同上（见样本量那一步的注释）：故意以 1 退出的那次调用会让
+      # $ErrorActionPreference='Stop' 把「判据正常」包成 NativeCommandError，
+      # 末尾又会被 GHA 包装器追加的 `exit $LASTEXITCODE` 带出来。所以先降成
+      # Continue，末尾显式 exit 0。
+      - name: Provider failure-rate gate against real snapshot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $snapshot = "tests/fixtures/live_snapshot"
+          python scripts/check_live_snapshot_gate.py --fail-if-above 8 --data-dir $snapshot
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Host "::error::真实失败率闸门判 $code（1=超 8% 上限 3=无样本 4=元数据漂移）"
+            exit $code
+          }
+          $null = python scripts/check_live_snapshot_gate.py --fail-if-above 1 --data-dir $snapshot 2>&1
+          $tight = $LASTEXITCODE
+          if ($tight -ne 1) {
+            Write-Host "::error::上限压到 1% 后仍判 $tight（期望 1）：闸门没有判定力"
+            exit 1
+          }
+          Write-Host "OK  真实失败率闸门双向生效（Windows/Python 3.14）：8% 上限通过，1% 上限触发 1"
+          exit 0
+
       # 快照样本量（R52）：与 backend job 的同名步骤判同一个东西，但跑在
       # Windows runner + Python 3.14 上。R51 只在 ubuntu 的 backend job 接了这一
       # 步，§10-1 把它记成缺口——判据万一隐含了平台假设（路径、浮点格式化、

@@ -7,7 +7,8 @@ R46 把闸门接进了 CI，但判的是 ``tests/fixtures/run_samples`` ——**
 四类回归，全部静态或纯函数可验：
 1. CI 真的有第二个闸门 step，且指向快照而不是 fixture；
 2. 快照与其元数据一致（内容变了没重导 → 会以退出码 4 失败）；
-3. 阈值从快照自身算，不是写死的数字（写死会在重导后静默失准）；
+3. 阈值来自**调用方给的政策上限**，精度（区间）由快照自身算——R57 修掉了
+   「阈值 = 实测 + 余量」的自指写法，那种写法判据恒假（见下方 R57 一组）；
 4. 快照不含内容载荷（小说正文/轨迹/token 明细不该进仓库）。
 """
 
@@ -117,6 +118,96 @@ def test_ci_live_gate_points_at_the_snapshot_not_the_fixture() -> None:
     )
 
 
+def _ceilings(run: str) -> list[float]:
+    """这一段里所有 ``--fail-if-above`` 的数字（第一个是真实判定，其后是反向验证）。"""
+    import re
+
+    return [float(v) for v in re.findall(r"--fail-if-above\s+([0-9.]+)", run)]
+
+
+def _gate_invocations(run: str) -> list[str]:
+    """这一段里每一次调用闸门的命令行。
+
+    按行取而不是只数开关：若真实判定那次调用没带上限、只有反向验证带了，光看
+    「有几个 --fail-if-above」会给出错误的安全感。换行书写会被拆成两行而让测试
+    报错——那种情况必须重写这条测试，而不是默默放过。
+    """
+    return [line for line in run.splitlines()
+            if "check_live_snapshot_gate.py" in line]
+
+
+def _windows_main_gate_step() -> dict:
+    """Windows 上的失败率闸门（R57）。与 ubuntu 的 ``_live_gate_step`` 同一口径。"""
+    hits = [
+        s for s in _windows_backend_steps()
+        if "check_live_snapshot_gate.py" in str(s.get("run", ""))
+        and "--check-" not in str(s.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "ci.yml 的 windows-backend job 必须且只能有一处调用失败率闸门（不带 --check-*）"
+        f"（实际 {len(hits)} 处）"
+    )
+    return hits[0]
+
+
+def test_ci_live_gate_passes_an_explicit_ceiling() -> None:
+    """真实数据闸门**每一次**调用都必须带写明数字的政策上限（R57）。
+
+    不带上限就是报告模式（恒退出 0）——那正是本轮修掉的缺陷换件外衣：一个挂在
+    CI 上、从不判定的步骤。只断言「这一步里有几个 --fail-if-above」不够：真实
+    判定那次不带上限、只有反向验证带一个，同样能骗过那种断言。
+    """
+    run = str(_live_gate_step()["run"])
+    invocations = _gate_invocations(run)
+    assert len(invocations) >= 1
+    for line in invocations:
+        assert "--fail-if-above" in line, (
+            f"这次调用没有 --fail-if-above，会退化成报告模式：{line.strip()}")
+    assert 0 < _ceilings(invocations[0])[0] <= 100
+
+
+def test_ci_live_gate_reverse_verifies_the_ceiling() -> None:
+    """上限必须有反向验证：压到实测以下必须判 1。
+
+    只跑「8% 该通过」会得到一个恒绿步骤——上限写得比谁都高也是绿。这里断言两
+    件事：真的跑了第二次、且第二次的退出码被断言为 1。
+    """
+    import re
+
+    run = str(_live_gate_step()["run"])
+    invocations = _gate_invocations(run)
+    assert len(invocations) >= 2, "CI 步骤没有第二次（反向验证）上限调用"
+    real, tight = _ceilings(invocations[0])[0], _ceilings(invocations[1])[0]
+    assert tight < real, f"反向验证的上限 {tight} 不低于真实判定 {real}：它验证不了什么"
+    match = re.search(r'if\s*\[\s*"\$(\w+)"\s*-ne\s*1\s*\]', run)
+    assert match, "CI 步骤没有断言「收紧上限后退出码为 1」"
+    # 那个变量必须来自第二次调用，而不是第一次。
+    tail = run.split("--fail-if-above")[-1]
+    assert re.search(rf"\|\|\s*{match.group(1)}\s*=\s*\$\?", tail), (
+        f"退出码变量 {match.group(1)} 不是反向验证那一次调用的")
+
+
+def test_both_runners_use_the_same_policy_ceiling() -> None:
+    """ubuntu 与 windows 必须给同一个上限：漂开就会在两个 runner 上自相矛盾。
+
+    上限是政策值，不是各 runner 的本地参数。两个数字不一致时，同一份快照会在
+    一个平台判红、另一个判绿，而根因只是一次手误。
+    """
+    ubuntu = _ceilings(str(_live_gate_step()["run"]))
+    windows = _ceilings(str(_windows_main_gate_step()["run"]))
+    assert ubuntu and windows
+    assert ubuntu[0] == windows[0], (
+        f"两个 runner 的政策上限不一致：ubuntu {ubuntu[0]}，windows {windows[0]}")
+
+
+def test_windows_main_gate_step_ends_with_exit_zero() -> None:
+    """pwsh 包装器会追加 ``exit $LASTEXITCODE``，而最后一条原生命令故意以 1 退出。"""
+    run = str(_windows_main_gate_step()["run"])
+    assert run.rstrip().endswith("exit 0"), (
+        "windows 的失败率闸门步骤末尾必须显式 exit 0（R52 踩过的坑）")
+    assert "$ErrorActionPreference" in run
+
+
 def test_ci_keeps_the_fixture_self_test_alongside() -> None:
     """两个闸门并存：fixture 自检不能再被真实数据那一步顶掉。"""
     runs = [s for s in _backend_steps()
@@ -146,41 +237,81 @@ def test_snapshot_holds_real_failures_and_retries() -> None:
     assert failed > 0, "快照零失败，闸门失去可判性"
 
 
-# ------------------------------------------------- 阈值不是写死的
+# ------------------------------------------ 阈值来自外部，不是快照自身（R57）
 def _threshold_from(message: str) -> float:
-    """从判定说明里取出实际使用的阈值数值（"未超出阈值 13.7%（..."）。"""
+    """从判定说明里取出实际使用的阈值数值（"...阈值（政策上限）8.00%..."）。"""
     import re
 
-    match = re.search(r"阈值\s*([0-9.]+)%", message)
+    match = re.search(r"阈值（政策上限）\s*([0-9.]+)%", message)
     assert match, f"判定说明里没有阈值数字：{message}"
     return float(match.group(1))
 
 
-def test_threshold_is_derived_from_the_snapshot() -> None:
-    """阈值跟着实测值走：同一份快照换余量，**阈值数值**必须跟着变。
+def test_gate_threshold_comes_from_the_caller() -> None:
+    """阈值必须是外部给的：同一份快照换上限，**结论**要跟着翻转。
 
-    只断言「说明不同」是不够的——说明里本来就含余量文字，写死阈值的变异能
-    骗过去（R47 实测：第一版断言就漏了）。这里直接比数字。
+    R57 修的就是 R47 的「阈值从快照自身算」——那是同义反复：阈值 = 实测 +
+    余量，判据 = 实测 > 阈值，而余量禁止为负，于是恒假。只断言「说明里出现了
+    上限数字」会被这种实现骗过去，所以这里钉的是翻转：8% 判正常、1% 判超阈。
     """
-    meta = json.loads((SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
-    totals = meta["totals"]
-    measured = totals["failed"] / totals["attempts"] * 100
-
-    code_tight, msg_tight = live_gate.evaluate(SNAPSHOT_ROOT, margin=0.0)
-    code_loose, msg_loose = live_gate.evaluate(SNAPSHOT_ROOT, margin=50.0)
-    assert code_tight == live_gate.EXIT_OK
-    assert code_loose == live_gate.EXIT_OK
-
-    assert abs(_threshold_from(msg_tight) - measured) < 0.15, (
-        f"余量 0 时阈值应等于实测 {measured:.2f}%，实得 {_threshold_from(msg_tight)}")
-    assert abs(_threshold_from(msg_loose) - min(100.0, measured + 50.0)) < 0.15, (
-        f"余量 50 时阈值应约为 {measured + 50:.2f}%，实得 {_threshold_from(msg_loose)}")
+    code_ok, msg_ok = live_gate.evaluate(SNAPSHOT_ROOT, ceiling=8.0)
+    code_bad, msg_bad = live_gate.evaluate(SNAPSHOT_ROOT, ceiling=1.0)
+    assert code_ok == live_gate.EXIT_OK, msg_ok
+    assert code_bad == live_gate.EXIT_GATE_TRIGGERED, msg_bad
+    assert _threshold_from(msg_ok) == pytest.approx(8.0, abs=0.005)
+    assert _threshold_from(msg_bad) == pytest.approx(1.0, abs=0.005)
 
 
-def test_margin_zero_still_passes_on_unchanged_snapshot() -> None:
-    """余量归零时「实测等于阈值」仍应通过（严格大于才触发）。"""
-    code, message = live_gate.evaluate(SNAPSHOT_ROOT, margin=0.0)
+def test_a_snapshot_of_only_failures_actually_triggers(tmp_path: Path) -> None:
+    """R57 的回归钉子：20 次尝试全失败，在上限 8% 下必须退出 1。
+
+    这正是老实现**实测判 0** 的场景：阈值被截到 100%，判据 ``100 > 100`` 为假。
+    没有这一条，一个恒真的比较也能让上面那条测试全绿（它靠的是「换上限翻转」，
+    而恒真实现根本不会翻转——两条测试分工：一条钉「有判定力」，一条钉「比谁」）。
+    """
+    _write_snapshot_with_totals(tmp_path, attempts=20, failed=20)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+
+
+def test_report_mode_does_not_pass_for_a_verdict() -> None:
+    """不给上限是报告模式：退出 0，但必须写明「没有判定」。
+
+    「没给阈值」被沉默成通过，是本缺陷的另一件外衣。所以这里断言说明里既有
+    「未给 --fail-if-above」，又**不出现**正常判决的措辞。
+    """
+    code, message = live_gate.evaluate(SNAPSHOT_ROOT)
     assert code == live_gate.EXIT_OK, message
+    assert "未给 --fail-if-above" in message
+    assert "只报告不判定" in message
+    assert "判正常" not in message
+
+
+def test_interval_straddling_the_ceiling_is_undetermined_not_a_failure() -> None:
+    """区间横跨上限 → 判不了：不红，也不许说成正常（R56 的三分法）。
+
+    入库快照 10/255 = 3.92%，95% 区间 [2.14%, 6.56%]。上限 4% 落在区间里：
+    这份样本回答不了「真实失败率是否高于 4%」，所以既不是 exceeds 也不是 normal。
+    """
+    code, message = live_gate.evaluate(SNAPSHOT_ROOT, ceiling=4.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "区间横跨阈值" in message
+    assert "不判失败" in message
+    assert "判正常" not in message
+
+
+def test_main_gate_and_per_workflow_share_the_same_interval() -> None:
+    """主闸门与 per-workflow 判决必须共用同一份区间算术（R56 §4 的纪律）。
+
+    两处各写一份精确界，迟早出现「这边说超、那边说不超」。这里让两个函数对同一
+    组 ``(n, k)`` 与同一个阈值出判决——任何一处改了口径（换正态近似、换点估计）
+    就会在这一组上分裂。主闸门的阈值是「0 + 上限」，所以直接用同一个数比。
+    """
+    for attempts, failed in ((255, 10), (20, 20), (14, 0), (5, 1), (1, 1)):
+        for threshold in (1.0, 4.0, 8.0, 50.0, 100.0):
+            assert (live_gate._ceiling_verdict(attempts, failed, threshold)[0]
+                    == live_gate._rate_verdict(attempts, failed, 0.0, threshold)[0]), (
+                        f"n={attempts} k={failed} 阈值={threshold}：两处判决不一致")
 
 
 # ------------------------------------------------- 元数据漂移必须显形
@@ -203,13 +334,13 @@ def test_gate_detects_metadata_drift(tmp_path: Path) -> None:
     (tmp_path / "snapshot-meta.json").write_text(
         json.dumps({"totals": {"attempts": 5, "failed": 1}}), encoding="utf-8")
 
-    code, message = live_gate.evaluate(tmp_path, margin=10.0)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
     assert code == live_gate.EXIT_META_DRIFT, message
     assert "不一致" in message
 
 
 def test_gate_reports_no_sample_when_snapshot_missing(tmp_path: Path) -> None:
-    code, message = live_gate.evaluate(tmp_path, margin=10.0)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
     assert code == live_gate.EXIT_NO_SAMPLE, message
 
 
@@ -839,7 +970,7 @@ def test_per_workflow_catches_drift_the_global_totals_miss(tmp_path: Path) -> No
     """
     _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
     # 先确认基线：全局与 per-workflow 都一致时双绿。
-    assert live_gate.evaluate(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
+    assert live_gate.evaluate(tmp_path, ceiling=8.0)[0] == live_gate.EXIT_OK
     assert live_gate.check_per_workflow(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
 
     meta = json.loads((tmp_path / "snapshot-meta.json").read_text(encoding="utf-8"))
@@ -848,7 +979,7 @@ def test_per_workflow_catches_drift_the_global_totals_miss(tmp_path: Path) -> No
     (tmp_path / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
     # 全局合计未变 → 全局判据仍然绿（这正是缺口本身）。
-    assert live_gate.evaluate(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
+    assert live_gate.evaluate(tmp_path, ceiling=8.0)[0] == live_gate.EXIT_OK
     # 分组复算必须抓到。
     code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
     assert code == live_gate.EXIT_META_DRIFT, message
@@ -1197,6 +1328,62 @@ def test_fail_on_exceeds_requires_the_rate_check(monkeypatch) -> None:
     with pytest.raises(SystemExit) as excinfo:
         live_gate.main()
     assert excinfo.value.code == 2
+
+
+def test_fail_if_above_is_rejected_on_check_modes(monkeypatch) -> None:
+    """上限只属于默认判定模式：与 ``--check-*`` 同给时报错。
+
+    静默接受会让人以为「样本量判据也按这个上限判」，而它判的是精度，与上限无关。
+    与 ``--fail-on-exceeds`` 那条同一纪律：不确定的配置在参数层就炸掉。
+    """
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-sample-size", "--fail-if-above", "8"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2
+
+
+def test_margin_is_rejected_in_default_mode(monkeypatch) -> None:
+    """``--margin`` 在默认模式里没有作用，必须报错而不是静默忽略。
+
+    R57 之后默认模式的阈值只来自 ``--fail-if-above``。静默忽略会让「我把余量
+    收紧到 2，CI 却没变」变成一个无人排查的谜。
+    """
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--margin", "5"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2
+
+
+def test_fail_if_above_out_of_range_is_rejected(monkeypatch) -> None:
+    """``>100`` 的上限永远判不出超阈（又一个恒绿），``<0`` 则任何数据都超。"""
+    import sys
+
+    for value in ("101", "-0.5"):
+        monkeypatch.setattr(sys, "argv", [
+            "check_live_snapshot_gate.py", "--fail-if-above", value])
+        with pytest.raises(SystemExit) as excinfo:
+            live_gate.main()
+        assert excinfo.value.code == 2, f"--fail-if-above {value} 应被拒绝"
+
+
+def test_cli_default_mode_honours_the_ceiling(monkeypatch) -> None:
+    """``main()`` 要把 ``--fail-if-above`` 真的传下去：1% 时退出 1。
+
+    只测 ``evaluate`` 不管用——接线断了的话，CI 里那一步又会退回「阈值没人给」
+    的报告模式，而报告模式恒退出 0。
+    """
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--fail-if-above", "1",
+        "--data-dir", str(SNAPSHOT_ROOT)])
+    assert live_gate.main() == live_gate.EXIT_GATE_TRIGGERED
 
 
 def _rate_step(job: str) -> dict:

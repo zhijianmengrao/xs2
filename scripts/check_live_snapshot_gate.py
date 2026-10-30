@@ -4,15 +4,30 @@ R46 的 CI 闸门 step 判的是 ``tests/fixtures/run_samples`` ——**固定**
 它保护的命题是「闸门与脚本不退化」，判不了「这批 run 的真实失败率」
 （HANDOVER_ROUND46 §2.1 的「判据边界」原话）。本脚本补上真实数据面。
 
-三条设计取舍，都是为了避免「又一个永远绿的防护」：
+四条设计取舍，都是为了避免「又一个永远绿的防护」：
 
-1. **阈值从快照自身算**，不写死。实测失败率 + 10 个百分点留余量。写死阈值
-   会在快照重导后静默失准（数字对了才怪）。
+1. **阈值来自外部给定的政策上限**（``--fail-if-above PCT``，R57 修）。R47 的
+   原始写法是「实测失败率 + margin 当阈值」，判据又是「实测 > 阈值」——而
+   ``--margin`` 禁止为负，于是阈值恒 ≥ 实测，**任何数据都判不出超阈**（R57
+   实测：20 次尝试全失败仍判退出 0）。阈值里含着被判的那个数，闸门就成了
+   同义反复。修法是把阈值移出被测量的量：上限由调用方给（CI 里是一个写明数字
+   的开关），精度那一半仍由快照自身算——``--check-sample-size`` 不写死任何
+   常量，所以 R47 担心的「写死阈值在重导后静默失准」不成立：政策上限不随
+   数据漂移，数据越过政策就该红，那正是它的用途。
 2. **先校验元数据与内容一致**。``snapshot-meta.json`` 是导出时算的；若有人
    改了快照内容却没重导元数据，这里直接失败——否则闸门会拿旧阈值判新内容，
    看起来仍在工作，实际判的是别的数字。
 3. **退出码沿用闸门语义**：0=通过，1=超阈，3=无样本。与
    ``provider_failure_profile.py`` 同一套，CI 日志里两种失败可分。
+4. **三分法**（R56 的判据形状沿用到这里）：95% 区间整体在上限之上才判
+   ``exceeds``，整体在限内才判 ``normal``，横跨上限则 ``undetermined``——判不了
+   既不冒充合格也不冒充不合格。``undetermined`` 不判失败：样本精度是另一件事，
+   由 ``--check-sample-size`` 单独判（退出码 7），两处都红会让人对着一个只差
+   精度的快照去查供应商。
+
+不给 ``--fail-if-above`` 时是**报告模式**：打印实测失败率与 95% 区间，退出 0，
+并在说明里显式写明「未给上限，本步只报告不判定」——静默当通过正是本轮修掉的
+那个缺陷的另一种写法，不能靠沉默表达。
 
 R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自动更新，旧数据自身
 仍自洽（元数据与内容一致、失败率没恶化），于是闸门看着在工作，判的却是越来越
@@ -38,8 +53,10 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
 
 用法（仓库根执行）::
 
+    # 默认判定模式：阈值是外部给定的政策上限（百分比点，0..100）
+    python scripts/check_live_snapshot_gate.py --fail-if-above 8
+    # 只报告不判定：不给上限就打印实测值与 95% 区间（退出 0，不等于合格）
     python scripts/check_live_snapshot_gate.py
-    python scripts/check_live_snapshot_gate.py --margin 5   # 收紧余量
     python scripts/check_live_snapshot_gate.py --data-dir tests/fixtures/live_snapshot
 
     # 快照保鲜（轮次收官跑；真实数据落后快照超过 7 天即报过期）
@@ -121,8 +138,13 @@ def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
     return attempts, failed
 
 
-def evaluate(data_dir: Path, margin: float) -> tuple[int, str]:
-    """返回 (退出码, 说明)。纯逻辑，便于测试注入临时目录。"""
+def evaluate(data_dir: Path, ceiling: float | None = None) -> tuple[int, str]:
+    """返回 (退出码, 说明)。纯逻辑，便于测试注入临时目录。
+
+    ``ceiling`` 是外部给定的失败率政策上限（百分点），判决算术见
+    ``_ceiling_verdict``。``None`` 表示报告模式：仍然判漂移（4）与无样本（3），
+    但不把「调用方没给上限」沉默成通过——说明里会写明本轮没有判定。
+    """
     meta_path = data_dir / "snapshot-meta.json"
     if not meta_path.is_file():
         return EXIT_NO_SAMPLE, f"快照元数据缺失：{meta_path}"
@@ -145,15 +167,10 @@ def evaluate(data_dir: Path, margin: float) -> tuple[int, str]:
             "改过快照就要重导：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
 
-    measured = rec_failed / rec_attempts * 100
-    threshold = min(100.0, max(0.0, measured + margin))
-    if measured > threshold:
-        return EXIT_GATE_TRIGGERED, (
-            f"失败率 {measured:.2f}% 超出阈值 {threshold:.1f}%"
-            f"（{rec_attempts} 次尝试）")
-    return EXIT_OK, (
-        f"失败率 {measured:.2f}% 未超出阈值 {threshold:.1f}%"
-        f"（{rec_attempts} 次尝试，余量 {margin:.1f} 个百分点）")
+    verdict, detail = _ceiling_verdict(rec_attempts, rec_failed, ceiling)
+    if verdict == "exceeds":
+        return EXIT_GATE_TRIGGERED, detail
+    return EXIT_OK, detail
 
 
 def _parse_ts(value: object) -> "datetime | None":
@@ -645,6 +662,38 @@ def per_workflow_baselines(buckets: dict[str, dict]) -> dict[str, float | None]:
     return baselines
 
 
+def _cp_interval(attempts: int, failed: int) -> tuple[float, float]:
+    """Clopper-Pearson 95% 单侧界 ``(下界, 上界)``，单位百分点，两端走闭式。
+
+    主闸门与 per-workflow 判决共用这一份区间：两处各写一份算术，迟早出现
+    「这边说超、那边说不超」（R56 §4 的纪律）。两端用闭式是为了不为一个能写成
+    解析式的值做二分——它与 ``_cp_bounds`` 在两端完全相等（有测试钉住）。
+    """
+    if attempts <= 0:
+        return 0.0, 100.0
+    if failed <= 0:
+        return 0.0, (1 - 0.05 ** (1.0 / attempts)) * 100
+    if failed >= attempts:
+        return 0.05 ** (1.0 / attempts) * 100, 100.0
+    lower, upper = _cp_bounds(attempts, failed)
+    return lower * 100.0, upper * 100.0
+
+
+def _verdict_of_interval(lower_pct: float, upper_pct: float,
+                         threshold_pct: float) -> str:
+    """区间与阈值的关系 → ``exceeds`` / ``normal`` / ``undetermined``。
+
+    三分法本身（R56）：整个区间在阈值之上才敢说超，整个区间在阈值之内才敢说
+    正常，横跨则判不了。用下界而不是点估计，因为它抓的是一个具体命题——
+    「真实失败率高于阈值」——点估计判它等于「样本越小越容易被判坏」。
+    """
+    if lower_pct > threshold_pct:
+        return "exceeds"
+    if upper_pct <= threshold_pct:
+        return "normal"
+    return "undetermined"
+
+
 def _rate_verdict(attempts: int, failed: int, baseline_pct: float,
                   margin_pct: float) -> tuple[str, str]:
     """单个 workflow 相对基线的判决：``exceeds`` / ``normal`` / ``undetermined``。
@@ -669,22 +718,55 @@ def _rate_verdict(attempts: int, failed: int, baseline_pct: float,
         return "undetermined", "attempts=0，无观测"
     threshold = baseline_pct + margin_pct
     p_hat = failed / attempts * 100.0
-    if failed <= 0:
-        lower, upper = 0.0, (1 - 0.05 ** (1.0 / attempts)) * 100
-    elif failed >= attempts:
-        lower = 0.05 ** (1.0 / attempts) * 100
-        upper = 100.0
-    else:
-        lo, hi = _cp_bounds(attempts, failed)
-        lower, upper = lo * 100.0, hi * 100.0
+    lower, upper = _cp_interval(attempts, failed)
     detail = (f"失败率 {p_hat:.2f}%（n={attempts}, 失败 {failed}），"
               f"95% 区间 [{lower:.2f}%, {upper:.2f}%]，"
               f"基线 {baseline_pct:.2f}% + 余量 {margin_pct:g} = 阈值 {threshold:.2f}%")
-    if lower > threshold:
-        return "exceeds", detail
-    if upper <= threshold:
-        return "normal", detail
-    return "undetermined", detail
+    return _verdict_of_interval(lower, upper, threshold), detail
+
+
+def _ceiling_verdict(attempts: int, failed: int,
+                     ceiling_pct: float | None) -> tuple[str, str]:
+    """主闸门对外部政策上限的三分判决：``exceeds`` / ``normal`` / ``undetermined``。
+
+    这是 R57 修的缺陷的正身。此前 ``evaluate`` 用 ``measured + margin`` 当阈值，
+    判据再问 ``measured > threshold``；``--margin`` 禁止为负，阈值因此恒 ≥ 实测，
+    **任何数据都判不出超阈**——闸门看着在工作，实际是同义反复（20 次尝试全失败
+    仍判退出 0）。阈值必须来自被测量的量之外，否则它只会跟着一起动。
+
+    判据与 per-workflow 判决是同一把尺（``_cp_interval`` + 三分法）：
+
+    - ``exceeds``：95% 下界 > 上限。整个区间都在上限之上，才敢说超。
+    - ``normal``：95% 上界 ≤ 上限。整个区间都在限内，才敢说正常。
+    - 其余：区间横跨上限 → ``undetermined``，判不了。
+
+    ``undetermined`` 不判失败：样本精度由 ``--check-sample-size``（退出码 7）
+    单独判。两处都红，会让人对着一个只差精度的快照去查供应商。
+
+    ``ceiling_pct is None`` 是报告模式：照旧给出实测值与区间，但明确写出本轮
+    没有判定。「没给阈值」不能用沉默表达成通过——那正是本轮修掉的缺陷的另一种
+    写法。
+    """
+    if attempts <= 0:
+        return "undetermined", "attempts=0，无观测"
+    p_hat = failed / attempts * 100.0
+    lower, upper = _cp_interval(attempts, failed)
+    measured = (f"失败率 {p_hat:.2f}%（n={attempts}, 失败 {failed}），"
+                f"95% 区间 [{lower:.2f}%, {upper:.2f}%]")
+    if ceiling_pct is None:
+        return "report", (
+            f"{measured}；未给 --fail-if-above，本步只报告不判定"
+            "（退出 0 不代表失败率合格）")
+    threshold_text = f"阈值（政策上限）{ceiling_pct:.2f}%"
+    verdict = _verdict_of_interval(lower, upper, ceiling_pct)
+    if verdict == "exceeds":
+        detail = f"{measured}，{threshold_text}：整个区间都在阈值之上，判超阈"
+    elif verdict == "normal":
+        detail = f"{measured}，{threshold_text}：整个区间都在阈值之内，判正常"
+    else:
+        detail = (f"{measured}，{threshold_text}：区间横跨阈值，样本不足以判是否"
+                  "超阈（不判失败；精度由 --check-sample-size 单独判）")
+    return verdict, detail
 
 
 def per_workflow_rate_report(buckets: dict[str, dict],
@@ -815,8 +897,12 @@ def main() -> int:
     parser.add_argument("--data-dir", type=Path, default=None,
                         help="快照根目录（含 workflows/ 与 snapshot-meta.json）；"
                              "缺省读 DETERMINFLOW_DATA_DIR，再缺省用入库快照路径")
-    parser.add_argument("--margin", type=float, default=10.0,
-                        help="阈值相对实测失败率的余量（百分比点，默认 10）")
+    parser.add_argument("--margin", type=float, default=None,
+                        help="精度余量（百分点，默认 10），只用于 --check-* 判据："
+                             "样本量厚度与 per-workflow 判决都拿它当尺")
+    parser.add_argument("--fail-if-above", type=float, default=None,
+                        help="默认判定模式的政策上限（百分点，0..100）：失败率 95%% "
+                             "区间下界高于它才退出 1；不给则只报告不判定")
     parser.add_argument("--check-stale", action="store_true",
                         help="改判快照新鲜度：真实数据比快照新多少天（不判失败率）")
     parser.add_argument("--check-coverage", action="store_true",
@@ -839,8 +925,13 @@ def main() -> int:
     parser.add_argument("--max-lag-days", type=float, default=7.0,
                         help="快照允许落后真实数据的天数（默认 7）")
     options = parser.parse_args()
-    if options.margin < 0:
+    margin = 10.0 if options.margin is None else options.margin
+    if margin < 0:
         parser.error("--margin 不能为负")
+    if options.fail_if_above is not None and not 0.0 <= options.fail_if_above <= 100.0:
+        # 超出 0..100 的上限没有意义：>100 永远判不出超阈（又一个恒绿），
+        # <0 则任何数据都超。两种都让人以为加了闸门，实则它不说话。
+        parser.error("--fail-if-above 需在 0..100 之间（单位是百分比）")
     if options.max_lag_days < 0:
         parser.error("--max-lag-days 不能为负")
     # 四种判据互斥：一次调用判一件事，混判会让人看不出是哪种不合格。
@@ -862,11 +953,23 @@ def main() -> int:
         # 静默忽略会让「我加了 --fail-on-exceeds，CI 却没红」变成一个无人排查
         # 的谜。显式报错，与上一行的互斥检查同一纪律。
         parser.error("--fail-on-exceeds 只能配合 --check-per-workflow-rate 使用")
+    if options.fail_if_above is not None and chosen:
+        # 上限只属于默认判定模式。混着给会让人以为「样本量判据也按这个上限判」，
+        # 而它判的是精度，与上限无关。
+        parser.error(
+            "--fail-if-above 只用于默认判定模式，不能与 "
+            f"{' 与 '.join(chosen)} 同时使用")
+    if options.margin is not None and not chosen:
+        # 默认模式的阈值只来自 --fail-if-above（R57）。静默忽略会让「我把余量
+        # 收紧到 2，CI 却没变」变成一个无人排查的谜——与 --fail-on-exceeds
+        # 同一纪律：不确定的配置在参数层就炸掉。
+        parser.error("--margin 只用于 --check-* 判据；"
+                     "默认判定模式的阈值请用 --fail-if-above")
 
     if options.check_per_workflow_rate:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
         code, message = check_per_workflow_rate(
-            options.data_dir or _default_data_dir(), options.margin,
+            options.data_dir or _default_data_dir(), margin,
             fail_on_exceeds=options.fail_on_exceeds)
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
@@ -874,14 +977,14 @@ def main() -> int:
     if options.check_per_workflow:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
         code, message = check_per_workflow(
-            options.data_dir or _default_data_dir(), options.margin)
+            options.data_dir or _default_data_dir(), margin)
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
 
     if options.check_sample_size:
         # 只读快照自身，不需要 --source：这是它能进 CI 的全部原因。
         code, message = check_sample_size(
-            options.data_dir or _default_data_dir(), options.margin)
+            options.data_dir or _default_data_dir(), margin)
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
 
@@ -899,7 +1002,8 @@ def main() -> int:
         print(f"[live-gate] {message}", file=sys.stderr)
         return code
 
-    code, message = evaluate(options.data_dir or _default_data_dir(), options.margin)
+    code, message = evaluate(
+        options.data_dir or _default_data_dir(), options.fail_if_above)
     print(f"[live-gate] {message}", file=sys.stderr)
     return code
 
