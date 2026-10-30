@@ -69,9 +69,22 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
     # 样本量厚度（CI 跑；只读快照自身，不需要真实数据面）
     python scripts/check_live_snapshot_gate.py --check-sample-size
 
-    # 按 workflow 判失败率（R56；默认只报告，加 --fail-on-exceeds 才按不合格退出）
+    # 按 workflow 判失败率（R56；R58 起 CI 用 --fail-on-exceeds 做硬门槛）
     python scripts/check_live_snapshot_gate.py --check-per-workflow-rate
     python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds
+
+R58 补的是 ``undetermined`` 的**次级信号**：一份快照里判不了是正常的（样本薄），
+但**连续多份快照都判不了**就不再是「这一轮样本薄」，而是「这个 workflow 的
+真实数据量支撑不了逐 workflow 判决」。快照元数据的 ``history`` 块记录最近几次
+导出的原始计数（``attempts/failed``，由导出脚本追加、封顶 5 轮），闸门据此
+数出「连续 N 轮 undetermined」并以 ``UNDETERMINED_ROUND_STREAK`` 为界给出
+重导提示。
+
+历史放在快照元数据里、而不是一个单独的运行时状态文件，理由是 CI：CI 检出是
+临时的，任何在 CI 里写下的状态都会在 job 结束时消失。跨轮状态必须随那份被
+判的数据一起入库，否则「连续 3 轮」在 CI 里永远等于「1 轮」——那又是一个
+写着「在看趋势」的恒绿防护。历史条目只用于数连续性，**不参与**漂移校验：
+它们描述的是过去几轮各自的快照，拿它们跟当前内容比是拿错了尺。
 """
 
 from __future__ import annotations
@@ -109,6 +122,12 @@ EXIT_META_DRIFT = 4
 EXIT_STALE = 5
 EXIT_COVERAGE_GAP = 6
 EXIT_THIN_SAMPLE = 7
+
+# 连续多少轮（含当前这一轮）都判 ``undetermined`` 才提示重导（R58，用户拍定 3）。
+# 它不是判据：提示不改变任何退出码。定成常量而不是开关，是因为「连续几轮才算
+# 长期」在数据积累到能回答之前只能先取一个值；多一个参数就多一个要在 CI 与
+# 测试里同步的口径。
+UNDETERMINED_ROUND_STREAK = 3
 
 
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
@@ -799,6 +818,115 @@ def per_workflow_rate_report(buckets: dict[str, dict],
     return report
 
 
+def _counts_of(buckets: dict[str, dict]) -> dict[str, tuple[int, int]]:
+    """``{workflow: (attempts, failed)}``——判决只看这两个数，``runs`` 不参与。"""
+    return {name: (int(bucket.get("attempts") or 0),
+                   int(bucket.get("failed") or 0))
+            for name, bucket in buckets.items()}
+
+
+def _history_entry_counts(entry: object) -> dict[str, tuple[int, int]] | None:
+    """一条历史记录 → ``{workflow: (attempts, failed)}``；形状无效给 ``None``。
+
+    历史块是导出脚本写的，但它是入库文件、可能被人手改。形状不对时返回 ``None``
+    而不是抛异常或猜一个 0：连续轮数会被低估，报告里会写明跳过了几条——低估
+    比编造一个「看起来连续」的序列诚实。
+    """
+    if not isinstance(entry, dict):
+        return None
+    per_workflow = entry.get("per_workflow")
+    if not isinstance(per_workflow, dict) or not per_workflow:
+        return None
+    counts: dict[str, tuple[int, int]] = {}
+    for name, bucket in per_workflow.items():
+        if not isinstance(bucket, dict):
+            return None
+        try:
+            counts[str(name)] = (int(bucket.get("attempts") or 0),
+                                 int(bucket.get("failed") or 0))
+        except (TypeError, ValueError):
+            return None
+    return counts
+
+
+def snapshot_rounds(meta: dict, current: dict[str, dict]
+                    ) -> tuple[list[dict[str, tuple[int, int]]], int]:
+    """把快照历史整理成「轮」序列（旧→新），并保证当前这一轮在最后。
+
+    返回 ``(rounds, invalid_entries)``。三种情形：
+
+    - 历史以当前这份快照收尾（导出脚本的写法：每次导出把本轮追加进去）：
+      直接用它，当前轮就是最后一条，不会重复计数。
+    - 历史缺失、为空、或最后一条与当前内容不一致（旧快照、手改过内容）：
+      把当前内容补成新的一轮。**不能因为「历史里没有当前这轮」就少算一轮**，
+      那会让提示晚一轮出现，而且让「当前是不是判不了」取决于历史是否完整。
+    - 形状无效的条目跳过并计数，由报告说明。
+
+    为什么要跟当前内容做一次相等比较，而不是无条件追加：导出脚本写历史时
+    已经把本轮写进去了，无条件追加会把同一轮数两次。
+    """
+    current_counts = _counts_of(current)
+    rounds: list[dict[str, tuple[int, int]]] = []
+    invalid = 0
+    history = meta.get("history")
+    if isinstance(history, list):
+        for entry in history:
+            counts = _history_entry_counts(entry)
+            if counts is None:
+                invalid += 1
+                continue
+            rounds.append(counts)
+    if not rounds or rounds[-1] != current_counts:
+        rounds.append(current_counts)
+    return rounds, invalid
+
+
+def _verdicts_of_round(counts: dict[str, tuple[int, int]],
+                       margin_pct: float) -> dict[str, str]:
+    """一轮快照里每个 workflow 的三分判决。
+
+    基线必须在**那一轮**里算：留一法基线是本轮其余 workflow 的合并失效率，
+    用今天的其余 workflow 去判历史轮，比的就不是当时的那个问题了。
+    """
+    buckets = {name: {"attempts": attempts, "failed": failed}
+               for name, (attempts, failed) in counts.items()}
+    baselines = per_workflow_baselines(buckets)
+    verdicts: dict[str, str] = {}
+    for name, (attempts, failed) in counts.items():
+        baseline = baselines.get(name)
+        if baseline is None:
+            verdicts[name] = "undetermined"
+            continue
+        verdicts[name] = _rate_verdict(attempts, failed, baseline, margin_pct)[0]
+    return verdicts
+
+
+def undetermined_streaks(rounds: list[dict[str, tuple[int, int]]],
+                         margin_pct: float) -> dict[str, int]:
+    """每个 workflow 以当前轮结尾的连续 ``undetermined`` 轮数（含当前轮）。
+
+    它只回答「连续几轮判不了」，不重复当前轮的判决（那由
+    ``per_workflow_rate_report`` 给）。当前轮判不了 → 至少 1 轮；上一轮判出了
+    结论就中断，不再往前数。
+
+    某个 workflow 在历史轮里缺席（覆盖变化）时中断计数而不是跳过：缺席说明
+    那一轮的样本集合不同，「连续」的前提不成立。
+    """
+    if not rounds:
+        return {}
+    verdicts = [_verdicts_of_round(counts, margin_pct) for counts in rounds]
+    streaks: dict[str, int] = {}
+    for name in rounds[-1]:
+        streak = 0
+        for round_verdicts in reversed(verdicts):
+            if round_verdicts.get(name) == "undetermined":
+                streak += 1
+            else:
+                break
+        streaks[name] = streak
+    return streaks
+
+
 def check_per_workflow_rate(data_dir: Path, margin: float,
                             fail_on_exceeds: bool = False) -> tuple[int, str]:
     """按 workflow 判失败率是否高于**其余** workflow 的合并基线（R56）。
@@ -808,18 +936,21 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
     是结构性失明的（一个全挂的 workflow 会把自己拉进基线里，见
     ``per_workflow_baselines`` 的注释）。
 
-    默认**只报告、恒退出 0**，加 ``--fail-on-exceeds`` 才按不合格退出。这是本轮
-    刻意选的落地形态（用户拍定「先报告一轮，下轮再硬门槛」）：真实快照 9 个
-    workflow 里 8 个是 ``undetermined``，此时若直接硬门槛，红的是「样本太薄」
-    而不是「有 workflow 在变坏」——那又是一个向错方向的假红。先让结论在 CI
-    日志里跑一轮可读，再决定阈值怎么定。
+    落地形态分两步：R56 先只报告（恒退出 0），让真实结论在 CI 日志里跑一轮；
+    R58 用户拍定上硬门槛，``--fail-on-exceeds`` 接进两个 runner。硬门槛的
+    前提在 R57 之后已经具备：主闸门的自指阈值修掉之后，「判不了」与「不合格」
+    是两种结论，per-workflow 这边用同一把尺（``_cp_interval`` + 三分法）。
+
+    ``undetermined`` 在任何模式下都不判失败：它是「判不了」，处置是重导更多
+    run，不是「不合格」。R58 给它加了次级信号：快照历史里连续
+    ``UNDETERMINED_ROUND_STREAK`` 轮（含当前）都判不了，就在报告里提示重导。
+    这条提示不改变退出码——把「判不了」做成失败，就是 R56 §2 批评过的
+    「向错方向的假红」，只是换成了时间维度。
 
     能红的路径（与 ``check_per_workflow`` 同一纪律）：
     1. ``per_workflow`` 元数据与内容不一致 → 4（重导）；
     2. 无样本 → 3；
     3. 有 workflow 判 ``exceeds`` 且给了 ``--fail-on-exceeds`` → 1。
-    ``undetermined`` 在任何模式下都不判失败：它是「判不了」，处置是重导更多
-    run，不是「不合格」。
     """
     meta_path = data_dir / "snapshot-meta.json"
     if not meta_path.is_file():
@@ -884,6 +1015,29 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
         summary += (
             "。样本不足的（**不是**合格也不是不合格，处置是重导更多 run）："
             + "；".join(f"{n}（{report[n]['detail']}）" for n in undetermined))
+    # 次级信号（R58）：单轮判不了是样本薄，连续多轮判不了是数据量本身不够。
+    # 这段文案只提示，不改变退出码；下面 report-mode 的文案与它并列，两者都
+    # 是「这一步没有失败、但也没有通过」的不同原因。
+    rounds, invalid_history = snapshot_rounds(meta, actual)
+    streaks = undetermined_streaks(rounds, margin)
+    chronic = sorted(name for name, streak in streaks.items()
+                     if streak >= UNDETERMINED_ROUND_STREAK)
+    summary += f"。快照历史 {len(rounds)} 轮（含当前）"
+    if invalid_history:
+        summary += (f"，另有 {invalid_history} 条历史形状无效已跳过"
+                    "（连续轮数可能被低估，重导会在最新一条上重新积累）")
+    if chronic:
+        summary += (
+            f"。连续 {UNDETERMINED_ROUND_STREAK} 轮以上样本不足："
+            + "；".join(f"{n}（连续 {streaks[n]} 轮）" for n in chronic)
+            + "。**这不是失败**（退出码不受影响），处置是重导更多 run："
+            "python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 5"
+            "；若重导后仍连续不足，说明这些 workflow 的真实数据量本身支撑不了"
+            "逐 workflow 判决，需要在文档里接受该限制")
+    elif len(rounds) < UNDETERMINED_ROUND_STREAK:
+        summary += (f"——「连续 {UNDETERMINED_ROUND_STREAK} 轮样本不足」的提示"
+                    f"需要 ≥{UNDETERMINED_ROUND_STREAK} 轮历史，当前未生效")
     if not fail_on_exceeds:
         summary += "。本轮为**报告模式**：不因超出而失败（加 --fail-on-exceeds 才判）"
 

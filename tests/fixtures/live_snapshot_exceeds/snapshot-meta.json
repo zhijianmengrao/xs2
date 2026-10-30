@@ -1,0 +1,26 @@
+{
+  "exported_at": "2026-02-01T00:00:00+00:00",
+  "source_root": "synthetic",
+  "per_workflow": {
+    "wf-good-a": {
+      "runs": 1,
+      "attempts": 40,
+      "failed": 0
+    },
+    "wf-good-b": {
+      "runs": 1,
+      "attempts": 40,
+      "failed": 0
+    },
+    "wf-bad": {
+      "runs": 1,
+      "attempts": 40,
+      "failed": 40
+    }
+  },
+  "totals": {
+    "runs": 3,
+    "attempts": 120,
+    "failed": 40
+  }
+}

@@ -69,6 +69,10 @@ REVERSE_VALIDATION_MARGIN = 2.0
 _Z_95 = 1.959963984540054
 # 余量低于这个值就提示「偏薄」——还没失效，但一次重导就可能越线。
 _THIN_HEADROOM = 0.5
+# 快照元数据里保留的导出历史轮数（R58）。闸门的「连续 3 轮样本不足」提示需要
+# 3 轮，5 轮留出两轮余量。封顶是为了控制入库体积：每轮只记 attempts/failed，
+# 9 个 workflow 约 600 字节，5 轮不到 3KB。
+HISTORY_MAX_ROUNDS = 5
 
 # 画像（build_run_profile）真正读的字段。裁剪只保留这些。
 _KEEP_RUN_FIELDS = ("run_id", "workflow_id", "status", "started_at", "completed_at")
@@ -203,12 +207,43 @@ def _iter_source_runs(workflows_dir: Path, workflow_filter: str,
             yield wf_dir.name, run_file, payload
 
 
+def carry_forward_history(dest_root: Path) -> list[dict]:
+    """读目的快照已有的导出历史，供本次导出追加（R58）。
+
+    形状无效的条目直接丢弃并计数交给调用方报告——历史是入库文件，可能被手改；
+    猜一个形状比丢掉更糟（会让「连续 N 轮」数在一段编造出来的序列上）。
+    """
+    meta_path = dest_root / "snapshot-meta.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(meta, dict):
+        return []
+    history = meta.get("history")
+    if not isinstance(history, list):
+        return []
+    valid: list[dict] = []
+    for entry in history:
+        if (isinstance(entry, dict)
+                and isinstance(entry.get("per_workflow"), dict)
+                and entry["per_workflow"]):
+            valid.append(entry)
+    return valid
+
+
 def build_snapshot_meta(workflows_dir: Path, dest_root: Path,
-                        exported: list[tuple[str, str, dict]]) -> dict:
+                        exported: list[tuple[str, str, dict]],
+                        prior_history: list[dict] | None = None) -> dict:
     """快照元数据：记录这次导出判定的数字，供契约测试与新鲜度检查消费。
 
     ``exported`` 是 ``(workflow, run_id, 裁剪后 payload)``。这里重算一遍聚合，
     而不是把脚本日志抄下来——元数据必须能从内容复算，否则它只是一句话。
+
+    ``history``（R58）：最近 ``HISTORY_MAX_ROUNDS`` 次导出的 ``attempts/failed``，
+    旧→新，最后一条就是本次导出。只记原始计数、不记判决：判决依赖 margin，而
+    margin 是调用方的参数；记判决会把某一轮的尺子焊进数据，重导后无法用今天的
+    尺子回看历史。带上界是因为这是入库文件，不是日志。
     """
     from datetime import datetime, timezone
 
@@ -228,11 +263,21 @@ def build_snapshot_meta(workflows_dir: Path, dest_root: Path,
         bucket["failure_rate"] = (
             round(bucket["failed"] / bucket["attempts"], 4)
             if bucket["attempts"] else None)
+    exported_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    history = list(prior_history or [])[-(HISTORY_MAX_ROUNDS - 1):]
+    history.append({
+        "exported_at": exported_at,
+        "per_workflow": {
+            name: {"attempts": bucket["attempts"], "failed": bucket["failed"]}
+            for name, bucket in sorted(per_workflow.items())
+        },
+    })
     return {
-        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "exported_at": exported_at,
         # 只记目录名，不记绝对路径：快照要入库，机器路径既无意义又会泄露本地布局。
         "source_root": workflows_dir.name,
         "per_workflow": dict(sorted(per_workflow.items())),
+        "history": history,
         "totals": {
             "runs": len(exported),
             "attempts": total_attempts,
@@ -279,7 +324,8 @@ def export(workflows_dir: Path, dest_root: Path, workflow_filter: str,
         print("没有可导出的 run（检查 --source 与 --workflow/--run 过滤）", file=sys.stderr)
         return 1
 
-    meta = build_snapshot_meta(workflows_dir, dest_root, exported_runs)
+    meta = build_snapshot_meta(workflows_dir, dest_root, exported_runs,
+                               carry_forward_history(dest_root))
     meta_path = dest_root / "snapshot-meta.json"
     if not dry_run:
         meta_path.parent.mkdir(parents=True, exist_ok=True)

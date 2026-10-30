@@ -25,6 +25,9 @@ from scripts import check_live_snapshot_gate as live_gate
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SNAPSHOT_ROOT = REPO_ROOT / "tests" / "fixtures" / "live_snapshot"
+# 反向验证用的合成快照（R58）：一个 workflow 全挂、两个健康。它必须判 exceeds，
+# 否则 CI 的硬门槛反向验证就是在测一个恒绿步骤。
+EXCEEDS_ROOT = REPO_ROOT / "tests" / "fixtures" / "live_snapshot_exceeds"
 
 
 def _load_ci() -> dict:
@@ -1285,16 +1288,180 @@ def test_rate_check_reports_no_sample_without_the_per_workflow_block(
 
 
 def test_rate_check_passes_on_the_committed_snapshot() -> None:
-    """入库快照自己必须在报告模式下过——否则 CI 一接就红。
+    """入库快照自己必须在硬门槛下也过——否则 CI 一接就红。
 
     同时把这个快照当下的三分法结论钉住：9 个 workflow 里**没有一个**超出基线。
     这不是「快照很健康」的断言，而是「当前真实数据在 per-workflow 粒度上判不出
     坏样本」这个事实的存档。若哪天它变了，说明真实数据变了，测试红得其所。
     """
-    code, message = live_gate.check_per_workflow_rate(SNAPSHOT_ROOT, margin=10.0)
+    code, message = live_gate.check_per_workflow_rate(
+        SNAPSHOT_ROOT, margin=10.0, fail_on_exceeds=True)
     assert code == live_gate.EXIT_OK, message
     assert "0 个超出" in message, message
     assert "8 个样本不足" in message, message
+
+
+# ------------------------------------- 连续多轮样本不足的次级信号（R58）
+# 单轮判不了是样本薄；连续几轮都判不了，说明数据量本身支撑不了逐 workflow
+# 判决。这条信号只提示重导，**不改变退出码**——把「判不了」做成失败，就是
+# R56 §2 批评过的「向错方向的假红」换到时间维度。
+def _write_history(root: Path, rounds: list[dict[str, tuple[int, int]]]) -> None:
+    """给快照元数据写 ``history`` 块（旧→新；最后一条通常是当前这轮）。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["history"] = [
+        {"exported_at": f"2026-01-{index + 1:02d}T00:00:00+00:00",
+         "per_workflow": {name: {"attempts": attempts, "failed": failed}
+                          for name, (attempts, failed) in counts.items()}}
+        for index, counts in enumerate(rounds)
+    ]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_snapshot_rounds_append_the_current_round_only_once(tmp_path: Path) -> None:
+    """历史以当前快照收尾时不得把这一轮数两次（导出脚本就是这么写的）。
+
+    反过来：最后一条与当前内容不一致时（旧快照、手改过内容），当前这轮必须
+    补进去——不能因为「历史里没有当前」就少算一轮，那会让提示晚一轮出现。
+    """
+    current = {"a": {"attempts": 10, "failed": 0}}
+    meta = {"history": [{"per_workflow": {"a": {"attempts": 10, "failed": 0}}}]}
+    rounds, invalid = live_gate.snapshot_rounds(meta, current)
+    assert len(rounds) == 1, "当前这一轮被数了两次"
+    assert invalid == 0
+
+    meta["history"][0]["per_workflow"]["a"]["failed"] = 1
+    rounds, invalid = live_gate.snapshot_rounds(meta, current)
+    assert rounds[-1] == {"a": (10, 0)}, "当前内容没有补成新的一轮"
+    assert len(rounds) == 2
+    assert invalid == 0
+
+    rounds, invalid = live_gate.snapshot_rounds({"history": []}, current)
+    assert rounds == [{"a": (10, 0)}] and invalid == 0
+
+
+def test_malformed_history_entries_are_skipped_not_guessed() -> None:
+    """形状无效的历史条目跳过并计数，不猜一个 0 也不炸掉整条判据。"""
+    current = {"a": {"attempts": 10, "failed": 0}}
+    meta = {"history": [{"per_workflow": "not-a-dict"}, {}, "junk"]}
+    rounds, invalid = live_gate.snapshot_rounds(meta, current)
+    assert rounds == [{"a": (10, 0)}]
+    assert invalid == 3
+
+
+def test_undetermined_streak_counts_the_current_round_and_stops_at_a_verdict() -> None:
+    """连续轮数含当前轮，并在第一个能判出结论的轮次处中断。"""
+    thin_round = {"thin": (1, 1), "good-a": (40, 0), "good-b": (40, 0)}
+    rounds = [thin_round, thin_round, thin_round]
+    streaks = live_gate.undetermined_streaks(rounds, margin_pct=10.0)
+    assert streaks["thin"] == 3
+    assert streaks["good-a"] == 0
+
+    # 最早一轮里 thin 是 0/40（判得出 normal）→ 只连续 2 轮。
+    resolved_round = {"thin": (40, 0), "good-a": (40, 0), "good-b": (40, 0)}
+    streaks = live_gate.undetermined_streaks(
+        [resolved_round, thin_round, thin_round], margin_pct=10.0)
+    assert streaks["thin"] == 2
+
+
+def test_chronic_undetermined_prompts_reexport_without_failing(tmp_path: Path) -> None:
+    """连续 3 轮样本不足 → 提示重导，但退出码仍是 0（报告与硬门槛两种模式都是）。
+
+    构造：一个只有 1 次尝试的 workflow，其余两个各 40 次零失败。它的区间
+    [5.4%, 100%] 横跨阈值 10%，单轮就是 ``undetermined``，连续三轮仍如此。
+    """
+    spec = {"thin": (1, 1), "good-a": (40, 0), "good-b": (40, 0)}
+    _rate_snapshot(tmp_path, spec)
+    _write_history(tmp_path, [spec, spec, spec])
+
+    strict_code, strict_message = live_gate.check_per_workflow_rate(
+        tmp_path, margin=10.0, fail_on_exceeds=True)
+    assert strict_code == live_gate.EXIT_OK, strict_message
+    assert "连续 3 轮以上样本不足" in strict_message
+    assert "thin" in strict_message
+    assert "重导" in strict_message
+    # 内部枚举名不该出现在给 CI 读的报告里（R56 的同一纪律）。
+    assert "undetermined" not in strict_message
+
+    report_code, report_message = live_gate.check_per_workflow_rate(
+        tmp_path, margin=10.0)
+    assert report_code == live_gate.EXIT_OK
+    assert "连续 3 轮以上样本不足" in report_message
+
+
+def test_short_history_reports_coverage_instead_of_inventing_a_streak(
+        tmp_path: Path) -> None:
+    """历史不足 3 轮时明说「提示未生效」，不把沉默当连续性。"""
+    spec = {"thin": (1, 1), "good-a": (40, 0), "good-b": (40, 0)}
+    _rate_snapshot(tmp_path, spec)
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK
+    assert "连续 3 轮以上样本不足" not in message
+    assert "快照历史 1 轮" in message
+    assert "未生效" in message
+
+
+def test_malformed_history_is_reported_so_the_streak_is_not_oversold(
+        tmp_path: Path) -> None:
+    """跳过的历史条目要在报告里写明——否则连续轮数会被低估却没人知道。"""
+    spec = {"thin": (1, 1), "good-a": (40, 0), "good-b": (40, 0)}
+    _rate_snapshot(tmp_path, spec)
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["history"] = [{"per_workflow": "not-a-dict"}, {}, "junk"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "3 条历史形状无效" in message
+
+
+def test_history_rounds_do_not_participate_in_the_drift_check(tmp_path: Path) -> None:
+    """历史条目描述的是过去几轮各自的快照，不能拿它们跟当前内容比。
+
+    它们本来就该与当前 ``per_workflow`` 不同（数据变了），若把它们纳入漂移
+    校验，每次重导后这一步都会判 4——处置指向「重导」，而问题在判据自己。
+    """
+    spec = {"wf-a": (20, 1), "wf-b": (20, 1)}
+    _rate_snapshot(tmp_path, spec)
+    _write_history(tmp_path, [{"wf-a": (2, 2), "wf-b": (2, 0)}])
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
+def test_committed_snapshot_records_the_current_export_in_history() -> None:
+    """入库快照的历史必须以它自己的那一次导出收尾。
+
+    这是「连续 N 轮」的分母：历史里的最后一条等于当前 ``per_workflow``，
+    下一轮重导追加一条，连续性就有据可查；若这一条缺失，本轮会被补进来，
+    提示会比数据实际支持的晚一轮。
+    """
+    meta = json.loads(
+        (SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
+    history = meta.get("history")
+    assert isinstance(history, list) and history, "快照元数据缺 history 块"
+    last = history[-1]
+    assert last["exported_at"] == meta["exported_at"]
+    current = {name: {"attempts": bucket["attempts"], "failed": bucket["failed"]}
+               for name, bucket in meta["per_workflow"].items()}
+    assert last["per_workflow"] == current
+
+
+def test_the_exceeds_fixture_really_exceeds() -> None:
+    """CI 拿它做硬门槛的反向验证，所以它自己的判决必须先被钉住。"""
+    code, message = live_gate.check_per_workflow_rate(
+        EXCEEDS_ROOT, margin=10.0, fail_on_exceeds=True)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "1 个超出" in message
+
+
+def test_the_exceeds_fixture_only_fails_with_the_flag() -> None:
+    """没有 ``--fail-on-exceeds`` 时必须退出 0——红是开关带来的，不是数据本身。
+
+    这条同时是 CI 反向验证语义的存档：那一步断言的是「开关打开后判 1」。
+    """
+    code, message = live_gate.check_per_workflow_rate(EXCEEDS_ROOT, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "报告模式" in message
 
 
 def test_exceeds_is_driven_by_the_interval_not_the_point_estimate(
@@ -1423,19 +1590,56 @@ def test_rate_report_ci_step_is_not_permanently_green() -> None:
     )
 
 
-def test_rate_report_ci_step_does_not_hard_fail_on_exceeds() -> None:
-    """本轮形态是报告模式：CI 里不得加 ``--fail-on-exceeds``。
+def _rate_invocations(run: str) -> list[str]:
+    """这一段里每一次调用失败率判据的命令行。
 
-    这条不是「以后也不许」——R57 决定上硬门槛时就是要改这里。它钉住的是
-    「改了这一行必须有人意识到」。硬门槛一旦需要，就得同时重估真实快照的
-    样本厚度（8 个 undetermined 会先变成红），那是一次单独的改动。
+    先把 ``\\`` 续行拼回一行再按行取：命令行可能写成两行，只看含开关的那一行
+    会漏掉紧随其后的 ``--fail-on-exceeds``——与 R57 对 ``--fail-if-above``
+    的处理同一理由，只断言「这一步里出现过某个开关」会给出错误的安全感。
+    """
+    joined = run.replace("\\\n", " ")
+    return [line for line in joined.splitlines()
+            if "--check-per-workflow-rate" in line]
+
+
+def test_rate_gate_ci_step_hard_fails_on_exceeds() -> None:
+    """R58 硬门槛：两个 runner 的失败率步骤里**每一次**调用都必须带开关。
+
+    R56 的那条断言方向相反（当时钉住「不得加」，两步走的第一步），R57 §11-1
+    把它列为下一轮要改的那一行。改成硬门槛的前提在 R57 已备好：主闸门的自指
+    阈值修掉之后，「判不了」不再冒充「不合格」。两个 runner 同口径是 R52/R57
+    的纪律——漂开就会在两个平台给出互相矛盾的结论。
+
+    按「每一次调用都带」检查而不是「这一段里出现过」：真实判定那次不带、只有
+    反向验证带，同样能骗过后者。
+    """
+    for job in ("backend", "windows-backend"):
+        invocations = _rate_invocations(str(_rate_step(job)["run"]))
+        assert len(invocations) >= 2, (
+            f"{job} 应同时有真实判定与全挂快照反向验证两次调用"
+            f"（实际 {len(invocations)} 次）")
+        for line in invocations:
+            assert _has_flag(line, "--fail-on-exceeds"), (
+                f"{job} 有一次调用没带 --fail-on-exceeds，硬门槛在那次上等于没接："
+                f"{line.strip()}")
+
+
+def test_rate_gate_ci_step_reverse_verifies_the_hard_failure() -> None:
+    """反向验证必须真的断言「全挂快照 → 退出码 1」。
+
+    只跑真实快照会得到一个恒绿步骤：判据失效、开关丢了、甚至整段判据退化成
+    报告模式，它都绿。全挂快照（``live_snapshot_exceeds``）在测试里已被钉住
+    判 ``exceeds``，CI 断言它的退出码为 1；``-ne 1`` 必须出现在引用该快照
+    之后，否则断言的可能是不相干的那一次调用。
     """
     for job in ("backend", "windows-backend"):
         run = str(_rate_step(job)["run"])
-        assert "--fail-on-exceeds" not in run, (
-            f"{job} 的失败率报告步骤加了 --fail-on-exceeds：本轮是报告模式，"
-            "硬门槛需要单独一轮决策（真实快照 8 个 undetermined 会先变红）"
-        )
+        invocations = _rate_invocations(run)
+        assert any("live_snapshot_exceeds" in line for line in invocations), (
+            f"{job} 的失败率步骤没有全挂快照的反向验证")
+        assert "-ne 1" in run, f"{job} 没有断言全挂快照的退出码 1"
+        assert run.index("live_snapshot_exceeds") < run.index("-ne 1"), (
+            f"{job} 的「期望 1」断言出现在全挂快照调用之前：它断言的不是那一次")
 
 
 def test_windows_runner_also_reports_per_workflow_rate() -> None:

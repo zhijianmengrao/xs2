@@ -164,30 +164,43 @@ jobs:
           fi
           echo "OK  per-workflow 判据双向生效：真实快照通过，注入漂移触发 4"
 
-      # per-workflow 失败率（R56）。上一步判的是「单个 workflow 的样本够不够厚」，
-      # 这一步判的是另一个问题：**某个 workflow 的失效率是否高于其余 workflow 的
-      # 合并基线**。此前闸门用全局合计当基线，而全局合计对这个问题是结构性失明的
-      # ——一个全挂的 workflow 会把自己也拉进基线，观测值和阈值一起涨。这一步用
-      # 留一法基线（把被判的那份扣掉）。
+      # per-workflow 失败率（R56；R58 升级为硬门槛）。上一步判的是「单个
+      # workflow 的样本够不够厚」，这一步判的是另一个问题：**某个 workflow 的
+      # 失效率是否高于其余 workflow 的合并基线**。此前闸门用全局合计当基线，
+      # 而全局合计对这个问题是结构性失明的——一个全挂的 workflow 会把自己也
+      # 拉进基线，观测值和阈值一起涨。这一步用留一法基线（把被判的那份扣掉）。
       #
-      # 本轮是**报告模式**：即使有 workflow 判「超出基线」也退出 0（用户拍定的
-      # 两步走）。理由是真实快照当下 9 个 workflow 里 8 个的 95% 区间横跨阈值——
-      # 此时强行硬门槛，红的会是「样本太薄」而冒充成「有 workflow 在变坏」，
-      # 又是一个向错方向的假红。先让结论在 CI 日志里跑一轮，下一轮再定阈值。
+      # R56 先跑了一轮报告模式；R57 修完主闸门的自指阈值后，R58 按用户拍定接上
+      # 硬门槛（--fail-on-exceeds）。真实快照当下 0 个超出、8 个样本不足，所以
+      # 这一步仍然绿——下面两条反向验证证明它不是恒绿：
       #
-      # 这一步能红的路径只有元数据漂移与无样本（与上一步同一纪律），所以照例注入
-      # 一处漂移，必须判 4。报告模式不等于恒绿：判据本身仍然在判，只是不拦路。
-      - name: Snapshot per-workflow failure-rate report
+      # - 全挂快照（tests/fixtures/live_snapshot_exceeds）必须判 1；
+      # - 注入 per-workflow 漂移必须判 4。
+      #
+      # 「样本不足」在任何模式下都不判失败（R56 §2）：把它做成失败，红的是
+      # 「样本太薄」而冒充「有 workflow 在变坏」，是向错方向的假红。它的次级
+      # 信号（连续 3 轮样本不足 → 提示重导）在报告文字里，不影响退出码。
+      - name: Snapshot per-workflow failure-rate gate
         run: |
           snapshot=tests/fixtures/live_snapshot
           python scripts/check_live_snapshot_gate.py --check-per-workflow-rate \
-            --data-dir "$snapshot"
+            --fail-on-exceeds --data-dir "$snapshot"
           code=$?
           if [ "$code" -ne 0 ]; then
-            echo "::error::per-workflow 失败率判据失败（退出码 $code，4=元数据漂移 3=无样本）"
+            echo "::error::per-workflow 失败率闸门判 $code（1=有 workflow 超出基线 4=元数据漂移 3=无样本）"
             exit "$code"
           fi
-          # 反向验证：确认这一步不是恒绿——注入漂移必须判 4。
+          # 反向验证 1：判定力。一份「一个 workflow 全挂、其余健康」的合成快照
+          # 必须判 1——真实快照当下 0 个超出，只跑它证明不了这一步能红。
+          strict=0
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-rate \
+            --fail-on-exceeds --data-dir tests/fixtures/live_snapshot_exceeds \
+            > /dev/null 2>&1 || strict=$?
+          if [ "$strict" -ne 1 ]; then
+            echo "::error::全挂快照判 $strict（期望 1）：硬门槛失去判定力"
+            exit 1
+          fi
+          # 反向验证 2：判据本身活着——注入漂移必须判 4。
           # 单行 python -c 而非 heredoc：heredoc 体顶格会提前终止 YAML 块标量。
           tmp=$(mktemp -d)
           cp -r "$snapshot"/. "$tmp/"
@@ -195,13 +208,13 @@ jobs:
             || { echo "::error::无法构造漂移样本"; rm -rf "$tmp"; exit 1; }
           drift=0
           python scripts/check_live_snapshot_gate.py --check-per-workflow-rate \
-            --data-dir "$tmp" > /dev/null 2>&1 || drift=$?
+            --fail-on-exceeds --data-dir "$tmp" > /dev/null 2>&1 || drift=$?
           rm -rf "$tmp"
           if [ "$drift" -ne 4 ]; then
             echo "::error::注入漂移后仍判 $drift（期望 4）：判据失去判定力"
             exit 1
           fi
-          echo "OK  per-workflow 失败率报告生效：真实快照通过，注入漂移触发 4"
+          echo "OK  per-workflow 失败率硬门槛双向生效：真实快照通过，全挂快照触发 1，注入漂移触发 4"
 
       # 工作流编排 e2e（R49）：前三轮（R45/R46/R47）反复记录的「最有价值缺口」。
       # 它一直没做，卡的不是工作量而是凭据——真实 e2e 要一家供应商的 key，而 key
@@ -344,23 +357,31 @@ jobs:
           Write-Host "OK  per-workflow 判据双向生效（Windows/Python 3.14）：真实快照通过，注入漂移触发 4"
           exit 0
 
-      # per-workflow 失败率（R56）：与 ubuntu 那段一一对应（留一法基线、报告模式、
-      # 注入漂移必须判 4）。单列一个步骤而不是并进上一步：Ubuntu 与 Windows 的
-      # 两个 job 各自独立可读，一处判据一件事，日志里失败点能直接定位。
+      # per-workflow 失败率（R56；R58 硬门槛）：与 ubuntu 那段一一对应（留一法
+      # 基线、--fail-on-exceeds、全挂快照必须判 1、注入漂移必须判 4）。单列一个
+      # 步骤而不是并进上一步：Ubuntu 与 Windows 的两个 job 各自独立可读，一处
+      # 判据一件事，日志里失败点能直接定位。
       #
       # 同样受 pwsh 那两个坑约束（见上一步注释）：非零退出要降 $ErrorActionPreference，
       # 末尾必须显式 exit 0，否则包装器追加的 `exit $LASTEXITCODE` 会把
-      # 「注入漂移故意判 4」那次调用的退出码带出来，让整步在判据正常时变红。
-      - name: Snapshot per-workflow failure-rate report
+      # 「全挂快照故意判 1」或「注入漂移故意判 4」那次调用的退出码带出来，
+      # 让整步在判据正常时变红。
+      - name: Snapshot per-workflow failure-rate gate
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
           $snapshot = "tests/fixtures/live_snapshot"
-          python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --data-dir $snapshot
+          python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds --data-dir $snapshot
           $rateCode = $LASTEXITCODE
           if ($rateCode -ne 0) {
-            Write-Host "::error::per-workflow 失败率判据失败（退出码 $rateCode，4=元数据漂移 3=无样本）"
+            Write-Host "::error::per-workflow 失败率闸门判 $rateCode（1=有 workflow 超出基线 4=元数据漂移 3=无样本）"
             exit $rateCode
+          }
+          $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds --data-dir tests/fixtures/live_snapshot_exceeds 2>&1
+          $rateStrict = $LASTEXITCODE
+          if ($rateStrict -ne 1) {
+            Write-Host "::error::全挂快照判 $rateStrict（期望 1）：硬门槛失去判定力"
+            exit 1
           }
           $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("wfrater-" + [guid]::NewGuid().ToString("N"))
           Copy-Item -Recurse -Force $snapshot $tmp
@@ -370,14 +391,14 @@ jobs:
             Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
             exit 1
           }
-          $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --data-dir $tmp 2>&1
+          $null = python scripts/check_live_snapshot_gate.py --check-per-workflow-rate --fail-on-exceeds --data-dir $tmp 2>&1
           $rateDrift = $LASTEXITCODE
           Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
           if ($rateDrift -ne 4) {
             Write-Host "::error::注入漂移后仍判 $rateDrift（期望 4）：判据失去判定力"
             exit 1
           }
-          Write-Host "OK  per-workflow 失败率报告生效（Windows/Python 3.14）：真实快照通过，注入漂移触发 4"
+          Write-Host "OK  per-workflow 失败率硬门槛双向生效（Windows/Python 3.14）：真实快照通过，全挂快照触发 1，注入漂移触发 4"
           exit 0
       # 存储名只读巡检（R23）：Windows 权威基线跑完后对仓库做一次设备名遗留
       # 体检，防新数据回归。CI 克隆不含运行期 data/，此步主要锚定配置面与

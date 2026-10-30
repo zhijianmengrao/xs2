@@ -246,6 +246,79 @@ def test_export_writes_meta_and_reports_half_width(tmp_path: Path, capsys) -> No
     )
 
 
+# ------------------------------------------------- 导出历史（R58）
+# 闸门的「连续 3 轮样本不足」提示要有跨轮计数，而 CI 检出是临时的：任何在 CI
+# 里写下的状态都会随 job 消失。所以历史必须随被评判的那份数据一起入库，由导出
+# 脚本在每次导出时追加。历史只记 attempts/failed，不记判决——判决依赖 margin，
+# 而 margin 是调用方的参数；把判决焊进数据，重导后就没法用今天的尺子回看。
+def _seed_export_source(root: Path) -> Path:
+    runs = root / "src" / "wf-demo" / "runs"
+    runs.mkdir(parents=True)
+    (runs / "run-aaaa.json").write_text(
+        json.dumps(_run_payload()), encoding="utf-8")
+    return root / "src"
+
+
+def _seed_dest_history(dest: Path, rounds: int) -> list[dict]:
+    dest.mkdir(parents=True, exist_ok=True)
+    seeded = [
+        {"exported_at": f"2026-01-{index + 1:02d}T00:00:00+00:00",
+         "per_workflow": {"old-wf": {"attempts": index + 1, "failed": 0}}}
+        for index in range(rounds)
+    ]
+    (dest / "snapshot-meta.json").write_text(
+        json.dumps({"history": seeded}), encoding="utf-8")
+    return seeded
+
+
+def test_export_records_the_current_round_in_history(tmp_path: Path) -> None:
+    """每次导出把本轮追加进 history，且最后一条必须等于本次的 per_workflow。"""
+    source = _seed_export_source(tmp_path)
+    dest = tmp_path / "dest"
+
+    assert exporter.export(source, dest, "", set(), limit=3, dry_run=False) == 0
+    meta = json.loads((dest / "snapshot-meta.json").read_text(encoding="utf-8"))
+    history = meta["history"]
+    assert len(history) == 1
+    assert history[0]["exported_at"] == meta["exported_at"]
+    assert history[0]["per_workflow"] == {"wf-demo": {"attempts": 2, "failed": 2}}
+
+
+def test_export_carries_history_forward_and_caps_it(tmp_path: Path) -> None:
+    """已有历史要保留（旧→新），只有最新 N-1 条留下，最老的被挤掉。
+
+    不携带就等于每轮从零开始——「连续 3 轮」永远数不到 3。不封顶则入库文件
+    无限增长，而快照的职责是「一份可读的样本」，不是日志。
+    """
+    source = _seed_export_source(tmp_path)
+    dest = tmp_path / "dest"
+    seeded = _seed_dest_history(dest, exporter.HISTORY_MAX_ROUNDS)
+
+    assert exporter.export(source, dest, "", set(), limit=3, dry_run=False) == 0
+    meta = json.loads((dest / "snapshot-meta.json").read_text(encoding="utf-8"))
+    history = meta["history"]
+    assert len(history) == exporter.HISTORY_MAX_ROUNDS
+    assert history[-1]["per_workflow"] == {"wf-demo": {"attempts": 2, "failed": 2}}
+    assert history[:-1] == seeded[-(exporter.HISTORY_MAX_ROUNDS - 1):], (
+        "旧的导出轮次没有按原顺序保留")
+
+
+def test_export_drops_malformed_history_entries(tmp_path: Path) -> None:
+    """形状无效的旧条目丢弃而不是原样带下去：带下去会让连续性数在伪造序列上。"""
+    source = _seed_export_source(tmp_path)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "snapshot-meta.json").write_text(
+        json.dumps({"history": [{"per_workflow": "x"}, {}, "junk"]}),
+        encoding="utf-8")
+
+    assert exporter.export(source, dest, "", set(), limit=3, dry_run=False) == 0
+    meta = json.loads((dest / "snapshot-meta.json").read_text(encoding="utf-8"))
+    assert len(meta["history"]) == 1
+    assert meta["history"][0]["per_workflow"] == {
+        "wf-demo": {"attempts": 2, "failed": 2}}
+
+
 def _thick_payload(*, attempts: int = 400, failed: int = 10) -> dict:
     """构造一份「厚到反向验证失效」的 run（所需余量 1.53 ≤ margin 2）。
 
