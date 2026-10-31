@@ -31,6 +31,19 @@ agent 图会在 llm↔tools 之间空转到轮次上限，CI 表现为超时而�
 ``DETERMINFLOW_DATA_DIR`` 从根上避免这两个问题，也让 CI 里这一步是**真的**
 端到端（跨进程），而不是同进程内的函数调用。
 
+## 判红后重跑一次（R68）
+
+**只对计时型场景**（`retry_backoff_*` 四个）重跑：它们判的是「请求到达间隔
+是否按配置被等过」，失效模式里有一类与代码无关——调度/JIT/日志造成的单次
+停顿（R64 实测过一次 0.16s 的单段离群）。口径是**任一次通过即通过**：真实
+回归在两次里都失败（判据要求**每一段**都落在容差内，不靠运气），而单次停顿
+的假红从 p 降到约 p²。**容差一个都不动**——重跑不是为了「松一点」，是为了
+让「偶尔慢一次」不冒充「退避没被等过」。
+
+第一次判红的原文保留在 `first_failure` 里，汇总行也会报「有几个场景发生过
+重跑」：**重跑后通过 ≠ 没红过**。语义型场景（节点流转、失败传播、重试策略、
+流停滞）不重跑：确定性失败重跑一遍只是把同一个缺陷展示两遍。
+
 ## 退出码
 
 0 = 全部场景通过
@@ -74,6 +87,13 @@ class ScenarioResult:
     name: str
     passed: bool
     detail: str = ""
+    # 这个场景实际跑了几次（R68）。只有计时型场景在判红时会重跑一次，
+    # 因此它是「重试是否真的发生过」的唯一证据——不写进结果里，日志里
+    # 就只剩一行 PASS，看不出第一次红过。
+    attempts: int = 1
+    # 第一次判红的详情（R68）。重试后通过**不等于没红过**：把第一次的
+    # 失败原文保留下来，读日志的人才能判断那是抖动还是阈值贴着边界。
+    first_failure: str = ""
 
 
 # ============================================================
@@ -273,7 +293,21 @@ class Runtime:
             {"workflow_id": workflow_id, **definition}
         )
         if created.get("success") is False:
-            raise AssertionError(f"创建工作流失败: {created}")
+            if created.get("error") != "workflow_already_exists":
+                raise AssertionError(f"创建工作流失败: {created}")
+            # R68：同一场景判红重跑时，上一次留下的工作流目录还在，``create``
+            # 会以 ``workflow_already_exists`` 拒绝。这不是失败——重跑要的是
+            # 「再跑一遍」，不是「再造一个同名工作流」。定义是常量，直接覆盖
+            # 成同一份；只有真写不进去（返回 None）才算环境坏。
+            #
+            # 这条路径**只在重试时**才会走到：没有重试时每个场景的工作流 id
+            # 都是新的，所以「本机 e2e 10/10」证明不了它——由
+            # ``tests/test_ci_e2e_stub.py`` 的同名用例直接钉住。
+            updated = self.workflow_manager.update_workflow(
+                workflow_id, {"workflow_id": workflow_id, **definition})
+            if updated is None:
+                raise AssertionError(
+                    f"重跑时无法复用已存在的工作流 {workflow_id}: {created}")
 
         # inline 脚本必须在起任务前落盘：runtime_guards 会在冻结运行身份时
         # 计算脚本文件的 sha256，文件缺失会直接拒绝启动 Task。
@@ -1083,6 +1117,85 @@ SCENARIO_ORDER = [
 # 入口
 # ============================================================
 
+# ============================================================
+# 失败重跑（R68）
+# ============================================================
+#
+# 只对**计时型**场景重跑：它们判的是「请求到达间隔落在配置的睡眠 ± 容差内」，
+# 而这一类判据有一条与代码无关的失效路径——调度、JIT、日志造成的单次停顿。
+# R64 在 CI 上实测到过一次：三段形状的首段偏移 0.16s，比值判据由此判红；
+# R65 把容差做成逐段非对称（欠睡 0.05s / 超睡 0.30s）之后，这一类抖动
+# 落在容差里，但**阈值之上永远还有下一次**（R65 §8-9 如实记过：0.30s 是
+# 点估计不是分布）。重跑是处理这一类噪声的正确工具：它不动容差，因此不会
+# 削掉「下标错一位」这种真错误的检出力。
+#
+# 语义型场景（节点流转、失败传播、重试策略、流停滞）**不在此列**：它们的
+# 失败来自确定性行为，重跑只会把同一个缺陷展示两遍，并把 CI 时间翻倍——
+# 而且会让「第一次红了」变成一个可以忽略的噪声，那正是最危险的那种习惯。
+RETRY_ON_FAILURE = frozenset({
+    "retry_backoff_is_honoured",
+    "retry_backoff_shape_is_honoured",
+    "retry_backoff_long_chain_shape_is_honoured",
+    "retry_backoff_four_segment_shape_is_honoured",
+})
+
+# 每个场景最多跑几次（含第一次）。2 是「偶发」与「稳定」的分界：
+# 真实回归在两次里都失败（判据要求**每一段**都落在容差内，不靠运气），
+# 而单次停顿的假红从 p 降到约 p²（独立假设）。第三次只换 ~p³，
+# 收益迅速衰减，CI 时间却线性增长。
+MAX_SCENARIO_ATTEMPTS = 2
+
+
+def combine_attempts(name: str, attempts: list[ScenarioResult]) -> ScenarioResult:
+    """把同一场景的多次尝试压成一个结果（R68 的判定口径：**任一次通过即通过**）。
+
+    三条纪律：
+
+    1. **判定口径只有一条**：任一次通过即通过。不是「取平均」、不是「两次都
+       要过」——后者会让容差内的正常抖动把 CI 弄红，把重跑变成纯成本。
+    2. **第一次的失败原文必须保留**（``first_failure``）。重跑后通过不等于
+       没红过；藏掉它，「重跑了几次」就变成日志里看不见的事，R65 §8-9 的
+       余量讨论也就失去了数据来源。
+    3. **全部失败时写清跑了几次**：否则读日志的人无法区分「一次就红」与
+       「跑满两次都红」，而这两件事对「是不是真回归」的置信度不同。
+    """
+    if not attempts:
+        raise ValueError("没有尝试结果，无法合并")
+    for index, result in enumerate(attempts):
+        if not result.passed:
+            continue
+        detail = result.detail
+        if index > 0:
+            detail += (
+                f"；第 {index + 1} 次尝试通过（共跑 {len(attempts)} 次；"
+                f"第 1 次判红：{attempts[0].detail}）")
+        return ScenarioResult(
+            name, True, detail,
+            attempts=len(attempts),
+            first_failure="" if attempts[0].passed else attempts[0].detail,
+        )
+    last = attempts[-1]
+    return ScenarioResult(
+        name, False,
+        f"{last.detail}（共跑 {len(attempts)} 次都判红）",
+        attempts=len(attempts),
+        first_failure=attempts[0].detail,
+    )
+
+
+async def run_with_retries(name: str, run_once) -> ScenarioResult:
+    """跑一个场景；判红且属于 ``RETRY_ON_FAILURE`` 时再跑一次（R68）。
+
+    ``run_once`` 是一个无参协程函数（由调用方注入，便于测试不依赖 Runtime）。
+    """
+    attempts: list[ScenarioResult] = []
+    while len(attempts) < MAX_SCENARIO_ATTEMPTS:
+        attempts.append(await run_once())
+        if attempts[-1].passed or name not in RETRY_ON_FAILURE:
+            break
+    return combine_attempts(name, attempts)
+
+
 async def _run(args) -> int:
     from scripts.stub_llm_provider import StubProvider
 
@@ -1115,16 +1228,19 @@ async def _run(args) -> int:
         wanted = SCENARIO_ORDER if args.only is None else [args.only]
         try:
             for name in wanted:
-                # 每个场景清一次请求记录与 fail_once 配额，断言里的计数才有意义
-                stub.requests.clear()
-                stub.reset_claims()
-                try:
-                    result = await SCENARIOS[name](runtime, stub)
-                except Exception as exc:
-                    result = ScenarioResult(name, False, f"场景抛异常: {exc!r}")
-                    if args.verbose:
-                        traceback.print_exc()
-                results.append(result)
+                async def _attempt(name: str = name) -> ScenarioResult:
+                    # 每次**尝试**都清一次请求记录与 fail_once 配额：重跑时上一次
+                    # 的请求不能算进这一次的断言计数（R68）。
+                    stub.requests.clear()
+                    stub.reset_claims()
+                    try:
+                        return await SCENARIOS[name](runtime, stub)
+                    except Exception as exc:
+                        if args.verbose:
+                            traceback.print_exc()
+                        return ScenarioResult(name, False, f"场景抛异常: {exc!r}")
+
+                results.append(await run_with_retries(name, _attempt))
         finally:
             await runtime.stop()
     finally:
@@ -1143,6 +1259,15 @@ async def _run(args) -> int:
         f"[e2e] {len(results) - len(failed)}/{len(results)} 场景通过",
         flush=True,
     )
+    # 重跑必须出现在汇总里（R68）：只写在单行详情里，快速浏览的人会以为
+    # 「10/10」=「一次没红」。发生过重跑就报次数与口径。
+    retried = [r for r in results if r.attempts > 1]
+    if retried:
+        print(
+            f"[e2e] 其中 {len(retried)} 个场景发生过重跑（判定口径：任一次通过"
+            f"即通过）：" + "、".join(r.name for r in retried),
+            flush=True,
+        )
     return EXIT_OK if not failed else EXIT_ASSERTION_FAILED
 
 

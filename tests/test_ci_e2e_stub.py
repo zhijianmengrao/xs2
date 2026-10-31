@@ -21,6 +21,7 @@ e2e 脚本本身**不**在本文件里跑：它要独立进程 + 临时 DATA_DIR
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -817,3 +818,226 @@ def test_all_shape_scenarios_keep_the_min_gap_above_the_over_sleep_tolerance() -
         budget = e2e._rising_shape_segment_budget(configured)
         assert budget.judgeable, configured
         assert budget.min_gap > budget.over_tol, configured
+
+
+# ------------------------------------------------ 判红后重跑一次（R68）
+#
+# 计时型场景的失效模式里有一类与代码无关（调度/JIT 造成的单次停顿，R64 实测
+# 0.16s 的单段离群）。重跑是处理这类噪声的正确工具：**不动容差**，所以不会
+# 削掉「下标错一位」那种真错误的检出力。
+#
+# 这一组钉住四件事：
+#   1. 只有计时型场景在重试集合里（语义型重跑只会展示两遍同一个缺陷）；
+#   2. 判定口径是「任一次通过即通过」，且第一次的失败原文必须留下；
+#   3. 最多跑 MAX_SCENARIO_ATTEMPTS 次（真实回归不会因为多跑而变绿）；
+#   4. 汇总行会报「发生过重跑」——重跑后通过 ≠ 没红过。
+
+_SHAPE_SCENARIOS = {
+    "retry_backoff_is_honoured",
+    "retry_backoff_shape_is_honoured",
+    "retry_backoff_long_chain_shape_is_honoured",
+    "retry_backoff_four_segment_shape_is_honoured",
+}
+_SEMANTIC_SCENARIOS = {
+    "happy_path",
+    "failure_propagates",
+    "turn_terminates",
+    "transient_error_is_retried",
+    "permanent_error_is_not_retried",
+    "stream_stall_fails_fast",
+}
+
+
+def test_retry_policy_covers_exactly_the_timing_scenarios() -> None:
+    """重试集合 = 计时型场景，一个不多一个不少。"""
+    assert e2e.RETRY_ON_FAILURE == _SHAPE_SCENARIOS
+    assert not (e2e.RETRY_ON_FAILURE & _SEMANTIC_SCENARIOS), (
+        "语义型场景不得进入重试集合：确定性失败重跑一遍只是把缺陷展示两遍")
+    # 集合里的每个名字都必须是真实场景（改名后不能静默退化成「不重试」）。
+    assert e2e.RETRY_ON_FAILURE <= set(e2e.SCENARIOS)
+
+
+def test_combine_attempts_passes_when_any_attempt_passes() -> None:
+    """第 1 次判红、第 2 次通过 → 通过，且第一次的原文被保留。"""
+    first = e2e.ScenarioResult("retry_backoff_shape_is_honoured", False,
+                               "第 1 段超睡：多 0.31s")
+    second = e2e.ScenarioResult("retry_backoff_shape_is_honoured", True,
+                                "实测 [0.41, 0.8, 1.61]")
+    combined = e2e.combine_attempts("retry_backoff_shape_is_honoured",
+                                    [first, second])
+    assert combined.passed is True
+    assert combined.attempts == 2
+    assert "第 1 段超睡" in combined.first_failure
+    assert "第 2 次尝试通过" in combined.detail
+    assert "实测 [0.41, 0.8, 1.61]" in combined.detail
+
+
+def test_combine_attempts_first_try_pass_keeps_no_failure() -> None:
+    """一次就过：attempts=1、first_failure 为空（不能伪造「红过」）。"""
+    only = e2e.ScenarioResult("retry_backoff_is_honoured", True, "多出 1.2s")
+    combined = e2e.combine_attempts("retry_backoff_is_honoured", [only])
+    assert combined.passed is True
+    assert combined.attempts == 1
+    assert combined.first_failure == ""
+    assert combined.detail == "多出 1.2s"
+
+
+def test_combine_attempts_all_failed_says_how_many_runs() -> None:
+    """两次都红：detail 必须写清「共跑 2 次」——否则与「一次就红」分不开。"""
+    results = [e2e.ScenarioResult("retry_backoff_is_honoured", False, "少 0.4s")
+               for _ in range(2)]
+    combined = e2e.combine_attempts("retry_backoff_is_honoured", results)
+    assert combined.passed is False
+    assert combined.attempts == 2
+    assert "共跑 2 次都判红" in combined.detail
+    assert combined.first_failure == "少 0.4s"
+
+
+def test_combine_attempts_rejects_an_empty_list() -> None:
+    """没有尝试就没有结论——不返回一个「通过」或「失败」的空壳。"""
+    with pytest.raises(ValueError):
+        e2e.combine_attempts("happy_path", [])
+
+
+def test_run_with_retries_retries_a_failing_timing_scenario_once() -> None:
+    """计时型场景判红 → 恰好再跑一次；第二次通过则结果通过。"""
+    calls: list[int] = []
+
+    async def run_once() -> e2e.ScenarioResult:
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            return e2e.ScenarioResult("retry_backoff_shape_is_honoured",
+                                      False, "第 1 段超睡 0.31s")
+        return e2e.ScenarioResult("retry_backoff_shape_is_honoured",
+                                  True, "实测 [0.41, 0.80]")
+
+    result = asyncio.run(
+        e2e.run_with_retries("retry_backoff_shape_is_honoured", run_once))
+    assert len(calls) == 2
+    assert result.passed is True
+    assert result.attempts == 2
+
+
+def test_run_with_retries_stops_at_the_attempt_cap() -> None:
+    """稳定回归跑满 MAX_SCENARIO_ATTEMPTS 次就停，不会无限重试。"""
+    calls: list[int] = []
+
+    async def run_once() -> e2e.ScenarioResult:
+        calls.append(len(calls) + 1)
+        return e2e.ScenarioResult("retry_backoff_is_honoured", False, "少 0.4s")
+
+    result = asyncio.run(
+        e2e.run_with_retries("retry_backoff_is_honoured", run_once))
+    assert len(calls) == e2e.MAX_SCENARIO_ATTEMPTS == 2
+    assert result.passed is False
+    assert result.attempts == 2
+
+
+def test_run_with_retries_never_retries_a_semantic_scenario() -> None:
+    """语义型场景一次就定论：重跑不改变确定性失败，只会浪费时间。"""
+    calls: list[int] = []
+
+    async def run_once() -> e2e.ScenarioResult:
+        calls.append(len(calls) + 1)
+        return e2e.ScenarioResult("failure_propagates", False, "下游被执行了")
+
+    result = asyncio.run(e2e.run_with_retries("failure_propagates", run_once))
+    assert len(calls) == 1
+    assert result.passed is False
+    assert result.attempts == 1
+
+
+def test_run_with_retries_does_not_retry_a_passing_scenario() -> None:
+    """一次就过就不该有第二次——重试是失败处置，不是采样策略。"""
+    calls: list[int] = []
+
+    async def run_once() -> e2e.ScenarioResult:
+        calls.append(len(calls) + 1)
+        return e2e.ScenarioResult("retry_backoff_shape_is_honoured", True, "ok")
+
+    result = asyncio.run(
+        e2e.run_with_retries("retry_backoff_shape_is_honoured", run_once))
+    assert len(calls) == 1
+    assert result.passed is True
+    assert result.attempts == 1
+
+
+# -------------------------------- 重跑必须能复用已存在的工作流（R68 的坑）
+#
+# 这一组是本轮最重要的用例。`run_with_retries` 只在本机用假 callable 测过，
+# 而真实 Runtime 的 `create_workflow` 对同名 id 返回 `workflow_already_exists`：
+# 重跑同一场景时上一次的工作流目录还在，若照旧 raise，重试会把**一次假红**
+# 升级成「两次都判红」——机制比不修更糟。本机 e2e 10/10 证明不了它：没有
+# 重试时每个场景的工作流 id 都是新的。
+
+class _FakeWorkflowManager:
+    """最小的 WorkflowManager 替身：第 2 次 create 复现「已存在」。"""
+
+    def __init__(self, first_error: dict | None = None) -> None:
+        self.created: list[dict] = []
+        self.updated: list[tuple[str, dict]] = []
+        self._first_error = first_error
+
+    def create_workflow(self, data: dict) -> dict:
+        if self._first_error is not None:
+            return self._first_error
+        if self.created:
+            return {"success": False, "error": "workflow_already_exists",
+                    "message": f"工作流 {data['workflow_id']} 已存在"}
+        self.created.append(data)
+        return {"definition": data}
+
+    def update_workflow(self, workflow_id: str, data: dict) -> dict | None:
+        self.updated.append((workflow_id, data))
+        return {"definition": data}
+
+    async def create_and_run_task(self, workflow_id: str) -> dict:
+        return {"success": True, "task_id": "task-1"}
+
+    def _load_task(self, workflow_id: str, task_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(status="completed", node_states={})
+
+
+class _FakeRuntimeSelf:
+    def __init__(self, root: Path, manager: _FakeWorkflowManager) -> None:
+        self.data_root = root
+        self.workflow_manager = manager
+
+
+def test_run_workflow_reuses_an_existing_workflow_instead_of_raising(
+        tmp_path: Path) -> None:
+    """同名工作流第二次 `run_workflow` 必须覆盖定义，而不是抛断言。
+
+    没有这条用例，R68 的重试在真实 Runtime 上会把一次假红变成两次都判红。
+    """
+    manager = _FakeWorkflowManager()
+    fake_self = _FakeRuntimeSelf(tmp_path, manager)
+    definition = {"name": "x", "nodes": [], "edges": []}
+
+    async def _twice():
+        first = await e2e.Runtime.run_workflow(fake_self, "wf-e2e-retry",
+                                               definition)
+        second = await e2e.Runtime.run_workflow(fake_self, "wf-e2e-retry",
+                                                definition)
+        return first, second
+
+    (first_status, _), (second_status, _) = asyncio.run(_twice())
+    assert first_status == "completed"
+    assert second_status == "completed"
+    assert len(manager.created) == 1, "第一次应真的创建"
+    assert len(manager.updated) == 1, "第二次应覆盖定义而不是创建第二个"
+    assert manager.updated[0][0] == "wf-e2e-retry"
+
+
+def test_run_workflow_still_raises_on_a_real_creation_error(tmp_path: Path) -> None:
+    """除「已存在」以外的创建失败照常抛——不能顺手把所有错误都吞掉。"""
+    manager = _FakeWorkflowManager(
+        first_error={"success": False, "error": "workflow_disabled",
+                     "message": "工作流未启用"})
+    fake_self = _FakeRuntimeSelf(tmp_path, manager)
+
+    with pytest.raises(AssertionError):
+        asyncio.run(e2e.Runtime.run_workflow(
+            fake_self, "wf-e2e-disabled", {"name": "x", "nodes": [], "edges": []}))
