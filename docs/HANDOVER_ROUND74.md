@@ -117,4 +117,29 @@
 
 ## 9. 推送与 CI 核对
 
-（推送后补记）
+推送 `bca0059`（三次提交：`52672b8` R73 CI 补记、`54fc44d` R74 实现、`bca0059`
+R74 文档；一次 `git -c http.proxy= push`，`9bd3784..bca0059`）。沿用 R73 §9 的
+发现：**全局 `http.proxy` 指向已失效的 socks5，裸 `git push` 不是直连**；显式
+清空代理后成功。Desktop Windows 未触发（`head_sha=bca0059…` 下
+`total_count=1`——`ci.yml` 不在它的 paths 过滤里）。
+
+| run | commit | 结果 |
+|---|---|---|
+| **41218330151** | `bca0059` | 五 job 全部 `success`，一次通过（16:09:53 → 16:14:57，约 5m04s）；新增的 `e2e retry summary (observability)` 步骤 `success` |
+| — | Desktop Windows | 未触发（`total_count=1`） |
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend / windows-backend / frontend / container-config / container-build 全部 `success` |
+| ubuntu | `2255 passed, 65 skipped, 1 warning in 96.89s` = **2320** |
+| windows | `2291 passed, 29 skipped, 1 warning in 232.17s` = **2320** |
+| 新用例在 CI 真跑 | ubuntu 2248/65 → **2255/65**、windows 2284/29 → **2291/29**（+7） |
+| metrics 进了 CI 日志 | `[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| e2e / 前端 / 容器 | `[e2e] 10/10`（仅 ubuntu）；前端 8 块 490/0；容器冒烟通过 |
+
+**三面实测一致**：本机 Low `2207+113` = 2320、ubuntu `2255+65` = 2320、
+windows `2291+29` = 2320。**本机 High 本会话不可得**（进程即 Low），不写第四面。
+
+**取证说明**：`$GITHUB_STEP_SUMMARY` 的正文不通过 API 暴露，只能看到该步骤
+`conclusion=success`；本机用同一个 `render()` 对 `--metrics-json` 输出做了逐字
+验证。日志下载继续用直连版 `_r73_ci_logs.py`（R71 脚本去掉硬编码 socks5）。
