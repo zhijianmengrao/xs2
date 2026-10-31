@@ -19,7 +19,9 @@
 
 R72 补的是这些翻转点的**前提**：#4 的「元数据漂移 → 退出 4」「无样本 → 退出 3」
 两条路径，R56 的用例各测各的、与这里用的不是同一组计数。本文件用 #4 的同一组
-计数把门与翻转点绑在一起——翻转点不仅要翻得动，还得真的能被走到。
+计数把门与翻转点绑在一起——翻转点不仅要翻得动，还得真的能被走到。R73 把同一
+形状补到 #3（回归判据）：character 16/79 才是边界外，R62 的漂移/无样本用例
+都落在判不出回归的计数上。
 """
 
 from __future__ import annotations
@@ -42,7 +44,10 @@ LEDGER = REPO_ROOT / "docs" / "JUDGEMENT_LEDGER.md"
 _FLIP_POINT_TESTS = {
     "1": ("test_policy_ceiling_flips_between_28_and_29_failures",),
     "2": ("test_merged_regression_margin_flips_at_26_failures",),
-    "3": ("test_per_workflow_regression_margin_flips_at_the_registered_k",),
+    "3": ("test_per_workflow_regression_margin_flips_at_the_registered_k",
+          "test_per_workflow_regression_flip_point_through_the_real_gate",
+          "test_metadata_drift_preempts_the_per_workflow_regression_verdict",
+          "test_no_sample_preempts_the_per_workflow_regression_verdict"),
     "4": ("test_leave_one_out_margin_flips_at_four_failures",
           "test_leave_one_out_baseline_drives_the_flip_point",
           "test_leave_one_out_flip_point_through_the_real_gate",
@@ -94,6 +99,105 @@ def test_per_workflow_regression_margin_flips_at_the_registered_k() -> None:
         previous, {"character": (79, 16)}, gate.DEFAULT_MARGIN)
     assert at_15["character"]["verdict"] == "undetermined", at_15["character"]["reason"]
     assert at_16["character"]["verdict"] == "exceeds", at_16["character"]["reason"]
+
+
+# ------------------------------------------------ #3 的退出路径前提（R73）
+
+def _write_regression_snapshot(root: Path, previous: dict[str, tuple[int, int]],
+                               current: dict[str, tuple[int, int]]) -> None:
+    """造一份「内容 = 当前轮、history = 上一轮」的落盘快照。
+
+    复用 ``_write_rate_snapshot`` 的落盘形状，再补一条 history；history 只写
+    ``attempts``/``failed``（``snapshot_rounds`` 也只用这两个数）。
+    """
+    _write_rate_snapshot(root, current)
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["history"] = [{
+        "exported_at": "2026-01-01T00:00:00+00:00",
+        "per_workflow": {name: {"attempts": attempts, "failed": failed}
+                         for name, (attempts, failed) in previous.items()},
+    }]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_per_workflow_regression_flip_point_through_the_real_gate(
+        tmp_path: Path) -> None:
+    """#3 的翻转点穿过真实入口：上一轮 2/79，当前 15/79 不判、16/79 判回归。
+
+    R69/R70 的 #3 用例停在 ``per_workflow_regression_report`` 的纯函数层；
+    这里从落盘快照与 ``history`` 出发，走 ``snapshot_rounds`` → 报告 → 退出码。
+    """
+    previous = {"character": (79, 2)}
+    at_15 = tmp_path / "at-15"
+    _write_regression_snapshot(at_15, previous, {"character": (79, 15)})
+    code, message = gate.check_per_workflow_regression(
+        at_15, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_OK, message
+    assert "1 个可判" in message, message
+    assert "0 个判回归" in message, message
+    assert "区间横跨阈值" in message, message
+
+    at_16 = tmp_path / "at-16"
+    _write_regression_snapshot(at_16, previous, {"character": (79, 16)})
+    code, message = gate.check_per_workflow_regression(
+        at_16, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_GATE_TRIGGERED, message
+    assert "1 个判回归" in message, message
+    assert "退出码 1 的来源：逐 workflow 回归（character）" in message, message
+
+
+def test_metadata_drift_preempts_the_per_workflow_regression_verdict(
+        tmp_path: Path) -> None:
+    """漂移必须说在判决之前：内容 16/79 会判回归，但元数据写 15/79 → 退出 4。
+
+    R62 的漂移用例用的是判不出回归的计数（40/0），所以「只有判不出时才查漂移」
+    在它面前全绿；这里用 #3 的边界外计数，任何「先判后查」都会说出「判回归」。
+    """
+    snap = tmp_path / "snap"
+    _write_regression_snapshot(
+        snap, {"character": (79, 2)}, {"character": (79, 16)})
+    meta_path = snap / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["character"]["failed"] = 15
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    code, message = gate.check_per_workflow_regression(
+        snap, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_META_DRIFT, message
+    assert "character" in message and "重导" in message, message
+    assert "判回归" not in message, message
+    assert "退出码 1" not in message, message
+
+
+def test_no_sample_preempts_the_per_workflow_regression_verdict(
+        tmp_path: Path) -> None:
+    """无样本同样先于判决：退出 3 的三条分支都不许说出判决词。"""
+    missing_meta = tmp_path / "missing-meta"
+    missing_meta.mkdir()
+    code, message = gate.check_per_workflow_regression(
+        missing_meta, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "快照元数据缺失" in message, message
+    assert "判回归" not in message, message
+
+    missing_block = tmp_path / "missing-block"
+    _write_rate_snapshot(
+        missing_block, {"character": (79, 16)}, declare_meta=False)
+    code, message = gate.check_per_workflow_regression(
+        missing_block, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "per_workflow" in message, message
+    assert "判回归" not in message, message
+
+    empty_content = tmp_path / "empty-content"
+    _write_rate_snapshot(empty_content, {"character": (79, 16)})
+    shutil.rmtree(empty_content / "workflows")
+    code, message = gate.check_per_workflow_regression(
+        empty_content, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "没有任何带 run 记录的工作流" in message, message
+    assert "判回归" not in message, message
 
 
 # ------------------------------------------------ #4 留一法 10 个百分点

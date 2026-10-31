@@ -23,7 +23,7 @@
 |---|---|---|---|---|---|---|---|
 | 1 | 真实失败率 vs 政策上限 | `check_live_snapshot_gate.py::evaluate`（`--fail-if-above 8`） | 政策型 | 8 个百分点 | 区间下界 > 8 才红 | 阈值是政策，不随数据变；下界宽度由样本量决定 | 1 |
 | 2 | 历史基线回归 | 同上（`--fail-on-regression`） | 偏移型 | 3 个百分点（`REGRESSION_MARGIN`） | 当前 ≥ 基线 + 3 且下界 > 该值 | 一个 workflow 变坏会被其余摊薄（由 #3 补） | 1 |
-| 3 | per-workflow 回归 | `check_per_workflow_regression` | 偏移型 | 10 个百分点（`--margin`，**必须同时是基线精度余量**） | 可判 + 计数不变 ⇒ `normal`；阈值 = 基线 + 10 | 阈值小于基线精度时说不出 `normal`（反事实见 §4）；基线太薄判不了 | 1 |
+| 3 | per-workflow 回归 | `check_per_workflow_regression` | 偏移型 | 10 个百分点（`--margin`，**必须同时是基线精度余量**） | 可判 + 计数不变 ⇒ `normal`；阈值 = 基线 + 10 | 阈值小于基线精度时说不出 `normal`（反事实见 §4）；基线太薄判不了；3/4 两条退出路径先于判决（§7.3，R73） | 1 |
 | 4 | per-workflow 失败率（留一法） | `check_per_workflow_rate` | 偏移型 | margin 10 | 与其余 workflow 的合并基线比 | 默认恒退出 0，只有 `--fail-on-exceeds` 才判；3/4 两条退出路径先于判决（§7.2，R72） | 1 |
 | 5 | 样本量厚度 | `check_sample_size`（`--check-sample-size`） | 精度型 | margin 10 个百分点 | 95% 半宽 ≤ margin | `p → 0/1` 用单侧界；`n ≤ 4` 有轻微反转（已豁免并钉住） | 7 |
 | 6 | 快照新鲜度 | `check_stale`（`--check-stale`） | 时钟型 | 7 天（`--max-lag-days` 默认） | 滞后 ≤ 7.0 天 | 只读「最新 run 文件」，与内容质量无关 | 5 |
@@ -132,6 +132,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 7 天（新鲜度） | `--max-lag-days` 的默认值 + `tests/test_judgement_flip_points.py::test_freshness_flips_within_one_microsecond`（7 天 ±1 微秒） |
 | 留一法基线（#4） | `tests/test_judgement_flip_points.py::test_leave_one_out_baseline_drives_the_flip_point`（从计数出发算基线，再判翻转） |
 | #4 的 3/4 两条退出路径先于判决（R72） | `tests/test_judgement_flip_points.py::test_leave_one_out_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_leave_one_out_verdict`、`test_no_sample_preempts_the_leave_one_out_verdict` |
+| #3 的 3/4 两条退出路径先于判决（R73） | `tests/test_judgement_flip_points.py::test_per_workflow_regression_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_per_workflow_regression_verdict`、`test_no_sample_preempts_the_per_workflow_regression_verdict` |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
 | msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
 | 「签名 / 模块 / 探针」真值表（R71） | `tests/test_msys_attribution.py::test_skip_truth_table_has_exactly_two_independent_variables` |
@@ -153,7 +154,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 |---|---|---|---|---|
 | 1 | 政策上限 8 个百分点 | n=255, k=28 | k=29 | `test_policy_ceiling_flips_between_28_and_29_failures` |
 | 2 | 合并层回归 +3 | 基线 10/255, k=25 | k=26 | `test_merged_regression_margin_flips_at_26_failures` |
-| 3 | 逐 workflow +10 | character 15/79 | 16/79 | `test_per_workflow_regression_margin_flips_at_the_registered_k` |
+| 3 | 逐 workflow +10 | character 15/79 | 16/79 | `test_per_workflow_regression_margin_flips_at_the_registered_k`、`test_per_workflow_regression_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_per_workflow_regression_verdict`、`test_no_sample_preempts_the_per_workflow_regression_verdict`（后三条是退出路径的前提，见 §7.3） |
 | 4 | 留一法 +10 | 基线 0/30, k=3/10 | 4/10 | `test_leave_one_out_margin_flips_at_four_failures`、`test_leave_one_out_baseline_drives_the_flip_point`、`test_leave_one_out_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_leave_one_out_verdict`、`test_no_sample_preempts_the_leave_one_out_verdict`（后三条是退出路径的前提，见 §7.2） |
 | 5 | 样本量 margin 10 | 零失败 29 次尝试 | 28 次 | `test_sample_size_margin_flips_between_28_and_29_attempts` |
 | 6 | 新鲜度 7 天 | 滞后 7.0 天 | 7.1 天 | `test_freshness_flips_at_the_registered_days`、`test_freshness_default_is_the_registered_days`、`test_freshness_flips_within_one_microsecond` |
@@ -217,6 +218,22 @@ R72 用 #4 的同一组计数（rest 30/0、target 4/10——正是 §7 第 4 �
 
 「缺 `per_workflow` 块」这一分支与 R56 的用例重复，不声称唯一覆盖；新增量是
 另外两条分支与「判决词不得先出现」这条顺序断言。
+
+### 7.3 回归判据的前提：3/4 退出路径（R73）
+
+与 §7.2 同一形状，换到 #3：`check_per_workflow_regression` 在判决之前也先过
+元数据漂移（退出 4）与无样本（退出 3）两道门。R62 的用例各测过这两道门，
+但它们的计数在 #3 的阈值下判不出 `exceeds`，于是「只有判不出回归时才查漂移」
+能让一个内容为 16/79（会判回归）的快照被元数据改写成 15/79 后静默通过。
+
+| 前提 | 同一组计数下的期望 | 用例 |
+|---|---|---|
+| 内容与元数据一致 | character 上一轮 2/79，当前 15/79 → 不判回归；16/79 → 退出 1（来源写明 character） | `test_per_workflow_regression_flip_point_through_the_real_gate` |
+| 元数据漂移先于判决 | 内容 16/79，元数据写 15/79 → 退出 4，消息不含「判回归」/「退出码 1」 | `test_metadata_drift_preempts_the_per_workflow_regression_verdict` |
+| 无样本先于判决 | 缺元数据文件 / 缺 `per_workflow` 块 / 元数据说有但内容为空 → 退出 3，消息不含判决词 | `test_no_sample_preempts_the_per_workflow_regression_verdict` |
+
+「缺 `per_workflow` 块」这一分支与 R62 的用例重复，不声称唯一覆盖；新增量是
+「缺元数据文件」「内容为空」两条分支与顺序断言。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
