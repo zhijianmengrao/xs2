@@ -125,4 +125,33 @@ Low `2177+113` = 2290、High `2262+28` = 2290。
 
 ## 9. 推送与 CI 核对
 
-（待推送后补记）
+推送 `0daed11`（脚本 + 用例 + 登记页 + 交接文档 + PROJECT_INFO 条目，**一次**
+`git push`）。
+
+| run | 触发 commit | 结果 |
+|---|---|---|
+| **41187350053** | `0daed11` | 五 job 全部 `success`，**一次通过、无重跑**（09:07:04 → 09:11:08，约 4m04s） |
+| — | `Desktop Windows` | **未触发**：paths 过滤不含 `scripts/`、`tests/`、`docs/` |
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | backend / windows-backend / frontend / container-config / container-build 全部 `conclusion=success` |
+| 用例数（ubuntu） | `2226 passed, 64 skipped, 1 warning in 110.35s` = **2290** |
+| 用例数（windows） | `2261 passed, 29 skipped, 1 warning in 180.93s` = **2290** |
+| 四面一致 | 本机 Low `2177+113` = 2290、本机 High `2262+28` = 2290、ubuntu `2226+64` = 2290、windows `2261+29` = 2290 |
+| e2e 在 CI 上真跑 | `[e2e] 10/10 场景通过`；**没有**「其中 N 个场景发生过重跑」行——本轮 CI 没有场景判红，重跑策略在 CI 上没有被触发（正确行为：不该为了验证它而制造一次假红） |
+| windows 的边界 | 该 job 里 `e2e_workflow_stub` 出现 **0** 次——没有 e2e 步骤 |
+| 前端 | 8 个 `# pass` 块合计 **490**，`# fail` 块合计 **0** |
+| 容器 | `container-config` 与 `container-build` 均 `success` |
+
+**R68 重跑正确性的证据链**：单测（策略/合并/上限/语义型不重跑/同名工作流复用）
++ **真机探针**（§2，强制第 1 次判红 → 1/1 通过、calls=2）+ CI 不触发（说明
+「没红就不重跑」也是对的）。**没有**在 CI 上观测到一次真实的重跑——这一点
+如实记在 §7-1。
+
+**取证方法**：`actions/jobs/<id>/logs` 302 到 blob 主机后整段 GET 会超时，先
+`-r 0-0` 读 `Content-Range` 得总长（backend 137719、windows 76986、frontend
+222201），再按 48KB 分块 Range 拼接；三份实到字节数与总长逐字节相等。
+（backend/windows 的总长与 R67 完全相同是巧合：两轮日志结构一致，只有用例数与
+耗时变了，而它们位数相同。）
+
