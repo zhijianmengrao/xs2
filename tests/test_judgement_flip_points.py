@@ -1,0 +1,223 @@
+"""判据容忍量的翻转点（R69）。
+
+`tests/test_judgement_ledger.py` 钉住的是「登记页上的数 == 代码里的常量」。那还
+不够：一个把阈值写成 `基线 + margin * 2` 的实现，常量完全相同，**边界却挪了
+一倍**——日志、文档、CI 文案全都对得上，只有判决是错的。
+
+本文件对登记页上每一个**带数字**的容忍量构造两次输入：
+
+- **边界内**（容忍量的内侧）：必须通过 / 不判失败；
+- **边界外**（刚好越过一步）：必须判失败。
+
+并断言判决真的翻转。阈值本身一律取自代码常量（`REGRESSION_MARGIN`、
+`DEFAULT_MARGIN`、`DEFAULT_MAX_LAG_DAYS`、`UNDER_SLEEP_TOLERANCE`、
+`OVER_SLEEP_TOLERANCE`、`BACKOFF_EXTRA_MIN_SECONDS`），不在这里写第二份字面量。
+
+最后一条是**覆盖守卫**：登记页 §2 的容忍量列里出现数字的行，必须在本文件登记
+一个翻转点用例，且用例名必须出现在登记页 §7——「有数字」与「有翻转点」不能
+各写各的。
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+from scripts import check_live_snapshot_gate as gate
+from scripts import e2e_workflow_stub as e2e
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LEDGER = REPO_ROOT / "docs" / "JUDGEMENT_LEDGER.md"
+
+# 登记页 §2 的判据编号 → 钉住它翻转点的用例名。
+# 没有数字容忍量的行（#7 覆盖度、#10 算术失败）不在此列，由覆盖守卫逐条核对。
+_FLIP_POINT_TESTS = {
+    "1": "test_policy_ceiling_flips_between_28_and_29_failures",
+    "2": "test_merged_regression_margin_flips_at_26_failures",
+    "3": "test_per_workflow_regression_margin_flips_at_the_registered_k",
+    "4": "test_leave_one_out_margin_flips_at_four_failures",
+    "5": "test_sample_size_margin_flips_between_28_and_29_attempts",
+    "6": "test_freshness_flips_at_the_registered_days",
+    "8": "test_shape_tolerances_flip_on_both_sides",
+    "9": "test_backoff_amplitude_flips_at_the_registered_minimum",
+}
+
+
+# ------------------------------------------------ #1 政策上限 8 个百分点
+
+def test_policy_ceiling_flips_between_28_and_29_failures() -> None:
+    """n=255 时 k=28 判不了、k=29 判超阈（与 failure-ceiling-calibration §3 同数）。"""
+    assert gate._ceiling_verdict(255, 28, 8.0)[0] != "exceeds"
+    assert gate._ceiling_verdict(255, 29, 8.0)[0] == "exceeds"
+
+
+# ------------------------------------------------ #2 合并层回归 3 个百分点
+
+def test_merged_regression_margin_flips_at_26_failures() -> None:
+    """基线 10/255：k=25（9.80%）判不了，k=26（10.20%）判回归。
+
+    阈值 = 3.92% + REGRESSION_MARGIN；两次只差一次失败，判决必须翻转。
+    """
+    baseline = (255, 10)
+    assert gate._baseline_verdict(
+        255, 25, baseline[0], baseline[1], gate.REGRESSION_MARGIN)[0] == "undetermined"
+    assert gate._baseline_verdict(
+        255, 26, baseline[0], baseline[1], gate.REGRESSION_MARGIN)[0] == "exceeds"
+
+
+# ------------------------------------------------ #3 逐 workflow 回归 10 个百分点
+
+def test_per_workflow_regression_margin_flips_at_the_registered_k() -> None:
+    """character 2/79：第 15 次失败判不了，第 16 次（20.25%）判回归。
+
+    这是登记页 #3 与 §4 提前量表里「第 16 次开口」的同一个数——翻转点用例与
+    提前量命令必须落在同一处，否则表格会替判据说话。
+    """
+    previous = {"character": (79, 2)}
+    at_15 = gate.per_workflow_regression_report(
+        previous, {"character": (79, 15)}, gate.DEFAULT_MARGIN)
+    at_16 = gate.per_workflow_regression_report(
+        previous, {"character": (79, 16)}, gate.DEFAULT_MARGIN)
+    assert at_15["character"]["verdict"] == "undetermined", at_15["character"]["reason"]
+    assert at_16["character"]["verdict"] == "exceeds", at_16["character"]["reason"]
+
+
+# ------------------------------------------------ #4 留一法 10 个百分点
+
+def test_leave_one_out_margin_flips_at_four_failures() -> None:
+    """留一法基线 0/30 时，10 次尝试里第 3 次判不了、第 4 次判超出。
+
+    #4 与 #2/#3 共用 ``_rate_verdict``；这里钉的是它在「其余 workflow 合并基线」
+    这个总体上的翻转点，防止有人给留一法单独换一套阈值。
+    """
+    baseline_pct = 0.0
+    assert gate._rate_verdict(
+        10, 3, baseline_pct, gate.DEFAULT_MARGIN)[0] == "undetermined"
+    assert gate._rate_verdict(
+        10, 4, baseline_pct, gate.DEFAULT_MARGIN)[0] == "exceeds"
+
+
+# ------------------------------------------------ #5 样本量 margin 10 个百分点
+
+def test_sample_size_margin_flips_between_28_and_29_attempts() -> None:
+    """零失败时 28 次尝试差 0.15 个百分点、29 次达标——判据必须在这一步翻转。"""
+    assert gate.sample_size_margin_needed(28, 0) > gate.DEFAULT_MARGIN
+    assert gate.sample_size_margin_needed(29, 0) <= gate.DEFAULT_MARGIN
+    assert gate._failure_rate_precision(28, 0, gate.DEFAULT_MARGIN)[0] is False
+    assert gate._failure_rate_precision(29, 0, gate.DEFAULT_MARGIN)[0] is True
+
+
+# ------------------------------------------------ #6 快照保鲜 7 天
+
+def _write_snapshot(root: Path, exported_at: str) -> None:
+    runs = root / "workflows" / "wf" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "run-a.json").write_text(
+        json.dumps({"run_id": "run-a", "status": "completed",
+                    "node_executions": []}), encoding="utf-8")
+    (root / "snapshot-meta.json").write_text(
+        json.dumps({"totals": {"attempts": 0, "failed": 0},
+                    "exported_at": exported_at}), encoding="utf-8")
+
+
+def _write_real_run(root: Path, started_at: str) -> None:
+    runs = root / "wf" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "run-real.json").write_text(
+        json.dumps({"run_id": "run-real", "status": "running",
+                    "started_at": started_at, "completed_at": None}),
+        encoding="utf-8")
+
+
+def test_freshness_flips_at_the_registered_days(tmp_path: Path) -> None:
+    """滞后 7.0 天通过、7.1 天过期；且**默认值**就是 7（不给开关也一样）。"""
+    exported = "2026-01-01T00:00:00+00:00"
+    snap, inside, outside = tmp_path / "snap", tmp_path / "inside", tmp_path / "outside"
+    _write_snapshot(snap, exported)
+    _write_real_run(inside, "2026-01-07T21:36:00+00:00")   # 6.9 天
+    _write_real_run(outside, "2026-01-08T02:24:00+00:00")  # 7.1 天
+
+    assert gate.check_stale(snap, inside, gate.DEFAULT_MAX_LAG_DAYS)[0] == gate.EXIT_OK
+    assert gate.check_stale(snap, outside, gate.DEFAULT_MAX_LAG_DAYS)[0] == gate.EXIT_STALE
+    # 恰好在边界上：7.0 天不算过期（判据是「滞后 ≤ N」）。
+    exact = tmp_path / "exact"
+    _write_real_run(exact, "2026-01-08T00:00:00+00:00")
+    assert gate.check_stale(snap, exact, gate.DEFAULT_MAX_LAG_DAYS)[0] == gate.EXIT_OK
+
+
+def test_freshness_default_is_the_registered_days(monkeypatch, tmp_path: Path) -> None:
+    """不传 ``--max-lag-days`` 时，7.1 天必须红——默认值不是文档里的一句话。"""
+    snap, outside = tmp_path / "snap", tmp_path / "outside"
+    _write_snapshot(snap, "2026-01-01T00:00:00+00:00")
+    _write_real_run(outside, "2026-01-08T02:24:00+00:00")
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-stale",
+        "--data-dir", str(snap), "--source", str(outside)])
+    assert gate.main() == gate.EXIT_STALE
+
+
+# ------------------------------------------------ #8 e2e 形状（欠睡 0.05 / 超睡 0.30）
+
+def test_shape_tolerances_flip_on_both_sides() -> None:
+    """欠睡 −0.050 通过 / −0.051 失败；超睡 +0.300 通过 / +0.301 失败。
+
+    两侧都测：只测一侧的话，把 `> over_tol` 写成 `>= over_tol` 这种一字之差
+    不会有人发现（它会把「恰好 0.30s」的抖动判红）。
+    """
+    configured = [0.4]
+    assert e2e._rising_shape_violations([0.35], configured) == []      # −0.050
+    assert e2e._rising_shape_violations([0.349], configured) != []     # −0.051
+    assert e2e._rising_shape_violations([0.70], configured) == []      # +0.300
+    assert e2e._rising_shape_violations([0.701], configured) != []     # +0.301
+    # 数字必须就是登记页写的那两个，不在这里另拍。
+    assert e2e.UNDER_SLEEP_TOLERANCE == pytest.approx(0.05)
+    assert e2e.OVER_SLEEP_TOLERANCE == pytest.approx(0.30)
+
+
+# ------------------------------------------------ #9 e2e 单点幅度 0.7s
+
+def test_backoff_amplitude_flips_at_the_registered_minimum() -> None:
+    """多出 0.700s 通过 / 0.699s 失败（判据是 `extra < 0.7` 即失败）。"""
+    assert e2e._backoff_amplitude_problems({"zero": 0.0, "configured": 0.7}) == []
+    assert e2e._backoff_amplitude_problems({"zero": 0.0, "configured": 0.699}) != []
+
+
+# ------------------------------------------------ 覆盖守卫
+
+def _ledger_rows(section_start: str, section_end: str) -> list[list[str]]:
+    text = LEDGER.read_text(encoding="utf-8")
+    start = text.index(section_start)
+    end = text.index(section_end, start)
+    rows = []
+    for line in text[start:end].splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = [cell.strip() for cell in line.split("|")]
+        rows.append(cells)
+    return rows
+
+
+def test_every_numeric_tolerance_has_a_registered_flip_point() -> None:
+    """登记页 §2 里有数字的容忍量，必须有一条翻转点用例，且用例名写进 §7。"""
+    rows = _ledger_rows("## 2. 逐条登记", "## 3.")
+    numeric: dict[str, str] = {}
+    for cells in rows:
+        # cells[0] == ""、cells[1] == 编号、cells[5] == 容忍量
+        if len(cells) < 6 or not cells[1].isdigit():
+            continue
+        tolerance = cells[5]
+        if any(ch.isdigit() for ch in tolerance):
+            numeric[cells[1]] = tolerance
+    assert numeric, "登记页 §2 没有解析出任何带数字的容忍量（表格格式变了？）"
+    assert set(numeric) == set(_FLIP_POINT_TESTS), (
+        f"登记页上有数字但没有翻转点的判据：{sorted(set(numeric) - set(_FLIP_POINT_TESTS))}；"
+        f"登记了翻转点但登记页没有数字的判据：{sorted(set(_FLIP_POINT_TESTS) - set(numeric))}")
+    spread = LEDGER.read_text(encoding="utf-8")
+    for judgement_id, test_name in _FLIP_POINT_TESTS.items():
+        assert callable(globals().get(test_name)), (
+            f"判据 #{judgement_id} 登记的翻转点用例 {test_name} 不存在")
+        assert test_name in spread, (
+            f"判据 #{judgement_id} 的翻转点用例 {test_name} 没有写进登记页 §7")

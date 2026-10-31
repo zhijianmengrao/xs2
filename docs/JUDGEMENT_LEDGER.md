@@ -129,3 +129,35 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | e2e 重跑口径（最多 2 次 / 任一次通过即通过 / 只对计时型，R68） | `tests/test_ci_e2e_stub.py::test_retry_policy_covers_exactly_the_timing_scenarios`、`test_run_with_retries_stops_at_the_attempt_cap`、`test_run_with_retries_never_retries_a_semantic_scenario` |
 | 7 天（新鲜度） | `--max-lag-days` 的默认值 |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
+
+## 7. 翻转点（R69）
+
+「数字等于常量」不等于「数字是判决的边界」：把阈值写成 `基线 + margin * 2` 的
+实现，常量仍然相同，边界却挪了一倍，而日志、文档、CI 文案全都对得上——只有
+判决是错的。下面每个**带数字**的容忍量都有一条用例，在**边界内**与**边界外**
+各构造一次输入，断言判决翻转；阈值一律取自代码常量（`REGRESSION_MARGIN`、
+`DEFAULT_MARGIN`、`DEFAULT_MAX_LAG_DAYS`、`UNDER_SLEEP_TOLERANCE`、
+`OVER_SLEEP_TOLERANCE`、`BACKOFF_EXTRA_MIN_SECONDS`），不写第二份字面量。
+
+| # | 判据 | 边界内（通过 / 不判失败） | 边界外（判失败） | 用例 |
+|---|---|---|---|---|
+| 1 | 政策上限 8 个百分点 | n=255, k=28 | k=29 | `test_policy_ceiling_flips_between_28_and_29_failures` |
+| 2 | 合并层回归 +3 | 基线 10/255, k=25 | k=26 | `test_merged_regression_margin_flips_at_26_failures` |
+| 3 | 逐 workflow +10 | character 15/79 | 16/79 | `test_per_workflow_regression_margin_flips_at_the_registered_k` |
+| 4 | 留一法 +10 | 基线 0/30, k=3/10 | 4/10 | `test_leave_one_out_margin_flips_at_four_failures` |
+| 5 | 样本量 margin 10 | 零失败 29 次尝试 | 28 次 | `test_sample_size_margin_flips_between_28_and_29_attempts` |
+| 6 | 新鲜度 7 天 | 滞后 7.0 天 | 7.1 天 | `test_freshness_flips_at_the_registered_days`、`test_freshness_default_is_the_registered_days` |
+| 8 | 形状 −0.05 / +0.30 | −0.050 / +0.300 | −0.051 / +0.301 | `test_shape_tolerances_flip_on_both_sides` |
+| 9 | 幅度 0.7s | extra 0.700s | 0.699s | `test_backoff_amplitude_flips_at_the_registered_minimum` |
+
+#7（覆盖度）与 #10（判据算术失败）没有数字容忍量：#7 判的是集合关系，#10 不是
+判据而是「算不下去」的分流。覆盖守卫
+`test_every_numeric_tolerance_has_a_registered_flip_point` 保证「登记页出现数字」
+与「登记了翻转点」互为充要。
+
+三个**没有**被翻转点覆盖的量，如实写在这里：
+
+- **2.64 个百分点**（入库快照的 95% 半宽）是**测量结果**，不是容忍量；
+- **0.4s**（形状的相邻配置差）由场景配置决定，`RisingShapeSegmentBudget.judgeable`
+  已把它写成不等式；
+- **3 次**（连续 `undetermined` 的提示阈值）不改变任何退出码，不是判据。

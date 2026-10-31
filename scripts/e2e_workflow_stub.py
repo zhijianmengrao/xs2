@@ -870,6 +870,30 @@ def _install_retry_config(runtime: Runtime, *, max_retries: int,
         str(runtime.data_root / "models_config.json"))
 
 
+# 单点幅度判据的下限（R69）：配置 1.2s 的退避必须让间隔多出 ≥0.7s。
+# 0.5s 的余量覆盖进程内调度抖动与日志开销；配置的 1.2s 远大于它。
+BACKOFF_EXTRA_MIN_SECONDS = 0.7
+
+
+def _backoff_amplitude_problems(samples: dict[str, float]) -> list[str]:
+    """单点幅度判据（登记页 #9）：``configured`` 比 ``zero`` 多出的间隔够不够大。
+
+    抽成纯函数是为了让**翻转点**可测（R69）：判据是 ``extra < 0.7`` 即失败，
+    所以 0.700s 必须通过、0.699s 必须失败。写在场景函数里时，这两个点只能靠
+    真机碰运气——而「常量等于 0.7」并不等于「判决真的在 0.7 翻转」。
+    """
+    if len(samples) != 2:
+        return []
+    extra = samples["configured"] - samples["zero"]
+    if extra < BACKOFF_EXTRA_MIN_SECONDS:
+        return [
+            f"配置 1.2s 退避后间隔只多了 {extra:.2f}s"
+            f"（zero={samples['zero']:.2f}s, "
+            f"configured={samples['configured']:.2f}s）：Core 的 delays 没被等过"
+        ]
+    return []
+
+
 async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> ScenarioResult:
     """退避时长必须真的被等过（R51）。
 
@@ -915,12 +939,7 @@ async def scenario_retry_backoff_is_honoured(runtime: Runtime, stub) -> Scenario
         samples[label] = max(gaps)
 
     if len(samples) == 2:
-        extra = samples["configured"] - samples["zero"]
-        # 容差 0.5s：覆盖进程内调度抖动与日志开销；配置的 1.2s 远大于它。
-        if extra < 0.7:
-            problems.append(
-                f"配置 1.2s 退避后间隔只多了 {extra:.2f}s（zero={samples['zero']:.2f}s, "
-                f"configured={samples['configured']:.2f}s）：Core 的 delays 没被等过")
+        problems.extend(_backoff_amplitude_problems(samples))
 
     # 本场景改写了全局重试配置；恢复成 e2e 的基准配置，避免影响后续场景。
     _install_retry_config(runtime, max_retries=2, delays=[0, 0],

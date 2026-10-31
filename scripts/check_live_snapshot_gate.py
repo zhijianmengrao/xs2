@@ -216,6 +216,13 @@ UNDETERMINED_ROUND_STREAK = 3
 # 轮不到它开口，等于一个写着「在看回归」的恒绿步骤。
 REGRESSION_MARGIN = 3.0
 
+# 两个 ``--check-*`` 判据的默认容忍量（R69 起具名，原先只写在 ``main()`` 里）。
+# 具名的理由与 ``REGRESSION_MARGIN`` 相同：登记页把它们写成「10 个百分点」与
+# 「7 天」，而翻转点用例要用**同一个**数去构造边界两侧——两处各写一份字面量，
+# 改了默认值之后登记页会继续原样撒谎。
+DEFAULT_MARGIN = 10.0          # --margin：精度余量 / 逐 workflow 变化阈值
+DEFAULT_MAX_LAG_DAYS = 7.0     # --max-lag-days：快照允许滞后的天数
+
 
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
     """从快照内容复算 (attempts, failed)——与闸门脚本同一口径。"""
@@ -1803,7 +1810,7 @@ def main() -> int:
                         help="快照根目录（含 workflows/ 与 snapshot-meta.json）；"
                              "缺省读 DETERMINFLOW_DATA_DIR，再缺省用入库快照路径")
     parser.add_argument("--margin", type=float, default=None,
-                        help="精度余量（百分点，默认 10），用于 --check-* 判据与"
+                        help=f"精度余量（百分点，默认 {DEFAULT_MARGIN:g}），用于 --check-* 判据与"
                              "--calibrate-lead-time：样本量厚度、per-workflow 判决"
                              "与可判集合都拿它当尺（逐 workflow 的**变化阈值**也"
                              "等于它——两个量必须相同，见 _baseline_verdict）")
@@ -1843,10 +1850,11 @@ def main() -> int:
     parser.add_argument("--source", type=Path, default=None,
                         help="真实 run 记录根目录（默认 src.config.WORKFLOWS_DIR），"
                              "仅 --check-stale / --check-coverage 使用")
-    parser.add_argument("--max-lag-days", type=float, default=7.0,
+    parser.add_argument("--max-lag-days", type=float,
+                        default=DEFAULT_MAX_LAG_DAYS,
                         help="快照允许落后真实数据的天数（默认 7）")
     options = parser.parse_args()
-    margin = 10.0 if options.margin is None else options.margin
+    margin = DEFAULT_MARGIN if options.margin is None else options.margin
     if margin < 0:
         parser.error("--margin 不能为负")
     if options.fail_if_above is not None and not 0.0 <= options.fail_if_above < 100.0:
