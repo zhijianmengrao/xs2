@@ -140,4 +140,36 @@ R70 记录「High 也是 113 skips、28-skip 复现不出来」；本轮同一�
 
 ## 9. 推送与 CI 核对
 
-（推送后回填。）
+推送 `724218e`（两次提交：`1e9b466` test + `724218e` docs；一次 `git push`，
+`749e609..724218e`，经 socks5 10808）。
+
+| run | 触发 commit | 结果 |
+|---|---|---|
+| **41204197201** | `724218e` | 五 job 全部 `success`，**一次通过、无重跑**（13:08:15 → 13:12:05，约 3m50s） |
+| — | `Desktop Windows` | **未触发**：paths 过滤不含 `scripts/`、`tests/`、`docs/`（`head_sha=724218e…` 下 `total_count=1`） |
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | backend（13:10:52）/ windows-backend（13:12:05）/ frontend（13:09:55）/ container-config（13:08:23）/ container-build（13:08:55）全部 `success` |
+| 用例数（ubuntu） | `2242 passed, 65 skipped, 1 warning in 112.19s` = **2307** |
+| 用例数（windows） | `2278 passed, 29 skipped, 1 warning in 174.03s` = **2307** |
+| 新用例在 CI 上真跑 | ubuntu 2238/64 → **2242/65**（4 pass + 探针用例按设计在 POSIX skip）；windows 2273/29 → **2278/29**（5 条全 pass） |
+| 校准步骤照旧 | `OK  逐 workflow 提前量已复算（本步不作判定）` |
+| e2e | `[e2e] 10/10 场景通过`（只 ubuntu 有；windows 日志里 `e2e_workflow_stub` 出现 **0** 次） |
+| 前端 | `# pass` 合计 **490**、`# fail` 合计 **0**（8 个块：48/60/137/81/139/1/18/6） |
+| 容器 | `container-config` success；`container-build` 真跑 `buildx build`（GHA cache）+ `容器镜像冒烟全部通过: determinflow-core:ci` |
+
+**四面一致**：本机 High `2279+28` = 2307、本机真降 Low `2194+113` = 2307、
+ubuntu `2242+65` = 2307、windows `2278+29` = 2307。
+
+**取证方法（本轮新增两个坑）**：
+1. `actions/jobs/<id>/logs` 仍需认证（未认证 403）；但 302 到 Azure blob 后
+   **SAS URL 自带签名，再带 `Authorization` 会 401**（`Server failed to
+   authenticate`）——跳转后的请求必须去掉认证头。
+2. **Low-IL 的 Python 里 `git credential fill` 会拉起 msys `sh`，直接撞上
+   `NtCreateDirectoryObject: 0xC0000022`**（本机 venv 在 F: 盘即 Low）——这正是
+   本轮登记的那条判据在 pytest 之外的现场例证。取 token 要在 Git Bash 里做，
+   经环境变量传给下载脚本。
+3. 302 后先 `-r 0-0` 读 `Content-Range` 总长（backend 137968、windows 77144、
+   frontend 222133、container-config 9875、container-build 78847），再按 48KB
+   分块 Range 拼接；五份实到字节数与总长逐字节相等。

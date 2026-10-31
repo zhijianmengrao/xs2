@@ -206,7 +206,11 @@ R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。�
 | 直接在 Git Bash 里 `git clone` | High | 成功 | bash 自己早已挂接该对象 |
 
 全量套件两次运行同为 **2189 passed / 113 skipped / 0 failed**（High 123.95s、
-Low 124.94s）。所以：
+Low 124.94s）。**R71 复测（同机同码，约 20 小时后）方向反过来了**：High
+**2279 passed / 28 skipped**、真降 Low **2194 passed / 113 skipped**——28-skip
+profile 在 High 下又出现了。两次观测合起来才是完整的结论：**能不能挂接那个共享
+对象会自己变**（谁先创建/挂接、DACL 如何），既不跟令牌 IL 绑定，也不在一台机器
+上保持恒定。所以：
 
 - **113 skips 不是令牌完整性级别的函数。** 就「转 skip」这条判据而言，判别变量
   是探针是否复现 `NtCreateDirectoryObject` 签名——也就是本会话能否挂接那个共享对象。
