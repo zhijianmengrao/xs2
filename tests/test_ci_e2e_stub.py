@@ -29,6 +29,7 @@ import pytest
 import yaml
 
 from scripts import e2e_workflow_stub as e2e
+from scripts import e2e_retry_summary as retry_summary
 from scripts import stub_llm_provider as stub_module
 from scripts.stub_llm_provider import FAIL_MARKER, decide
 
@@ -445,6 +446,111 @@ def test_e2e_script_exit_codes_are_stable() -> None:
     assert e2e.EXIT_OK == 0
     assert e2e.EXIT_ASSERTION_FAILED == 1
     assert e2e.EXIT_ENVIRONMENT_BROKEN == 3
+
+
+# ---------------------------------------------------------------- 重跑指标（R74）
+def _result(name: str, passed: bool = True, attempts: int = 1,
+            first_failure: str = "") -> "e2e.ScenarioResult":
+    return e2e.ScenarioResult(
+        name, passed, "detail", attempts=attempts,
+        first_failure=first_failure)
+
+
+def test_metrics_payload_records_attempts_and_first_failure() -> None:
+    """重跑频率必须可机读：attempts / first_failure 不能只活在日志正文里。"""
+    payload = e2e.metrics_payload([
+        _result("clean"),
+        _result("flaky", attempts=2, first_failure="第一次红了"),
+        _result("broken", passed=False, attempts=2, first_failure="第一次"),
+    ])
+    assert payload["schema"] == 1
+    assert (payload["total"], payload["passed"],
+            payload["failed"], payload["retried"]) == (3, 2, 1, 2)
+    by_name = {item["name"]: item for item in payload["scenarios"]}
+    assert by_name["clean"]["attempts"] == 1
+    assert by_name["clean"]["first_failure"] == ""
+    assert by_name["flaky"]["attempts"] == 2
+    assert by_name["flaky"]["first_failure"] == "第一次红了"
+    assert by_name["broken"]["passed"] is False
+
+
+def test_metrics_payload_counts_zero_retries_for_a_clean_run() -> None:
+    """0 次重跑必须是明确的 0，而不是「没有这个字段」。"""
+    payload = e2e.metrics_payload([_result("a"), _result("b")])
+    assert payload["retried"] == 0
+    assert all(item["attempts"] == 1 for item in payload["scenarios"])
+
+
+def test_write_metrics_creates_parent_and_roundtrips(tmp_path: Path) -> None:
+    """CI 用 ``$RUNNER_TEMP/...``，父目录不一定存在。"""
+    target = tmp_path / "nested" / "e2e.json"
+    payload = e2e.metrics_payload(
+        [_result("flaky", attempts=2, first_failure="x")])
+    e2e.write_metrics(target, payload)
+    assert json.loads(target.read_text(encoding="utf-8")) == payload
+
+
+def test_main_passes_the_metrics_path(monkeypatch, tmp_path: Path) -> None:
+    """``--metrics-json`` 必须真的传到 ``_run``，不能只是 argparse 里一行。"""
+    seen: dict = {}
+
+    async def fake_run(args):
+        seen["metrics_json"] = args.metrics_json
+        return 0
+
+    monkeypatch.setattr(e2e, "_run", fake_run)
+    path = tmp_path / "m.json"
+    assert e2e.main(
+        ["--only", "happy_path", "--metrics-json", str(path)]) == 0
+    assert seen["metrics_json"] == str(path)
+
+
+def test_retry_summary_reports_retried_scenarios() -> None:
+    """step summary 只列重跑过的场景，并给出总尝试次数。"""
+    payload = {
+        "schema": 1, "total": 3, "passed": 3, "failed": 0, "retried": 1,
+        "scenarios": [
+            {"name": "clean", "passed": True, "attempts": 1,
+             "first_failure": ""},
+            {"name": "flaky", "passed": True, "attempts": 2,
+             "first_failure": "第一次红了"},
+            {"name": "steady", "passed": True, "attempts": 1,
+             "first_failure": ""},
+        ],
+    }
+    text = retry_summary.render(payload)
+    assert "1 / 3 个场景重跑" in text
+    assert "总尝试 4 次" in text
+    assert "| flaky | 2 | 第一次红了 |" in text
+    assert "clean" not in text and "steady" not in text
+
+
+def test_retry_summary_tolerates_a_missing_file(
+        tmp_path: Path, capsys) -> None:
+    """metrics 没写出来时不能静默：打印可见说明，但不让 summary 步骤失败。"""
+    assert retry_summary.main([str(tmp_path / "absent.json")]) == 0
+    assert "未生成" in capsys.readouterr().out
+
+
+def test_ci_e2e_writes_metrics_and_renders_a_summary() -> None:
+    """接线：e2e 步骤写 metrics，summary 步骤无论成败都把它渲染出来。"""
+    run = str(_e2e_step()["run"])
+    assert "--metrics-json" in run, "e2e 步骤没有写 metrics"
+    assert "e2e-metrics.json" in run
+
+    hits = [
+        step for step in _backend_steps()
+        if "e2e_retry_summary.py" in str(step.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "ci.yml 的 backend job 必须且只能有一处渲染 e2e metrics"
+        f"（实际 {len(hits)} 处）"
+    )
+    summary_run = str(hits[0]["run"])
+    assert "GITHUB_STEP_SUMMARY" in summary_run
+    assert hits[0].get("if") == "always()", (
+        "summary 步骤必须 always()：e2e 失败时更需要看它重跑了几次")
+    assert "secrets." not in json.dumps(hits[0], ensure_ascii=False)
 
 
 def test_e2e_scenarios_cover_success_failure_and_termination() -> None:

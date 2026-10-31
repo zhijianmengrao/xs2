@@ -44,6 +44,14 @@ agent 图会在 llm↔tools 之间空转到轮次上限，CI 表现为超时而�
 重跑」：**重跑后通过 ≠ 没红过**。语义型场景（节点流转、失败传播、重试策略、
 流停滞）不重跑：确定性失败重跑一遍只是把同一个缺陷展示两遍。
 
+## 重跑指标（R74）
+
+`attempts` / `first_failure` 此前只写进日志（R68 §7-4）：「重跑有多频繁」只能
+靠 grep。`metrics_payload()` 把它们整理成稳定 schema，`--metrics-json PATH`
+写出 JSON；CI 的 `e2e retry summary` 步骤把它渲染进 step summary，本地排查与
+CI 读同一份数据，不各自解析日志文本。汇总行里的 `[e2e-metrics] ...` 是同一份
+数据的单行形式，便于 grep。
+
 ## 退出码
 
 0 = 全部场景通过
@@ -94,6 +102,39 @@ class ScenarioResult:
     # 第一次判红的详情（R68）。重试后通过**不等于没红过**：把第一次的
     # 失败原文保留下来，读日志的人才能判断那是抖动还是阈值贴着边界。
     first_failure: str = ""
+
+
+def metrics_payload(results: list[ScenarioResult]) -> dict:
+    """把场景结果整理成可机读的重跑报告（R74）。
+
+    每一项都来自 ``ScenarioResult`` 的 ``attempts`` / ``first_failure``：
+    这两个字段是「重跑真的发生过」与「第一次为什么红」的唯一证据，不能只活在
+    日志正文里（R68 §7-4 的挂账）。
+    """
+    return {
+        "schema": 1,
+        "total": len(results),
+        "passed": sum(1 for result in results if result.passed),
+        "failed": sum(1 for result in results if not result.passed),
+        "retried": sum(1 for result in results if result.attempts > 1),
+        "scenarios": [
+            {
+                "name": result.name,
+                "passed": result.passed,
+                "attempts": result.attempts,
+                "first_failure": result.first_failure,
+            }
+            for result in results
+        ],
+    }
+
+
+def write_metrics(path: Path, payload: dict) -> None:
+    """写 ``--metrics-json``（父目录不存在就建，便于 CI 用临时路径）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
 
 
 # ============================================================
@@ -1287,6 +1328,14 @@ async def _run(args) -> int:
             f"即通过）：" + "、".join(r.name for r in retried),
             flush=True,
         )
+    metrics = metrics_payload(results)
+    print(
+        f"[e2e-metrics] total={metrics['total']} passed={metrics['passed']} "
+        f"failed={metrics['failed']} retried={metrics['retried']}",
+        flush=True,
+    )
+    if args.metrics_json:
+        write_metrics(Path(args.metrics_json), metrics)
     return EXIT_OK if not failed else EXIT_ASSERTION_FAILED
 
 
@@ -1300,6 +1349,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verbose", action="store_true", help="打印装配过程与异常栈")
     parser.add_argument(
         "--keep-data", action="store_true", help="保留临时 data 目录（排查用）"
+    )
+    parser.add_argument(
+        "--metrics-json", default=None, metavar="PATH",
+        help="把重跑指标写成 JSON（CI step summary 与本地排查共用）",
     )
     args = parser.parse_args(argv)
     return asyncio.run(_run(args))

@@ -332,13 +332,21 @@ jobs:
           # R45/R46/R47 反复批评的「永远绿的防护」。区分只体现在提示文案上，
           # 让人一眼看出该往编排语义还是往装配栈排查（见 R49 §8 的取舍记录）。
           code=0
-          python scripts/e2e_workflow_stub.py || code=$?
+          python scripts/e2e_workflow_stub.py \
+            --metrics-json "$RUNNER_TEMP/e2e-metrics.json" || code=$?
           if [ "$code" -eq 3 ]; then
             echo "::error::e2e 无法启动（退出码 3）：先看装配栈，不是编排语义"
           elif [ "$code" -ne 0 ]; then
             echo "::error::e2e 编排行为不符（退出码 $code）"
           fi
           exit $code
+
+      - name: e2e retry summary (observability)
+        # 重跑频率此前只能 grep 日志（R68 §7-4）。metrics 缺失/损坏时脚本打印
+        # 可见说明并退出 0，不让「没有数据」冒充「0 次重跑」。
+        if: always()
+        run: |
+          python scripts/e2e_retry_summary.py "$RUNNER_TEMP/e2e-metrics.json" >> "$GITHUB_STEP_SUMMARY"
 
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
