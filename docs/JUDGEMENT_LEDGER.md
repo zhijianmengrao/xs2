@@ -106,7 +106,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 0 | 通过 | — | 全部 |
 | 1 | 判了，且不合格 | 查数据 / 查供应商 | 默认判定（政策上限、回归）、per-workflow 回归/失败率、e2e 编排行为 |
 | 3 | 无样本 | 重导快照 | 全部读快照的模式 |
-| 4 | 元数据漂移 | 重导快照（内容变了没重导） | 全部读快照的模式 |
+| 4 | 元数据漂移 | 重导快照（内容变了没重导 / 形状无效） | 全部读快照的模式 |
 | 5 | 快照过期 | 重导快照 | 仅 `--check-stale` |
 | 6 | 覆盖度缺口 | 重导快照 | 仅 `--check-coverage` |
 | 7 | 样本太薄 | 攒更多 run 再导 | 仅 `--check-sample-size` |
@@ -133,6 +133,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 留一法基线（#4） | `tests/test_judgement_flip_points.py::test_leave_one_out_baseline_drives_the_flip_point`（从计数出发算基线，再判翻转） |
 | #4 的 3/4 两条退出路径先于判决（R72） | `tests/test_judgement_flip_points.py::test_leave_one_out_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_leave_one_out_verdict`、`test_no_sample_preempts_the_leave_one_out_verdict` |
 | #3 的 3/4 两条退出路径先于判决（R73） | `tests/test_judgement_flip_points.py::test_per_workflow_regression_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_per_workflow_regression_verdict`、`test_no_sample_preempts_the_per_workflow_regression_verdict` |
+| 畸形 `per_workflow` → 4（不是 1/8，R75） | `tests/test_live_snapshot_gate.py::test_malformed_per_workflow_metadata_is_drift_not_a_verdict`、`test_malformed_metadata_exits_four_from_the_cli` |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
 | msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
 | 「签名 / 模块 / 探针」真值表（R71） | `tests/test_msys_attribution.py::test_skip_truth_table_has_exactly_two_independent_variables` |
@@ -280,3 +281,19 @@ profile 在 High 下又出现了。两次观测合起来才是完整的结论：
 永远可区分。
 
 钉住它的五条用例见 §6（`tests/test_msys_attribution.py`）。
+
+## 9. 元数据形状无效：4 不是 1/8（R75）
+
+`per_workflow` 是手可改的入库文件。R75 实测两种畸形：
+
+| 畸形 | 修复前 | 冒充的东西 | 修复后 |
+|---|---|---|---|
+| `"wf-a": "junk"` | `AttributeError`，CLI 退出 **1** | 「判了且不合格」→ 查供应商 | 退出 **4**（重导） |
+| `"failed": "abc"` | `ValueError` → `_run_judgement` 归成 **8** | 「判据算术失败」→ 修判据 | 退出 **4**（重导） |
+
+`_per_workflow_shape_error()` 在漂移检查之前校验三条 per-workflow 判据共用的
+`per_workflow` 块：bucket 必须是对象；`runs`/`attempts`/`failed` 必须是非负
+整数（数值字符串接受、布尔与非整数拒绝）。返回第一条问题，统一走
+`_metadata_shape_message()` → 退出码 4。**4 与 8 的分界**：8 是「判据自己算不
+下去」（修判据），4 是「被判的数据坏了」（重导）；把数据错误归到 8 会让两种
+处置互相冒充，与 R64 给 `OverflowError` 单独开 8 是同一条纪律的反面。

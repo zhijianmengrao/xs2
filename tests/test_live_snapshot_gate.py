@@ -1609,6 +1609,60 @@ def test_rate_check_reports_no_sample_without_the_per_workflow_block(
     assert "per_workflow" in message
 
 
+# ------------------------------------------- 畸形 per_workflow（R75）
+def _write_malformed_per_workflow(root: Path, bucket) -> None:
+    """造一份内容正常、只有 ``per_workflow`` 条目形状坏掉的快照。"""
+    _rate_snapshot(root, {"wf-a": (10, 1)})
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-a"] = bucket
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+@pytest.mark.parametrize("bucket", [
+    "junk",
+    {"runs": 1, "attempts": 10, "failed": "abc"},
+    {"runs": 1, "attempts": 10, "failed": True},
+    {"runs": 1, "attempts": 10, "failed": -2},
+])
+def test_malformed_per_workflow_metadata_is_drift_not_a_verdict(
+        tmp_path: Path, bucket) -> None:
+    """畸形元数据不许冒充结论：三条判据都退出 4，处置是重导。
+
+    R75 实测的两种冒充：``"wf-a": "junk"`` 抛 ``AttributeError`` → CLI 以
+    **1** 退出（与「判了且不合格」同码）；``"failed": "abc"`` 被归成 **8**
+    （判据算术失败）。前者让人去查供应商，后者让人去修判据——真正的处置都是
+    重导快照。布尔值不再是「1」：``true`` 不是计数。
+    """
+    _write_malformed_per_workflow(tmp_path, bucket)
+    for judge in (live_gate.check_per_workflow,
+                  live_gate.check_per_workflow_rate,
+                  live_gate.check_per_workflow_regression):
+        code, message = judge(tmp_path, margin=10.0)
+        assert code == live_gate.EXIT_META_DRIFT, (judge.__name__, message)
+        assert "形状无效" in message and "wf-a" in message, message
+
+
+def test_malformed_metadata_exits_four_from_the_cli(
+        monkeypatch, tmp_path: Path) -> None:
+    """CLI 不能以 1（不合格）或 8（算术失败）退出：两种都会把处置带偏。"""
+    import sys
+
+    _write_malformed_per_workflow(tmp_path, "junk")
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-per-workflow-rate",
+        "--data-dir", str(tmp_path)])
+    assert live_gate.main() == live_gate.EXIT_META_DRIFT
+
+
+def test_numeric_string_counts_are_still_accepted(tmp_path: Path) -> None:
+    """数值字符串仍可解释（导出写整数，手改的 ``"1"`` 不因此拒整份快照）。"""
+    _write_malformed_per_workflow(
+        tmp_path, {"runs": "1", "attempts": "10", "failed": "1"})
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+
+
 def test_rate_check_passes_on_the_committed_snapshot() -> None:
     """入库快照自己必须在硬门槛下也过——否则 CI 一接就红。
 

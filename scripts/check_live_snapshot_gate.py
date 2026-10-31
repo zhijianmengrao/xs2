@@ -782,6 +782,49 @@ def _drift_message(drifts: list[str]) -> str:
         "--dest tests/fixtures/live_snapshot --limit 2")
 
 
+_PER_WORKFLOW_COUNT_FIELDS = ("runs", "attempts", "failed")
+
+
+def _per_workflow_shape_error(recorded: dict) -> str | None:
+    """``per_workflow`` 元数据的形状校验；返回第一条问题，合法时 ``None``。
+
+    为什么需要（R75）：``_per_workflow_drift`` 假定每个 bucket 是 dict、每个
+    计数都能转成整数。手改坏的快照会让三条判据一起跳过漂移检查：
+
+    - ``"wf-a": "junk"`` → ``AttributeError``，CLI 以 **1** 退出——与「判了且
+      不合格」同码，读日志的人会去查供应商；
+    - ``"failed": "abc"`` → ``ValueError`` 被 ``_run_judgement`` 归成 **8**
+      （判据算术失败），处置被指向「修判据」，而真正该做的是重导快照。
+
+    两者都是畸形数据冒充结论。校验放在漂移检查之前，统一分流到退出码 4
+    （元数据漂移 → 重导）。数值字符串（``"1"``）照旧接受：导出脚本写整数，
+    但手改过的快照里 ``"1"`` 是明确可解释的；布尔值不接受——``true`` 不是计数。
+    """
+    for name in sorted(recorded):
+        bucket = recorded[name]
+        if not isinstance(bucket, dict):
+            return f"{name}: 期望对象，实际是 {type(bucket).__name__}"
+        for field in _PER_WORKFLOW_COUNT_FIELDS:
+            value = bucket.get(field, 0)
+            if isinstance(value, bool) or not isinstance(value, (int, str)):
+                return f"{name}.{field}: 期望非负整数，实际是 {value!r}"
+            try:
+                number = int(value)
+            except ValueError:
+                return f"{name}.{field}: 期望非负整数，实际是 {value!r}"
+            if number < 0:
+                return f"{name}.{field}: 期望非负整数，实际是 {value!r}"
+    return None
+
+
+def _metadata_shape_message(error: str) -> str:
+    """形状错误 → 退出码 4 的统一说明（与漂移同一处置：重导）。"""
+    return (
+        f"per-workflow 元数据形状无效：{error}。这不是判据算术失败，也不是"
+        "不合格——重导一次即可修复：python scripts/export_run_samples.py "
+        "--dest tests/fixtures/live_snapshot --limit 2")
+
+
 def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     """按 workflow 分别判「失败率估计精度够不够」（R54）。
 
@@ -823,6 +866,10 @@ def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
             "快照元数据缺 per_workflow 块，无法判 per-workflow 样本量。"
             "重导一次即可补上：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
+
+    shape_error = _per_workflow_shape_error(recorded)
+    if shape_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
 
     actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
@@ -1259,6 +1306,10 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
             "重导一次即可补上：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
 
+    shape_error = _per_workflow_shape_error(recorded)
+    if shape_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
+
     actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
         return EXIT_NO_SAMPLE, (
@@ -1438,6 +1489,10 @@ def check_per_workflow_regression(data_dir: Path,
             "快照元数据缺 per_workflow 块，无法判逐 workflow 回归。"
             "重导一次即可补上：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
+
+    shape_error = _per_workflow_shape_error(recorded)
+    if shape_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
 
     actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
