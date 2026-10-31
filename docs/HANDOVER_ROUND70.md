@@ -146,4 +146,29 @@ git-transport 模块整体 skip。实测范围：
 
 ## 9. 推送与 CI 核对
 
-（待推送后补记）
+推送 `11071d1`（一次 `git push`，`75c30ae..11071d1`）。
+
+| run | 触发 commit | 结果 |
+|---|---|---|
+| **41200486541** | `11071d1` | 五 job 全部 `success`，**一次通过、无重跑**（12:18:09 → 12:21:33，约 3m24s） |
+| — | `Desktop Windows` | **未触发**：paths 过滤不含 `scripts/`、`tests/`、`docs/`（`head_sha=11071d1…` 下 `total_count=1`） |
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | backend / windows-backend / frontend / container-config / container-build 全部 `conclusion=success` |
+| 用例数（ubuntu） | `2238 passed, 64 skipped, 1 warning in 114.39s` = **2302** |
+| 用例数（windows） | `2273 passed, 29 skipped, 1 warning in 154.98s` = **2302** |
+| 新用例在 CI 上真跑 | 两个 runner 都跑全量套件，用例数 2236/64 → **2238/64**、2271/29 → **2273/29**，各 **+2** |
+| 校准步骤照旧 | `OK  逐 workflow 提前量已复算（本步不作判定）` |
+| e2e | `[e2e] 10/10 场景通过`（只 ubuntu 有；windows 日志里 `e2e_workflow_stub` 出现 **0** 次） |
+| 前端 | `# pass` 合计 **490**、`# fail` 合计 **0**（8 个块） |
+| 容器 | `container-config` success；`container-build` 真跑 `buildx build`（GHA cache）+ `容器镜像冒烟全部通过: determinflow-core:ci` |
+
+**四面一致**：本机双令牌 `2189+113` = 2302、ubuntu `2238+64` = 2302、
+windows `2273+29` = 2302。（本机没有 28-skip 的第二 profile，原因见 §6.1。）
+
+**取证方法**：`actions/jobs/<id>/logs` 需认证（`git credential fill` 取 GCM token，
+未认证返回 403）；302 到 blob 后先 `-r 0-0` 读 `Content-Range` 总长
+（backend 137718、windows 76988、frontend 222114、container-config 9874、
+container-build 78664），再按 48KB 分块 Range 拼接；五份实到字节数与总长
+逐字节相等。
