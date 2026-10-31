@@ -140,4 +140,31 @@ ubuntu / windows 日志给出。
 
 ## 9. 推送与 CI 核对
 
-（推送后补记）
+推送 `ffa5bd9`（两次提交：`76989ea` test + `ffa5bd9` docs；一次 `git push`，
+`9bb1b5e..ffa5bd9`，经 socks5 10808——本轮直连 `000`、socks5 `200`）。
+
+| run | 触发 commit | 结果 |
+|---|---|---|
+| **41214865619** | `ffa5bd9` | 五 job 全部 `success`，**一次通过、无重跑**（15:26:32 → 15:31:13，约 4m41s） |
+| — | `Desktop Windows` | **未触发**：`head_sha=ffa5bd9…` 下 `total_count=1` |
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | backend（15:28:49）/ windows-backend（15:31:13）/ frontend（15:28:28）/ container-config（15:26:39）/ container-build（15:27:12）全部 `success` |
+| 用例数（ubuntu） | `2245 passed, 65 skipped, 1 warning in 93.56s` = **2310** |
+| 用例数（windows） | `2281 passed, 29 skipped, 1 warning in 217.33s` = **2310** |
+| 新用例在 CI 上真跑 | ubuntu 2242/65 → **2245/65**（+3）；windows 2278/29 → **2281/29**（+3） |
+| 校准步骤照旧 | `OK  逐 workflow 提前量已复算（本步不作判定）` |
+| e2e | `[e2e] 10/10 场景通过`（只 ubuntu 有；windows 日志里 `e2e_workflow_stub` 出现 **0** 次） |
+| 前端 | `# pass` 合计 **490**、`# fail` 合计 **0**（8 个块） |
+| 容器 | `container-config` success；`container-build` 真跑 `buildx build`（GHA cache）+ `容器镜像冒烟全部通过: determinflow-core:ci` |
+
+**三面实测一致**：本机 Low `2197+113` = 2310、ubuntu `2245+65` = 2310、
+windows `2281+29` = 2310。**本机 High 本会话不可得**（进程即 Low），因此不写
+第四面；28-skip profile 的缺失在 §6.1 已如实记录，不用算术补数。
+
+**取证方法**：沿用 R71 的两条坑——`actions/jobs/<id>/logs` 需认证；302 到
+Azure blob 的 SAS URL 自带签名，**跳转后的请求必须去掉认证头**；先 `-r 0-0`
+读 `Content-Range` 总长，再按 48KB 分块 Range 拼接。本轮五份日志实到字节数
+与总长逐字节相等（backend 137966、windows 77098、frontend 222197、
+container-config 9874、container-build 76911）。
