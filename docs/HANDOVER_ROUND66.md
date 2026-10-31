@@ -206,4 +206,30 @@ Low `2157+113` = 2270、High `2242+28` = 2270。
 
 ## 11. 推送与 CI 核对
 
-（推送后回填：commit、run id、五 job conclusion、逐字节核对结果）
+推送 `ca52111`（`2e50759` 修复+用例、`ca52111` 交接文档+PROJECT_INFO 两个提交为**一次**
+`git push`，`head_sha` 只产生一个 run）。
+
+| run | workflow | 触发 commit | 结果 |
+|---|---|---|---|
+| **41158950366** | `CI` | `ca52111` | 五 job 全部 `success`，**一次通过、无重跑** |
+| **41158950390** | `Desktop Windows` | `ca52111` | **success**（该 workflow 的 paths 含 `src/**`，本轮改了 `manager.py` 所以真触发；NSIS 构建通过） |
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | backend / windows-backend / frontend / container-config / container-build 全部 `conclusion=success` |
+| 用例数（ubuntu） | `2206 passed, 64 skipped, 1 warning in 74.24s` = **2270** |
+| 用例数（windows） | `2241 passed, 29 skipped, 1 warning in 222.83s` = **2270** |
+| 四面一致 | 本机 Low `2157+113` = 2270、本机 High `2242+28` = 2270、ubuntu `2206+64` = 2270、windows `2241+29` = 2270 |
+| **被修的 flake 在 CI 上真跑了** | 两个 runner 都跑全量套件，`tests/test_workflow_executor_pool_scenarios.py` 在内且全部通过（ubuntu 74.24s、windows 222.83s 全绿） |
+| e2e（只 ubuntu 有） | `[e2e] 10/10 场景通过`；形状判据逐字：两段实测 `[0.404, 0.805]` 最大超睡 **0.005s**（余量 60.0 倍）、三段 `[0.403, 0.803, 1.605]` **0.005s**（60.0 倍）、四段 `[0.404, 0.804, 1.604, 3.206]` **0.006s**（50.0 倍），诊断行 `参考：相邻比值 [...]（诊断用，不参与判定）` 照旧 |
+| 失败率闸门 | 两 runner 都打印 `快照样本量足够支撑失败率判定：失败率 3.92% 的 95% 半宽 2.64 个百分点≤ 余量 10.0（n=255, 失败 10）`；逐 workflow 回归 `9 个 workflow 里 2 个可判（0 个判回归 / 2 个没有回归 / 0 个区间横跨阈值），7 个基线太薄判不了`——与 R65 判决逐字相同 |
+| windows 的边界 | 日志里 `e2e_workflow_stub` 出现 **0** 次——**没有** e2e 步骤，不写成「两 runner 都验证了 e2e」 |
+| 前端 | 日志里 8 个 `# pass` 块合计 **490**（8 个 `# fail` 块合计 **0**） |
+| 容器 | `container-config`：`docker compose config -q` 通过；`container-build`：`docker buildx build` 真构建后 `smoke_container.py --image determinflow-core:ci --skip-build` 逐行输出 `status 契约成立: mode=process ready=4/4 degraded=False` / `内置前端产物可用: /assets/index-DJbfnKbu.js` / `镜像 HEALTHCHECK=healthy` / `entrypoint 先裁剪再 exec 已验证` / `镜像布局契约成立（不含 tests 与预先烘焙的凭据）` / `容器镜像冒烟全部通过` |
+
+**取证方法的一个坑（本轮实测）**：`actions/jobs/<id>/logs` 会 302 到
+`productionresultssa*.blob.core.windows.net`，该 blob 主机在本机**直连约 100KB/s 且整段 GET
+会在 120s 超时**（Range 请求正常）。最终用「先 `-r 0-0` 读 `Content-Range` 得总长，再按 48KB
+分块 Range 下载并拼接」的方式取全 5 份日志。过程中还观察到一次 **Content-Range 报的总长与
+实到字节不符**（container-build 报 87240、实收 174480，整份日志被写成两份），已按「第二份
+与第一份逐行相同」判定为重复并截掉。**下载日志不能只看 curl 是否 exit 0**。
