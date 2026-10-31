@@ -127,7 +127,8 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | §4 反事实的 9 / 11 / 提前 9 | `tests/test_live_snapshot_gate.py::test_lowering_the_workflow_delta_kills_the_normal_voice` |
 | 「可判 + 计数不变 ⇒ normal」 | `tests/test_live_snapshot_gate.py::test_unchanged_counts_are_normal_for_every_eligible_workflow` |
 | e2e 重跑口径（最多 2 次 / 任一次通过即通过 / 只对计时型，R68） | `tests/test_ci_e2e_stub.py::test_retry_policy_covers_exactly_the_timing_scenarios`、`test_run_with_retries_stops_at_the_attempt_cap`、`test_run_with_retries_never_retries_a_semantic_scenario` |
-| 7 天（新鲜度） | `--max-lag-days` 的默认值 |
+| 7 天（新鲜度） | `--max-lag-days` 的默认值 + `tests/test_judgement_flip_points.py::test_freshness_flips_within_one_microsecond`（7 天 ±1 微秒） |
+| 留一法基线（#4） | `tests/test_judgement_flip_points.py::test_leave_one_out_baseline_drives_the_flip_point`（从计数出发算基线，再判翻转） |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
 
 ## 7. 翻转点（R69）
@@ -144,9 +145,9 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 1 | 政策上限 8 个百分点 | n=255, k=28 | k=29 | `test_policy_ceiling_flips_between_28_and_29_failures` |
 | 2 | 合并层回归 +3 | 基线 10/255, k=25 | k=26 | `test_merged_regression_margin_flips_at_26_failures` |
 | 3 | 逐 workflow +10 | character 15/79 | 16/79 | `test_per_workflow_regression_margin_flips_at_the_registered_k` |
-| 4 | 留一法 +10 | 基线 0/30, k=3/10 | 4/10 | `test_leave_one_out_margin_flips_at_four_failures` |
+| 4 | 留一法 +10 | 基线 0/30, k=3/10 | 4/10 | `test_leave_one_out_margin_flips_at_four_failures`、`test_leave_one_out_baseline_drives_the_flip_point` |
 | 5 | 样本量 margin 10 | 零失败 29 次尝试 | 28 次 | `test_sample_size_margin_flips_between_28_and_29_attempts` |
-| 6 | 新鲜度 7 天 | 滞后 7.0 天 | 7.1 天 | `test_freshness_flips_at_the_registered_days`、`test_freshness_default_is_the_registered_days` |
+| 6 | 新鲜度 7 天 | 滞后 7.0 天 | 7.1 天 | `test_freshness_flips_at_the_registered_days`、`test_freshness_default_is_the_registered_days`、`test_freshness_flips_within_one_microsecond` |
 | 8 | 形状 −0.05 / +0.30 | −0.050 / +0.300 | −0.051 / +0.301 | `test_shape_tolerances_flip_on_both_sides` |
 | 9 | 幅度 0.7s | extra 0.700s | 0.699s | `test_backoff_amplitude_flips_at_the_registered_minimum` |
 
@@ -161,3 +162,24 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 - **0.4s**（形状的相邻配置差）由场景配置决定，`RisingShapeSegmentBudget.judgeable`
   已把它写成不等式；
 - **3 次**（连续 `undetermined` 的提示阈值）不改变任何退出码，不是判据。
+
+### 7.1 边界的两种「不是常量」（R70）
+
+§7 的每一行钉的都是「阈值 = 登记的这个数」。但那句话有两种不成立的方式，而
+R69 的用例只挡住了第一种的一半：
+
+| 缺口 | 改法 | R69 的用例看得见吗 | R70 的补丁 |
+|---|---|---|---|
+| **基线不是常量** | 留一法基线换成「含自己的全局合计」（R56 修掉的自指错误），或给留一法单独乘 2 | 看不见：`_rate_verdict` 收到的 `baseline_pct` 是测试里写死的 `0.0` | `test_leave_one_out_baseline_drives_the_flip_point` 从 `{workflow: (attempts, failed)}` 出发，走 `per_workflow_baselines` → `per_workflow_rate_report` 全程 |
+| **时间算术的粒度** | `total_seconds() / 86400` 改成 `.days` 或四舍五入到 0.1 天 | 看不见：整点时间戳下「7.0 天」恰好可表示 | `test_freshness_flips_within_one_microsecond` 用 7 天 ±1 微秒 |
+
+两条的共同点：**常量一个都没动、比较符也是对的**，错的是「那个数是怎么来的」。
+翻转点只能证明「比较里用的是这个阈值」；阈值本身若是另一个量的函数，还得把那个
+量一起钉进来——否则「防止有人换一套阈值」这句话没有依据（R69 §2 的同型教训）。
+
+留一法那条尤其要连起来看：基线**不随 target 自己的失败数变化**（`0/30` 在 k=3 与
+k=4 时逐位相同），才是 k=4 还能翻得过去的原因；换回全局合计，基线自己从 7.5%
+涨到 10%，阈值跟着涨到 20%，40% 的观测就再也说不出口了。
+
+§7 的用例登记从 R70 起是**多条**：覆盖守卫要求 `_FLIP_POINT_TESTS` 里每一个
+用例名都必须真实存在且出现在本页，未登记的翻转点用例同样算不通过。

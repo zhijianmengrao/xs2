@@ -32,17 +32,20 @@ from scripts import e2e_workflow_stub as e2e
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = REPO_ROOT / "docs" / "JUDGEMENT_LEDGER.md"
 
-# 登记页 §2 的判据编号 → 钉住它翻转点的用例名。
+# 登记页 §2 的判据编号 → 钉住它翻转点的用例名（一条判据可以有多条，R70 起）。
 # 没有数字容忍量的行（#7 覆盖度、#10 算术失败）不在此列，由覆盖守卫逐条核对。
 _FLIP_POINT_TESTS = {
-    "1": "test_policy_ceiling_flips_between_28_and_29_failures",
-    "2": "test_merged_regression_margin_flips_at_26_failures",
-    "3": "test_per_workflow_regression_margin_flips_at_the_registered_k",
-    "4": "test_leave_one_out_margin_flips_at_four_failures",
-    "5": "test_sample_size_margin_flips_between_28_and_29_attempts",
-    "6": "test_freshness_flips_at_the_registered_days",
-    "8": "test_shape_tolerances_flip_on_both_sides",
-    "9": "test_backoff_amplitude_flips_at_the_registered_minimum",
+    "1": ("test_policy_ceiling_flips_between_28_and_29_failures",),
+    "2": ("test_merged_regression_margin_flips_at_26_failures",),
+    "3": ("test_per_workflow_regression_margin_flips_at_the_registered_k",),
+    "4": ("test_leave_one_out_margin_flips_at_four_failures",
+          "test_leave_one_out_baseline_drives_the_flip_point"),
+    "5": ("test_sample_size_margin_flips_between_28_and_29_attempts",),
+    "6": ("test_freshness_flips_at_the_registered_days",
+          "test_freshness_default_is_the_registered_days",
+          "test_freshness_flips_within_one_microsecond"),
+    "8": ("test_shape_tolerances_flip_on_both_sides",),
+    "9": ("test_backoff_amplitude_flips_at_the_registered_minimum",),
 }
 
 
@@ -98,6 +101,44 @@ def test_leave_one_out_margin_flips_at_four_failures() -> None:
         10, 3, baseline_pct, gate.DEFAULT_MARGIN)[0] == "undetermined"
     assert gate._rate_verdict(
         10, 4, baseline_pct, gate.DEFAULT_MARGIN)[0] == "exceeds"
+
+
+def test_leave_one_out_baseline_drives_the_flip_point() -> None:
+    """同一条翻转点，这次基线必须由 ``per_workflow_baselines`` **算出来**（R70）。
+
+    上一条用例把 ``baseline_pct = 0.0`` 当字面量传进 ``_rate_verdict``，它钉的是
+    「阈值 = 基线 + 10」这一步；但基线本身怎么来的它完全看不见。于是两种改法都能
+    在它面前保持全绿：把基线换成**含自己的全局合计**（R56 修掉的那个自指错误），
+    或者给留一法这一条路单独换一套阈值。
+
+    这里从 ``{workflow: (attempts, failed)}`` 出发，走完整的
+    ``per_workflow_baselines`` → ``per_workflow_rate_report`` 路径，
+    让「基线」与「翻转点」咬在同一处：
+
+    - rest 30 次零失败 ⇒ target 的留一法基线是 0/30 = 0.0%（**不含自己**）；
+    - target 10 次里 3 次失败判不了、4 次（40%）判超出。
+
+    两个改法都会在这里掉：换全局合计时基线变成 4/40 = 10%（阈值 20%），
+    4 次失败的 95% 下界 12.2% 仍在阈值之下，``exceeds`` 出不来；
+    留一法单独乘 2 时阈值 20%，同样说不出 ``exceeds``。
+    """
+    rest = {"attempts": 30, "failed": 0}
+    at_3 = {"rest": rest, "target": {"attempts": 10, "failed": 3}}
+    at_4 = {"rest": rest, "target": {"attempts": 10, "failed": 4}}
+
+    # 基线取自代码算出来的值，且**不随 target 自己的失败数变化**——这正是
+    # 「留一法」三个字的意思，也是 k=4 还能翻得过去的原因。
+    assert gate.per_workflow_baselines(at_3)["target"] == pytest.approx(0.0)
+    assert gate.per_workflow_baselines(at_4)["target"] == pytest.approx(0.0)
+    assert (gate.per_workflow_baselines(at_4)["target"]
+            == gate.per_workflow_baselines(at_3)["target"])
+
+    report_3 = gate.per_workflow_rate_report(at_3, gate.DEFAULT_MARGIN)
+    report_4 = gate.per_workflow_rate_report(at_4, gate.DEFAULT_MARGIN)
+    assert report_3["target"]["verdict"] == "undetermined", report_3["target"]["detail"]
+    assert report_4["target"]["verdict"] == "exceeds", report_4["target"]["detail"]
+    # 明细里的基线必须是算出来的那个 0.00%，而不是被写死在报告里的数。
+    assert "基线 0.00%" in report_4["target"]["detail"], report_4["target"]["detail"]
 
 
 # ------------------------------------------------ #5 样本量 margin 10 个百分点
@@ -159,6 +200,29 @@ def test_freshness_default_is_the_registered_days(monkeypatch, tmp_path: Path) -
     assert gate.main() == gate.EXIT_STALE
 
 
+def test_freshness_flips_within_one_microsecond(tmp_path: Path) -> None:
+    """边界落在 1 微秒上：7 天 −1µs 通过、7 天 +1µs 过期（R70）。
+
+    上一条用的是整点时间戳，「7.0 天」在整秒世界里恰好可表示。真正容易出错的
+    不是比较符，而是**时间算术的粒度**：把 ``total_seconds() / 86400`` 改成
+    ``(latest - exported).days``、或者把天数四舍五入到 0.1 天，7 天加一秒都还能
+    判成「尚新」——而这恰好是真实重导会落到的位置（每一次重导滞后都会往整数
+    天上贴）。这里用微秒把「滞后是按秒算的、边界是精确的」钉死。
+    """
+    exported = "2026-01-01T00:00:00+00:00"
+    snap = tmp_path / "snap"
+    _write_snapshot(snap, exported)
+    below = tmp_path / "below"
+    _write_real_run(below, "2026-01-07T23:59:59.999999+00:00")   # 7 天 − 1 微秒
+    above = tmp_path / "above"
+    _write_real_run(above, "2026-01-08T00:00:00.000001+00:00")   # 7 天 + 1 微秒
+
+    assert gate.check_stale(
+        snap, below, gate.DEFAULT_MAX_LAG_DAYS)[0] == gate.EXIT_OK
+    assert gate.check_stale(
+        snap, above, gate.DEFAULT_MAX_LAG_DAYS)[0] == gate.EXIT_STALE
+
+
 # ------------------------------------------------ #8 e2e 形状（欠睡 0.05 / 超睡 0.30）
 
 def test_shape_tolerances_flip_on_both_sides() -> None:
@@ -216,8 +280,9 @@ def test_every_numeric_tolerance_has_a_registered_flip_point() -> None:
         f"登记页上有数字但没有翻转点的判据：{sorted(set(numeric) - set(_FLIP_POINT_TESTS))}；"
         f"登记了翻转点但登记页没有数字的判据：{sorted(set(_FLIP_POINT_TESTS) - set(numeric))}")
     spread = LEDGER.read_text(encoding="utf-8")
-    for judgement_id, test_name in _FLIP_POINT_TESTS.items():
-        assert callable(globals().get(test_name)), (
-            f"判据 #{judgement_id} 登记的翻转点用例 {test_name} 不存在")
-        assert test_name in spread, (
-            f"判据 #{judgement_id} 的翻转点用例 {test_name} 没有写进登记页 §7")
+    for judgement_id, test_names in _FLIP_POINT_TESTS.items():
+        for test_name in test_names:
+            assert callable(globals().get(test_name)), (
+                f"判据 #{judgement_id} 登记的翻转点用例 {test_name} 不存在")
+            assert test_name in spread, (
+                f"判据 #{judgement_id} 的翻转点用例 {test_name} 没有写进登记页 §7")
