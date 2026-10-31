@@ -150,4 +150,28 @@ High `2251+28` = 2279。
 
 ## 10. 推送与 CI 核对
 
-（待推送后补记）
+推送 `4b2ed03`（脚本 + 用例 + ci.yml + 登记页 + 交接文档 + PROJECT_INFO 条目，
+**一次** `git push`，`head_sha` 只产生一个 run）。
+
+| run | 触发 commit | 结果 |
+|---|---|---|
+| **41186333369** | `4b2ed03` | 五 job 全部 `success`，**一次通过、无重跑**（08:52:05 → 08:57:37，约 5m32s） |
+| — | `Desktop Windows` | **未触发**：paths 过滤不含 `scripts/`、`tests/`、`docs/`、`.github/`（与 R66 的触发形成对照） |
+
+| 项 | 实证（下载日志解码后逐字比对，不是推断） |
+|---|---|
+| 五个 job | backend / windows-backend / frontend / container-config / container-build 全部 `conclusion=success` |
+| 用例数（ubuntu） | `2215 passed, 64 skipped, 1 warning in 92.27s` = **2279** |
+| 用例数（windows） | `2250 passed, 29 skipped, 1 warning in 241.92s` = **2279** |
+| 四面一致 | 本机 Low `2166+113` = 2279、本机 High `2251+28` = 2279、ubuntu `2215+64` = 2279、windows `2250+29` = 2279 |
+| 新校准步骤真跑 | ubuntu 日志里 `逐 workflow 提前量校准（只读，**不作判定**…）` 整段输出 + `OK  逐 workflow 提前量已复算（本步不作判定）`；数字与本机逐字相同（character 16/18/提前 2、mvp 15/20/提前 5、反事实 9/9 + `undetermined（说不出 normal）`） |
+| 汇总行 | 两个 runner 都打印 `逐 workflow 回归（基线=历史上一轮，阈值=基线+10；合并层阈值=基线+3）…`，且结尾带「两层的阈值增量不是同一个量：逐 workflow 10…、合并层 3…」 |
+| 校准步骤**没有**进 windows | windows 日志里 `calibrate-lead-time` 只出现 **1** 次，且是上面那条汇总行末尾的「用 --calibrate-lead-time 复算」——不是步骤执行（该 job 的中文是 `\uXXXX` 转义，解码后确认） |
+| e2e | `[e2e] 10/10 场景通过`（只 ubuntu 有；windows 日志里 `e2e_workflow_stub` 出现 **0** 次） |
+| 前端 | 8 个 `# pass` 块合计 **490**，8 个 `# fail` 块合计 **0** |
+| 容器 | `container-config` 与 `container-build` 均 `success` |
+
+**取证方法**：与 R66 相同——`actions/jobs/<id>/logs` 302 到 blob 主机后整段 GET 会
+超时，先 `-r 0-0` 读 `Content-Range` 得总长（backend 137719、windows 76986、
+frontend 222187），再按 48KB 分块 Range 拼接；三份实到字节数与总长逐字节相等。
+
