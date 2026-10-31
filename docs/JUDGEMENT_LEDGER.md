@@ -15,6 +15,7 @@
 | **精度型** | `区间半宽 ≤ margin` | 百分点 | 样本太薄 → 判不了（不是不合格）；`p → 0/1` 两端退化 | 二项分布精确界（Clopper-Pearson） |
 | **政策型** | `区间下界 > 上限` | 无（阈值即政策） | 看不出原因；与其它判据共用退出码 1 | 无预算，只有阈值 |
 | **时钟型** | `滞后 ≤ N 天` | 天 | 依赖墙钟与「最新 run」的取法 | `N` 天 |
+| **环境型** | `签名匹配 或 (模块 ∈ 已知集合 且 探针复现签名)` | 无（不是容忍量） | 真实缺陷带同一签名时会被吞；探针每进程只跑一次 | 无预算；只有「签名 + 集合」两个自变量 |
 
 ## 2. 逐条登记
 
@@ -30,6 +31,7 @@
 | 8 | e2e 退避形状（两/三/四段） | `e2e_workflow_stub.py::_rising_shape_violations` | 偏移型（逐段、非对称） | 欠睡 0.05s / 超睡 0.30s（**每次尝试**）；判红重跑 1 次，任一次通过即通过（R68） | 容差 < 最小相邻配置差 0.4s（`judgeable`） | 容差 ≥ 相邻差时分不出「下标错一位」；容差内看不出来；**两次都判红才算红** | 1 |
 | 9 | e2e 退避幅度（单点） | `scenario_retry_backoff_is_honoured` | 偏移型（差分） | 多出 ≥ 0.7s（配置 1.2s）；同样在重跑集合里（R68） | 两次运行相减，绕开固定开销 | 只判一个值，对形状失明 | 1 |
 | 10 | 判据算术失败 | `_run_judgement`（六个派发分支） | 不是判据 | — | 捕获 `ArithmeticError` / `ValueError` | 只把「算不下去」与「判了不合格」分开 | 8 |
+| 11 | msys 传输不可用 → skip | `tests/conftest.py::_msys_skip_applies`（`_git_transport_blocked_probe` + `pytest_runtest_makereport`） | 环境型 | 无 | 失败调用含 `NtCreateDirectoryObject` 签名，**或** 模块 ∈ 6 个传输模块且探针 clone 复现同一签名 | 真实缺陷若文本里带同签名会被误归因；探针每进程只跑一次；6 个模块内无签名的失败一律转 skip（见 §8） | — |
 
 ## 3. R63 的预算式能迁移到哪
 
@@ -130,6 +132,12 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 7 天（新鲜度） | `--max-lag-days` 的默认值 + `tests/test_judgement_flip_points.py::test_freshness_flips_within_one_microsecond`（7 天 ±1 微秒） |
 | 留一法基线（#4） | `tests/test_judgement_flip_points.py::test_leave_one_out_baseline_drives_the_flip_point`（从计数出发算基线，再判翻转） |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
+| msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
+| 「签名 / 模块 / 探针」真值表（R71） | `tests/test_msys_attribution.py::test_skip_truth_table_has_exactly_two_independent_variables` |
+| 「无签名 ≠ 环境问题」（R71） | `tests/test_msys_attribution.py::test_probe_flips_on_the_msys_signature_only` |
+| 允许转 skip 的 6 个模块（R71） | `tests/test_msys_attribution.py::test_skip_surface_is_exactly_the_six_transport_modules` |
+| 归因用例的失败不被吞（R71） | `tests/test_msys_attribution.py::test_attribution_failures_are_never_converted_into_skips` |
+| 113 skips 的四行实测矩阵（R70 §6.1） | 本页 §8：High 2189/113 与**真降** Low 2189/113 逐字相同 |
 
 ## 7. 翻转点（R69）
 
@@ -151,8 +159,9 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 8 | 形状 −0.05 / +0.30 | −0.050 / +0.300 | −0.051 / +0.301 | `test_shape_tolerances_flip_on_both_sides` |
 | 9 | 幅度 0.7s | extra 0.700s | 0.699s | `test_backoff_amplitude_flips_at_the_registered_minimum` |
 
-#7（覆盖度）与 #10（判据算术失败）没有数字容忍量：#7 判的是集合关系，#10 不是
-判据而是「算不下去」的分流。覆盖守卫
+#7（覆盖度）、#10（判据算术失败）与 #11（环境归因）没有数字容忍量：#7 判的是
+集合关系，#10 不是判据而是「算不下去」的分流，#11 判的是**系统签名字符串是否
+出现**——边界不是数，是三格真值表（§8）。覆盖守卫
 `test_every_numeric_tolerance_has_a_registered_flip_point` 保证「登记页出现数字」
 与「登记了翻转点」互为充要。
 
@@ -183,3 +192,45 @@ k=4 时逐位相同），才是 k=4 还能翻得过去的原因；换回全局�
 
 §7 的用例登记从 R70 起是**多条**：覆盖守卫要求 `_FLIP_POINT_TESTS` 里每一个
 用例名都必须真实存在且出现在本页，未登记的翻转点用例同样算不通过。
+
+## 8. 环境归因：skip 判据的自变量（R71）
+
+R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。把四行实测矩阵
+原样登记在这里，作为「113 skips 是什么的函数」的唯一依据：
+
+| 启动器 | 令牌 | probe（`_git_transport_blocked_probe`） | 说明 |
+|---|---|---|---|
+| Git Bash | High | `True` | 新起的 `sh.exe` 挂不上 `\BaseNamedObjects\msys-2.0S…`（`NtCreateDirectoryObject: 0xC0000022`） |
+| cmd / PowerShell | High | `True` | 同上；不是 Git Bash 特有 |
+| 自降令牌（进程内回读 `S-1-16-4096`） | Low | `True` | 与 High 同 profile |
+| 直接在 Git Bash 里 `git clone` | High | 成功 | bash 自己早已挂接该对象 |
+
+全量套件两次运行同为 **2189 passed / 113 skipped / 0 failed**（High 123.95s、
+Low 124.94s）。所以：
+
+- **113 skips 不是令牌完整性级别的函数。** 就「转 skip」这条判据而言，判别变量
+  是探针是否复现 `NtCreateDirectoryObject` 签名——也就是本会话能否挂接那个共享对象。
+- R17 的结论（Low 被拒）在**那次会话**是实测事实，但它不是通用归因；R70 起文案
+  只写机制（「cannot attach this session's shared msys-2.0 object」），不写 IL。
+
+判据本身（`_msys_skip_applies`）只有两个自变量：
+
+| 失败调用带签名 | 模块 ∈ 6 个传输模块 | 探针复现签名 | 结果 |
+|---|---|---|---|
+| 是 | 任意 | 不查 | **转 skip**（识别环境，不识别模块） |
+| 否 | 是 | 是 | **转 skip**（模块内失败无法归因） |
+| 否 | 是 | 否 | 照常失败 |
+| 否 | 否 | 任意 | 照常失败 |
+
+**登记这个判据的同时必须登记它的代价**：skip 不等于通过。113 条用例在本会话
+**没有执行**；上表只说明「那批失败带 msys 签名或落在传输模块内」，不说明这些
+用例的断言成立。复现 28-skip profile 需要能挂接共享对象的会话状态——R70 §7-1
+的根因未追查，R71 按用户拍定只改归因措辞、不追根因（B1）。
+
+**判据还必须对自己的失败免疫**：R71 第一次变异验证时，文案用例判红，断言消息里
+带着 `NtCreateDirectoryObject`，钩子按签名把它转成 skip——输出变成「全绿」，判据
+发现了错误却被伪装成「环境不可用」。修法是 `no_msys_skip` 标记（`pyproject.toml`
+登记）：带标记的用例失败时钩子原样返回。这样「判据判红」与「环境真坏」在输出里
+永远可区分。
+
+钉住它的五条用例见 §6（`tests/test_msys_attribution.py`）。
