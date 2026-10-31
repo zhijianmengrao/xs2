@@ -16,11 +16,16 @@
 最后一条是**覆盖守卫**：登记页 §2 的容忍量列里出现数字的行，必须在本文件登记
 一个翻转点用例，且用例名必须出现在登记页 §7——「有数字」与「有翻转点」不能
 各写各的。
+
+R72 补的是这些翻转点的**前提**：#4 的「元数据漂移 → 退出 4」「无样本 → 退出 3」
+两条路径，R56 的用例各测各的、与这里用的不是同一组计数。本文件用 #4 的同一组
+计数把门与翻转点绑在一起——翻转点不仅要翻得动，还得真的能被走到。
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -39,7 +44,10 @@ _FLIP_POINT_TESTS = {
     "2": ("test_merged_regression_margin_flips_at_26_failures",),
     "3": ("test_per_workflow_regression_margin_flips_at_the_registered_k",),
     "4": ("test_leave_one_out_margin_flips_at_four_failures",
-          "test_leave_one_out_baseline_drives_the_flip_point"),
+          "test_leave_one_out_baseline_drives_the_flip_point",
+          "test_leave_one_out_flip_point_through_the_real_gate",
+          "test_metadata_drift_preempts_the_leave_one_out_verdict",
+          "test_no_sample_preempts_the_leave_one_out_verdict"),
     "5": ("test_sample_size_margin_flips_between_28_and_29_attempts",),
     "6": ("test_freshness_flips_at_the_registered_days",
           "test_freshness_default_is_the_registered_days",
@@ -139,6 +147,135 @@ def test_leave_one_out_baseline_drives_the_flip_point() -> None:
     assert report_4["target"]["verdict"] == "exceeds", report_4["target"]["detail"]
     # 明细里的基线必须是算出来的那个 0.00%，而不是被写死在报告里的数。
     assert "基线 0.00%" in report_4["target"]["detail"], report_4["target"]["detail"]
+
+
+# ------------------------------------------------ #4 的退出路径前提（R72）
+
+def _write_rate_snapshot(root: Path, spec: dict[str, tuple[int, int]],
+                         declare_meta: bool = True) -> None:
+    """造一份 ``check_per_workflow_rate`` 真能读到的落盘快照。
+
+    ``spec`` 是 ``{workflow: (attempts, failed)}``，每个 workflow 一个 run，
+    attempt 数就是 attempts。形状与 ``test_live_snapshot_gate.py`` 里的
+    ``_write_per_workflow_snapshot`` 相同；这里保留一份本地副本：``tests/``
+    没有 ``__init__.py``，跨测试模块 import 依赖 pytest 的 prepend 模式，
+    比复制这二十行更脆（与 R70 的 ``_write_snapshot`` 同一取舍）。
+    """
+    per_workflow: dict[str, dict] = {}
+    total_attempts = total_failed = 0
+    for wf_name, (attempts, failed) in spec.items():
+        runs = root / "workflows" / wf_name / "runs"
+        runs.mkdir(parents=True)
+        nodes = []
+        for index in range(attempts):
+            status = "failed" if index < failed else "completed"
+            nodes.append({
+                "node_id": f"n{index}",
+                "status": status,
+                "attempt_history": [{
+                    "attempt_number": 1, "trigger": "initial", "status": status,
+                }],
+            })
+        (runs / "run-x.json").write_text(
+            json.dumps({"run_id": "run-x", "status": "completed",
+                        "node_executions": nodes}), encoding="utf-8")
+        per_workflow[wf_name] = {"runs": 1, "attempts": attempts,
+                                 "failed": failed}
+        total_attempts += attempts
+        total_failed += failed
+    meta: dict = {"totals": {"attempts": total_attempts, "failed": total_failed},
+                  "exported_at": "2026-02-01T00:00:00+00:00"}
+    if declare_meta:
+        meta["per_workflow"] = per_workflow
+    (root / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_leave_one_out_flip_point_through_the_real_gate(tmp_path: Path) -> None:
+    """#4 的翻转点必须能穿过真实入口：落盘快照 → 漂移校验 → 报告 → 退出码。
+
+    R70 的两条用例都停在纯函数层（``_rate_verdict`` / ``per_workflow_baselines``
+    → ``per_workflow_rate_report``），没有任何一条证明磁盘上的计数能走到同一个
+    翻转点。这里用 §7 第 4 行的同一组计数（rest 30/0、target 10 次里 k 次失败）
+    跑 ``check_per_workflow_rate``：k=3 不判失败、k=4 在硬门槛下退出 1；报告
+    模式仍退出 0——开关是唯一的差别。
+    """
+    at_3 = tmp_path / "at-3"
+    _write_rate_snapshot(at_3, {"rest": (30, 0), "target": (10, 3)})
+    code, message = gate.check_per_workflow_rate(
+        at_3, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_OK, message
+    assert "0 个超出" in message, message
+    assert "1 个样本不足无法判定" in message, message
+
+    at_4 = tmp_path / "at-4"
+    _write_rate_snapshot(at_4, {"rest": (30, 0), "target": (10, 4)})
+    code, message = gate.check_per_workflow_rate(
+        at_4, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_GATE_TRIGGERED, message
+    assert "1 个超出" in message, message
+    assert "target" in message, message
+
+    code, message = gate.check_per_workflow_rate(at_4, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_OK, message
+    assert "报告模式" in message, message
+
+
+def test_metadata_drift_preempts_the_leave_one_out_verdict(tmp_path: Path) -> None:
+    """漂移必须说在判决之前：同一份 k=4 快照，元数据改写后只能退出 4。
+
+    R56 的漂移用例用的是「无论如何都判不出超出」的计数，所以「只有判不出时才
+    查漂移」这类改法在它面前全绿——而它会让一个真实失败被一句元数据改写成
+    「判不了」。这里故意用 §7 第 4 行的边界外计数（target 4/10），并把一次失败
+    从 rest 挪进 target 的元数据：全局合计分毫不动（这正是分组校验存在的理由），
+    内容仍是 target 4/10，任何「先判后查」的路径都会说出「超出」。
+    """
+    snap = tmp_path / "snap"
+    _write_rate_snapshot(snap, {"rest": (30, 0), "target": (10, 4)})
+    meta = json.loads((snap / "snapshot-meta.json").read_text(encoding="utf-8"))
+    meta["per_workflow"]["rest"]["failed"] = 1
+    meta["per_workflow"]["target"]["failed"] = 3
+    (snap / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    code, message = gate.check_per_workflow_rate(
+        snap, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_META_DRIFT, message
+    assert "rest" in message and "target" in message, message
+    assert "重导" in message, message
+    assert "超出" not in message, message
+
+
+def test_no_sample_preempts_the_leave_one_out_verdict(tmp_path: Path) -> None:
+    """无样本同样必须先于判决：退出 3 的三条分支都不许说出判决词。
+
+    R56 只测了「缺 ``per_workflow`` 块」一种；这里用 §7 第 4 行的边界外计数
+    把三条分支都对齐一次：缺元数据文件 / 缺块 / 元数据说有但内容为空。否则
+    「元数据里有数就拿来判」这种改法可以让一个空快照判出超出。
+    """
+    missing_meta = tmp_path / "missing-meta"
+    missing_meta.mkdir()
+    code, message = gate.check_per_workflow_rate(
+        missing_meta, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "快照元数据缺失" in message, message
+    assert "超出" not in message, message
+
+    missing_block = tmp_path / "missing-block"
+    _write_rate_snapshot(missing_block, {"rest": (30, 0), "target": (10, 4)},
+                         declare_meta=False)
+    code, message = gate.check_per_workflow_rate(
+        missing_block, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "per_workflow" in message, message
+    assert "超出" not in message, message
+
+    empty_content = tmp_path / "empty-content"
+    _write_rate_snapshot(empty_content, {"rest": (30, 0), "target": (10, 4)})
+    shutil.rmtree(empty_content / "workflows")
+    code, message = gate.check_per_workflow_rate(
+        empty_content, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "没有任何带 run 记录的工作流" in message, message
+    assert "超出" not in message, message
 
 
 # ------------------------------------------------ #5 样本量 margin 10 个百分点
