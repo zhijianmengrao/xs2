@@ -112,4 +112,32 @@ R62 的漂移/无样本用例都落在「判不出回归」的计数上（40/0�
 
 ## 9. 推送与 CI 核对
 
-（推送后补记）
+推送 `9bd3784`（两次提交：`1594ca0` test + `9bd3784` docs；一次 `git push`，
+`8a88fd1..9bd3784`）。**本轮推送通道与 R72 相反**：socks5 10808 端口在监听但
+CONNECT 不通（`000`），直连 `curl` 为 200；但 `git push` 仍报 schannel
+handshake——根因是**全局 `http.proxy` 仍指向这个已失效的 socks5**（上一轮留下
+的配置），裸 `git push` 并不是直连。用 `git -c http.proxy= push` 显式清空代理
+后直连成功。**下一轮先看 `git config --global --get http.proxy`，再看端口。**
+
+| run | 触发 commit | 结果 |
+|---|---|---|
+| **41217328928** | `9bd3784` | 五 job 全部 `success`，一次通过无重跑（15:57:45 → 16:02:30，约 4m45s） |
+| — | Desktop Windows | 未触发（`head_sha=9bd3784…` 下 `total_count=1`） |
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（16:00:28）/ windows-backend（16:02:29）/ frontend（15:58:57）/ container-config（15:57:53）/ container-build（15:58:19）全部 `success` |
+| ubuntu | `2248 passed, 65 skipped, 1 warning in 114.33s` = **2313** |
+| windows | `2284 passed, 29 skipped, 1 warning in 212.82s` = **2313** |
+| 新用例在 CI 真跑 | ubuntu 2245/65 → **2248/65**、windows 2281/29 → **2284/29**（+3） |
+| 校准 / e2e / 前端 / 容器 | 校准 `OK`；`[e2e] 10/10`（仅 ubuntu）；前端 8 块 490/0；容器冒烟通过 |
+
+**三面实测一致**：本机 Low `2200+113` = 2313、ubuntu `2248+65` = 2313、
+windows `2284+29` = 2313。**本机 High 本会话不可得**（进程即 Low），不写第四面。
+
+**取证方法的两个新坑**：①`_r71_ci_logs.py` 的 `_curl` 硬编码
+`--socks5 127.0.0.1:10808`，本轮代理失效后它直接拿空响应去 `json.loads`，
+报的是 `JSONDecodeError` 而不是「代理不通」——下载脚本要先把通道问题与数据
+问题分开报；临时复制成 `_r73_ci_logs.py`（去掉 socks5）后五份日志正常。
+②`git push` 的失败信息（schannel handshake）不会提示「配置里的代理已死」，
+看到端口在监听不等于通道可用。
