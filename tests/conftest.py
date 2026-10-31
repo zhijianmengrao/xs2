@@ -77,13 +77,18 @@ _CAN_CREATE_SYMLINK = _can_create_symlink()
 # --- Git-for-Windows msys transport (Windows) -----------------------------
 # git's clone/fetch/push/ls-remote transports exec `Git\usr\bin\sh.exe`. msys2
 # first opens the shared `\BaseNamedObjects\msys-2.0*` object left by an earlier
-# msys process; a process running at **Low** integrity cannot attach it, and the
-# child dies at boot with `NtCreateDirectoryObject(...): 0xC0000022`.
+# msys process; when this session cannot attach that object, the child dies at
+# boot with `NtCreateDirectoryObject(...): 0xC0000022`.
 #
-# That is session/machine state, not project code: the identical suite is green
-# under a High-IL interpreter (docs/PROJECT_INFO.md platform note 9). Converting
-# exactly those failures into skips keeps `pytest -q` meaningful — a genuine git
-# defect carries no msys signature and still fails loudly. Native git verbs
+# **Attachability is session state — it is not a function of the token's
+# integrity level** (R70 §6.1). In R17's session a Low-IL interpreter was
+# blocked while High-IL worked; in R70's session High-IL was blocked too — the
+# suite reported 2189 passed / 113 skipped both at High and after really dropping
+# the token to S-1-16-4096. The skip reason therefore names the mechanism only
+# ("cannot attach the shared object") and never an integrity level;
+# `tests/test_msys_attribution.py` pins that wording (R71). Converting exactly
+# those failures into skips keeps `pytest -q` meaningful — a genuine git defect
+# carries no msys signature and still fails loudly. Native git verbs
 # (init/add/commit/rev-parse) are unaffected and keep running.
 _MSYS_BOOT_FAILURE = "NtCreateDirectoryObject"
 
@@ -161,24 +166,53 @@ def _msys_boot_failure(call) -> bool:
     return _MSYS_BOOT_FAILURE in "\n".join(parts)
 
 
+def _msys_skip_applies(signature_hit: bool, module: str, transport_blocked: bool) -> bool:
+    """转 skip 的判据：msys 签名，或「传输模块内 + 探针复现同一签名」。
+
+    只看签名与本会话的探测结果，**不看令牌完整性级别**（R70 §6.1：High 与
+    真降后的 Low 同为 2189/113）。``tests/test_msys_attribution.py`` 用真值表
+    把这条判据的四种组合逐格钉住。
+    """
+    return signature_hit or (module in _GIT_TRANSPORT_MODULES and transport_blocked)
+
+
+def _msys_skip_reason(signature_hit: bool) -> str:
+    """Skip 归因文案：只描述可复现的机制，不断言令牌完整性级别（R71）。
+
+    R70 §6.1 实测：High 令牌与**真降到** ``S-1-16-4096`` 的令牌同为
+    2189 passed / 113 skipped——判别变量是本会话能否挂接
+    ``\\BaseNamedObjects\\msys-2.0*``，不是令牌 IL。旧文案
+    （"under this Low-integrity token"）把 High 也会发生的情况说成 Low 造成，
+    等于让测试输出替环境下结论。文案里刻意不出现 "integrity"：
+    ``tests/test_msys_attribution.py`` 以「不含该词」为判据。
+    """
+    return (
+        "msys git transport cannot attach this session's shared msys-2.0 object "
+        + ("(matched NtCreateDirectoryObject boot signature)" if signature_hit
+           else "(unattributable inside a git-transport module)")
+        + "; retry from a launcher that can attach \\BaseNamedObjects\\msys-2.0* "
+          "(see PROJECT_INFO.md platform note 9)"
+    )
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item, call):
     """Turn the environment-only msys boot failure into a skip, never other errors."""
     report = yield
     if not report.failed:
         return report
+    if item.get_closest_marker("no_msys_skip"):
+        # 判归因本身的用例：把它的失败转成 skip 等于让判据自证。R71 实测过这个
+        # 坑——文案用例一旦判红，断言消息里带着 `NtCreateDirectoryObject`，
+        # 本钩子会把「判据发现了错误」吞成「环境不可用」。
+        return report
     signature_hit = _msys_boot_failure(call)
     module = pathlib.Path(str(item.fspath)).stem
     transport_blocked = module in _GIT_TRANSPORT_MODULES and _git_transport_blocked_probe()
-    if not (signature_hit or transport_blocked):
+    if not _msys_skip_applies(signature_hit, module, transport_blocked):
         return report
     report.outcome = "skipped"
-    reason = (
-        "msys git transport cannot boot under this Low-integrity token "
-        + ("(matched msys boot signature)" if signature_hit
-           else "(unattributable inside a git-transport module)")
-        + "; rerun under a High-IL interpreter. See PROJECT_INFO.md platform note 9."
-    )
+    reason = _msys_skip_reason(signature_hit)
     # pytest 的折叠 skip 报告要求 (path, lineno, reason) 三元组。
     report.longrepr = (str(item.path), item.location[1], reason)
     return report
