@@ -126,4 +126,27 @@ job，`container-build` 也会重新构建。
 
 ## 9. 推送与 CI 核对
 
-（推送后补记）
+推送 `6eda42d`（两次提交：`51d80d4` fix + `6eda42d` docs；一次
+`git -c http.proxy= push`，`bca0059..6eda42d`）。全局 `http.proxy` 仍指向失效的
+socks5，清空后直连成功（R73 §9 的发现继续成立）。
+
+| run | commit | 结果 |
+|---|---|---|
+| **41219212142** | `6eda42d` | 五 job 全部 `success`，一次通过（16:20:30 → 16:25:28，约 4m58s） |
+| — | Desktop Windows | 未触发（`head_sha=6eda42d…` 下 `total_count=1`） |
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（16:23:03）/ windows-backend（16:25:27）/ frontend（16:22:03）/ container-config（16:20:39）/ container-build（16:21:10）全部 `success` |
+| ubuntu | `2261 passed, 65 skipped, 1 warning in 109.48s` = **2326** |
+| windows | `2297 passed, 29 skipped, 1 warning in 223.18s` = **2326** |
+| 新用例在 CI 真跑 | ubuntu 2255/65 → **2261/65**、windows 2291/29 → **2297/29**（+6） |
+| e2e / metrics | `[e2e] 10/10`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| 前端 / 容器 | 前端 8 块 490/0；`容器镜像冒烟全部通过` |
+
+**三面实测一致**：本机 Low `2213+113` = 2326、ubuntu `2261+65` = 2326、
+windows `2297+29` = 2326。**本机 High 本会话不可得**（进程即 Low），不写第四面。
+
+**本轮的特殊点**：闸门脚本 md5 变了（`7a329d3a…` → `1d0e0ac0…`），
+`container-build` 重新构建并通过冒烟——这不是零生产改动轮，CI 全量仍然
+一次通过。
