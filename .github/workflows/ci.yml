@@ -176,6 +176,25 @@ jobs:
           fi
           echo "OK  逐 workflow 回归判据双向生效：真实快照不判回归，全挂快照的 wf-bad 触发 1"
 
+      # 逐 workflow 提前量（R67）：把 R62 §2 的「提前 2 次 / 5 次」变成每次
+      # CI 都会复算的一行日志。**这不是一道闸门**——它不作判定，退出 0 只表示
+      # 「算出来了」；因此只在 ubuntu 跑一份，两个 runner 的共同覆盖由
+      # tests/test_live_snapshot_gate.py 的不变量用例承担。
+      # 参数必须与两个真判据同参：--margin 10 = 逐 workflow 层的阈值增量
+      # （同时也是基线精度余量）、--regression-margin 3 = 合并层。哪边漂了，
+      # 这张表描述的就是另一套判据——由 tests 里的同参用例钉住。
+      - name: Snapshot per-workflow lead-time calibration
+        run: |
+          snapshot=tests/fixtures/live_snapshot
+          code=0
+          python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
+            --margin 10 --regression-margin 3 --data-dir "$snapshot" || code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "::error::提前量校准算不出来，判 $code（3=无样本 4=元数据漂移 8=判据算术失败·未判定）"
+            exit "$code"
+          fi
+          echo "OK  逐 workflow 提前量已复算（本步不作判定）"
+
       # 快照样本量（R51）：前三步都在判「这个数字合不合格」，没有一步判
       # 「这个数字的精度够不够当基线」。快照只有 14 次尝试、1 次失败时，实测
       # 7.1% 只是粗估——重导一次就可能变 0% 或 21%，阈值跟着漂。

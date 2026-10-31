@@ -77,12 +77,15 @@ def _live_gate_step() -> dict:
     R59 又加了一步 ``--fail-on-regression``（同样是默认判定模式、同样不带
     ``--check-*``），所以再按完整开关 token 把它排除——与 R58 对
     ``--check-per-workflow`` / ``--check-per-workflow-rate`` 的处理同一纪律。
+    R67 的 ``--calibrate-lead-time`` 同样不带 ``--check-*``，但它是**校准**
+    而不是判据（没有判定力），一并按 token 排除。
     """
     hits = [
         s for s in _backend_steps()
         if "check_live_snapshot_gate.py" in str(s.get("run", ""))
         and "--check-" not in str(s.get("run", ""))
         and not _has_flag(str(s.get("run", "")), "--fail-on-regression")
+        and not _has_flag(str(s.get("run", "")), "--calibrate-lead-time")
     ]
     assert len(hits) == 1, (
         "ci.yml 的 backend job 必须且只能有一处调用失败率闸门（不带 --check-*）"
@@ -2530,6 +2533,8 @@ _GATE_MODE_CODES = {
     "--check-per-workflow-rate": {"1", "3", "4"},
     "--check-per-workflow-regression": {"1", "3", "4"},
     "--fail-on-regression": {"1", "3", "4"},
+    # 校准不是判据：它没有任何输入会走到 1（「判了且不合格」不存在）。
+    "--calibrate-lead-time": {"3", "4"},
 }
 _DEFAULT_MODE_CODES = {"1", "3", "4"}   # --fail-if-above / 默认判定模式
 
@@ -2577,3 +2582,166 @@ def test_ci_gate_messages_declare_every_exit_code_the_mode_can_return() -> None:
             f"{job}/{name} 的退出码文案漏了 {sorted(missing)}："
             f"声明 {sorted(declared)}，该模式实际可返回 {sorted(expected)}")
 
+
+
+# ------------------------------------------- 提前量命令化（R67）
+#
+# R62 §2 的「提前 2 次 / 5 次」是手算的。R67 把它变成 ``--calibrate-lead-time``：
+# 同一个纯函数、判据自己的算术（``_cp_interval`` / ``_verdict_of_interval`` /
+# ``sample_size_margin_needed``）。下面钉四件事：
+#
+#   1. 表里的数字就是 R62 写过的那两个数——文档 → 命令可复算；
+#   2. 两层阈值增量**不同**（逐 workflow 10 / 合并层 3），R62 的「同一把尺」是错的；
+#   3. 不变量：可判 + 计数不变 ⇒ ``normal``（靠「精度余量 = 变化阈值」保证）；
+#   4. 把增量压到合并层的 3：提前量 2/5 → 9/9，代价是两个可判 workflow 在没有
+#      变化时也只能判 ``undetermined``——这就是默认不压的理由。
+
+_CHARACTER = "xs2-novel-flywheel-character"
+_MVP = "xs2-novel-flywheel-mvp"
+
+
+def _committed_two_rounds():
+    """入库快照的 (上一轮, 当前轮) 计数。"""
+    meta = json.loads(
+        (SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
+    current = live_gate.recompute_per_workflow(SNAPSHOT_ROOT / "workflows")
+    rounds, invalid = live_gate.snapshot_rounds(meta, current)
+    assert invalid == 0, "入库快照的 history 形状失效，提前量无法复算"
+    assert len(rounds) == 2, f"期望两轮历史，实际 {len(rounds)} 轮"
+    return rounds[-2], rounds[-1]
+
+
+def test_lead_time_reproduces_the_r62_table() -> None:
+    """character 提前 2 次、mvp 提前 5 次——R62 §2 那两个数必须复算得出。"""
+    previous, current = _committed_two_rounds()
+    report = live_gate.lead_time_report(
+        previous, current, precision_margin_pct=10.0,
+        per_workflow_delta_pct=10.0, merged_delta_pct=3.0)
+    eligible = sorted(n for n in report if report[n]["eligible"])
+    assert eligible == [_CHARACTER, _MVP], (
+        f"可判集合变了：{eligible}（R62 的 2/9 结论与登记页都依赖它）")
+    assert report[_CHARACTER]["per_workflow_first_red_k"] == 16
+    assert report[_CHARACTER]["merged_first_red_k"] == 18
+    assert report[_CHARACTER]["lead_failures"] == 2
+    assert report[_MVP]["per_workflow_first_red_k"] == 15
+    assert report[_MVP]["merged_first_red_k"] == 20
+    assert report[_MVP]["lead_failures"] == 5
+
+
+def test_lead_time_prints_the_two_thresholds_not_one() -> None:
+    """两层的阈值增量不是同一个量：12.53 / 17.14 vs 6.92（百分点）。
+
+    R62 写过「与合并层同一把尺」，R67 更正：判的是同一个问题，严格程度不同。
+    这 7 个百分点的差正好是「计数不变 ⇒ normal」的充要条件。
+    """
+    previous, current = _committed_two_rounds()
+    report = live_gate.lead_time_report(previous, current, 10.0, 10.0, 3.0)
+    assert report[_CHARACTER]["per_workflow_threshold_pct"] == pytest.approx(
+        12.53, abs=0.01)
+    assert report[_CHARACTER]["merged_threshold_pct"] == pytest.approx(
+        6.92, abs=0.01)
+    assert report[_MVP]["per_workflow_threshold_pct"] == pytest.approx(
+        17.14, abs=0.01)
+    # 同一个 workflow 的两个阈值必须不同——相同才叫「同一把尺」。
+    assert (report[_MVP]["per_workflow_threshold_pct"]
+            != pytest.approx(report[_MVP]["merged_threshold_pct"]))
+
+
+def test_unchanged_counts_are_normal_for_every_eligible_workflow() -> None:
+    """可判 + 计数不变 ⇒ ``normal``：阈值为基线精度余量时这条不变量恒成立。
+
+    算术：可判条件保证基线的 95% 上界 ≤ 基线 + 余量；计数不变时当前区间与
+    基线区间逐位相同，上界自然 ≤ 阈值。所以它不是样本的巧合，而是「精度余量
+    = 变化阈值」的直接推论。谁把两个量拆开，这些断言会先红。
+    """
+    previous, current = _committed_two_rounds()
+    report = live_gate.per_workflow_regression_report(previous, current, 10.0)
+    unchanged_eligible = [n for n in report
+                          if report[n]["eligible"] and report[n]["unchanged"]]
+    assert unchanged_eligible, (
+        "入库快照上应至少有一个「可判且计数不变」的 workflow"
+        "（R62 的样本没有新增，这正是它必须被写成文字的原因）")
+    for name in unchanged_eligible:
+        assert report[name]["verdict"] == "normal", report[name]["reason"]
+
+    # 合成用例覆盖三种典型形状（零失败 / 低失败率 / 中失败率），不依赖快照。
+    for attempts, failed in ((40, 0), (79, 2), (56, 4)):
+        needed = live_gate.sample_size_margin_needed(attempts, failed)
+        assert needed is not None and needed <= 10.0
+        synth = live_gate.per_workflow_regression_report(
+            {"a": (attempts, failed)}, {"a": (attempts, failed)}, 10.0)
+        assert synth["a"]["eligible"] is True
+        assert synth["a"]["verdict"] == "normal", synth["a"]["reason"]
+
+
+def test_lowering_the_workflow_delta_kills_the_normal_voice() -> None:
+    """阈值压到 +3：提前量 9/9，但计数不变的两个 workflow 只能说 undetermined。
+
+    这不是假想的形状：阈值 5.53% 低于 character 基线自己的 95% 上界 7.75%，
+    于是「没有变化」这个事实也证不出来。默认取 10 的理由就在这四个数里。
+    """
+    previous, current = _committed_two_rounds()
+    aligned = live_gate.lead_time_report(previous, current, 10.0, 3.0, 3.0)
+    for name in (_CHARACTER, _MVP):
+        assert aligned[name]["unchanged"] is True
+        assert aligned[name]["current_verdict"] == "undetermined"
+        assert aligned[name]["lead_failures"] == 9
+    assert aligned[_CHARACTER]["per_workflow_first_red_k"] == 9
+    assert aligned[_MVP]["per_workflow_first_red_k"] == 11
+
+
+def test_calibrate_lead_time_mode_says_it_is_not_a_judgement() -> None:
+    """命令的正文必须自证「不作判定」，并把反事实写出来。"""
+    code, message = live_gate.check_lead_time(SNAPSHOT_ROOT, 10.0, 10.0, 3.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "不作判定" in message
+    assert "第 16 次失败开口" in message
+    assert "提前 2 次" in message and "提前 5 次" in message
+    assert "说不出 normal" in message
+    # 它有数可算，所以不能套用「本步没有判定力」那句（那是另一条路径的文案）。
+    assert "本步没有判定力" not in message
+
+
+def test_calibrate_lead_time_cli_is_wired(monkeypatch) -> None:
+    """``main()`` 必须把两个余量都传下去：CLI 直调退出 0。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--calibrate-lead-time",
+        "--margin", "10", "--regression-margin", "3",
+        "--data-dir", str(SNAPSHOT_ROOT)])
+    assert live_gate.main() == live_gate.EXIT_OK
+
+
+def test_calibrate_lead_time_without_history_exits_three(tmp_path: Path) -> None:
+    """没有上一轮就**算不了**：退出 3，且不能冒充「算出一个 0」。"""
+    _rate_snapshot(tmp_path, {"a": (79, 2)})
+    code, message = live_gate.check_lead_time(tmp_path, 10.0, 10.0, 3.0)
+    assert code == live_gate.EXIT_NO_SAMPLE
+    assert "没有可比的上一轮" in message
+    assert "退出 3 表示算不了" in message
+
+
+def test_regression_margin_is_rejected_for_the_per_workflow_mode(monkeypatch) -> None:
+    """逐 workflow 层的阈值必须等于 ``--margin``：放开会造出说不出 normal 的判据。"""
+    import sys
+
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", "--check-per-workflow-regression",
+        "--regression-margin", "3"])
+    with pytest.raises(SystemExit) as excinfo:
+        live_gate.main()
+    assert excinfo.value.code == 2
+
+
+def test_ci_calibration_step_uses_the_same_margins_as_the_judged_gates() -> None:
+    """校准表必须与真判据同参，否则它描述的是另一套判据（R67）。"""
+    steps = _backend_steps()
+    calib = [s for s in steps
+             if _has_flag(str(s.get("run", "")), "--calibrate-lead-time")]
+    assert len(calib) == 1, "ci.yml 的 ubuntu job 必须且只能有一处提前量校准"
+    run = str(calib[0]["run"])
+    assert "--margin 10" in run, "逐 workflow 层的阈值增量必须与判据同为 10"
+    assert "--regression-margin 3" in run, "合并层的增量必须与判据同为 3"
+    # 与两个真判据的对应关系：合并层回归步骤用的是同一个 3。
+    assert "--regression-margin 3" in str(_regression_step("backend")["run"])

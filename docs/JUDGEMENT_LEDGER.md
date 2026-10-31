@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|---|---|
 | 1 | 真实失败率 vs 政策上限 | `check_live_snapshot_gate.py::evaluate`（`--fail-if-above 8`） | 政策型 | 8 个百分点 | 区间下界 > 8 才红 | 阈值是政策，不随数据变；下界宽度由样本量决定 | 1 |
 | 2 | 历史基线回归 | 同上（`--fail-on-regression`） | 偏移型 | 3 个百分点（`REGRESSION_MARGIN`） | 当前 ≥ 基线 + 3 且下界 > 该值 | 一个 workflow 变坏会被其余摊薄（由 #3 补） | 1 |
-| 3 | per-workflow 回归 | `check_per_workflow_regression` | 偏移型 | margin 10（CI 显式给 10） | `eligible` 由 `_failure_rate_precision` 决定 | 基线太薄的 workflow 判不了，且**不判失败** | 1 |
+| 3 | per-workflow 回归 | `check_per_workflow_regression` | 偏移型 | 10 个百分点（`--margin`，**必须同时是基线精度余量**） | 可判 + 计数不变 ⇒ `normal`；阈值 = 基线 + 10 | 阈值小于基线精度时说不出 `normal`（反事实见 §4）；基线太薄判不了 | 1 |
 | 4 | per-workflow 失败率（留一法） | `check_per_workflow_rate` | 偏移型 | margin 10 | 与其余 workflow 的合并基线比 | 默认恒退出 0，只有 `--fail-on-exceeds` 才判 | 1 |
 | 5 | 样本量厚度 | `check_sample_size`（`--check-sample-size`） | 精度型 | margin 10 个百分点 | 95% 半宽 ≤ margin | `p → 0/1` 用单侧界；`n ≤ 4` 有轻微反转（已豁免并钉住） | 7 |
 | 6 | 快照新鲜度 | `check_stale`（`--check-stale`） | 时钟型 | 7 天（`--max-lag-days` 默认） | 滞后 ≤ 7.0 天 | 只读「最新 run 文件」，与内容质量无关 | 5 |
@@ -62,7 +62,42 @@ R65 把这个教训反过来用：既然判据的最后形态是绝对容差，�
 （0.05 / 0.30），而不是让它藏在「比值 ≥ 1.5」里被反推。前者能一眼核对，后者
 要解不等式才知道自己有多少余量。
 
-## 4. 退出码表
+## 4. 提前量：两层不是同一把尺（R67）
+
+R62 §2 报过「逐 workflow 层比合并层早 2 次 / 5 次失败开口」，并把两层写成
+「同一把尺、只是总体不同」。**后半句是错的**（R67 更正）：两层判的是同一个
+问题（变化够不够大），但阈值增量不同——
+
+| 层 | 阈值 | 增量来源 | 入库快照上的具体值 |
+|---|---|---|---|
+| 逐 workflow | 基线 + 10 | `--margin`（同时是基线精度余量） | character 12.53% / mvp 17.14% |
+| 合并层 | 基线 + 3 | `--regression-margin`（`REGRESSION_MARGIN`） | 6.92% |
+
+差 7 个百分点不是随手取的，它是**「计数不变 ⇒ normal」的充要条件**：可判
+（95% 半宽 ≤ 10）保证基线的 95% 上界 ≤ 基线 + 10；两轮计数相同时当前区间
+与基线区间逐位相同，上界自然 ≤ 阈值。把增量压到 3 的结果不是「更严」，而是
+**在没有变化时也说不出 normal**：character 的 95% 上界 7.75% 高于 5.53%、
+mvp 的 14.2% 高于 10.14%，两个可判的 workflow 会整批从「没有回归」变成
+「判不了」。
+
+取舍的量化（同一份快照、同一个函数）：
+
+| 配置 | character 首次开口 | mvp 首次开口 | 提前量 | 计数不变时的判决 |
+|---|---|---|---|---|
+| 增量 10（默认） | 16/79（20.25%） | 15/56（26.79%） | 2 / 5 次 | **normal** |
+| 增量 3（反事实） | 9/79（11.39%） | 11/56（19.64%） | 9 / 9 次 | undetermined |
+
+复算命令（CI 每次都会跑这一条，见 `ci.yml` 的 `Snapshot per-workflow
+lead-time calibration`）：
+
+```bash
+python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
+  --margin 10 --regression-margin 3 --data-dir tests/fixtures/live_snapshot
+```
+
+它是**校准**不是判据：没有输入会让它退出 1，退出 0 只表示「算出来了」。
+
+## 5. 退出码表
 
 | 码 | 含义 | 处置 | 出现在哪些模式 |
 |---|---|---|---|
@@ -78,7 +113,7 @@ R65 把这个教训反过来用：既然判据的最后形态是绝对容差，�
 **1 与 8 必须分开**：1 是「有结论」，8 是「没有结论」。共用退出码时，读日志的
 人会把一次崩溃读成「失败率突破政策」，两种处置（查数据 / 修判据）互相冒充。
 
-## 5. 这一页上的数由谁复核
+## 6. 这一页上的数由谁复核
 
 | 数字 | 钉住它的地方 |
 |---|---|
@@ -87,5 +122,9 @@ R65 把这个教训反过来用：既然判据的最后形态是绝对容差，�
 | 3 个百分点（回归余量） | `tests/test_judgement_ledger.py::test_ledger_pins_the_regression_margin` + `REGRESSION_MARGIN` |
 | 0.05 / 0.30 / 0.4（e2e 形状） | `tests/test_judgement_ledger.py::test_ledger_pins_the_e2e_shape_tolerances`、`tests/test_ci_e2e_stub.py::test_segment_budget_pins_the_two_tolerances` |
 | 10 个百分点（margin 默认） | `--margin` 的默认值（脚本内 10.0），CI 六步显式或隐式使用 |
+| 12.53 / 17.14 / 6.92（§4 的两层阈值） | `tests/test_live_snapshot_gate.py::test_lead_time_prints_the_two_thresholds_not_one` |
+| §4 的 16 / 15 / 18 / 20 / 提前 2 / 5 | `tests/test_live_snapshot_gate.py::test_lead_time_reproduces_the_r62_table` |
+| §4 反事实的 9 / 11 / 提前 9 | `tests/test_live_snapshot_gate.py::test_lowering_the_workflow_delta_kills_the_normal_voice` |
+| 「可判 + 计数不变 ⇒ normal」 | `tests/test_live_snapshot_gate.py::test_unchanged_counts_are_normal_for_every_eligible_workflow` |
 | 7 天（新鲜度） | `--max-lag-days` 的默认值 |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |

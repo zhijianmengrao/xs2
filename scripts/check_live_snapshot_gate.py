@@ -93,6 +93,9 @@ R47 §7-2 记过一个本脚本**结构上判不到**的失效：快照不会自
     # 逐 workflow 判相对上一轮是否回归（R62；只读快照自身，CI 可跑）
     python scripts/check_live_snapshot_gate.py --check-per-workflow-regression
 
+    # 复算逐 workflow 层的「提前量」（R67；只读，不作判定）
+    python scripts/check_live_snapshot_gate.py --calibrate-lead-time
+
 R58 补的是 ``undetermined`` 的**次级信号**：一份快照里判不了是正常的（样本薄），
 但**连续多份快照都判不了**就不再是「这一轮样本薄」，而是「这个 workflow 的
 真实数据量支撑不了逐 workflow 判决」。快照元数据的 ``history`` 块记录最近几次
@@ -136,6 +139,18 @@ R62 把历史基线扩到**逐 workflow**（``--check-per-workflow-regression``�
 它被读成质量结论。判定力由 ``live_snapshot_exceeds`` 反向验证：wf-bad 从
 0/40 跳到 40/40 必须判 1。``undetermined`` 与「可判 0 个」都不判失败，但都要
 在输出里写明「本步没有判定力」，否则又是一个写着在看回归的恒绿步骤。
+
+R67 把 R62 §2 的「提前量」表变成可复算命令（``--calibrate-lead-time``），并
+顺带纠正那一节里一句**会误导**的话：「与合并层同一把尺」。两层用**不同的**
+阈值增量——逐 workflow 是 ``--margin``（默认 10），合并层是
+``--regression-margin``（默认 3）——所以「早 2 次」是跨阈值量出来的，不是
+「同样严格之下早 2 次」。这个差值不是随手取的：逐 workflow 的阈值**必须 ≥
+基线自身的 95% 半宽**，否则「两轮计数完全相同」也会被判 ``undetermined``。
+入库快照上 character 的 95% 上界 7.75% 高于 5.53%（= 2.53% + 3），mvp 的
+14.2% 高于 10.14%——真按 +3 判，这两个可判的 workflow 会从「没有回归」整批
+变成「判不了」。把阈值压到 +3 换来的提前量是 9 次（16→9 / 15→11），代价是
+这一层在真实数据上**永远说不出 normal**。R67 的新增用例把这条不变量钉住：
+可判 + 计数不变 ⇒ 必须判 ``normal``。
 """
 
 from __future__ import annotations
@@ -1167,6 +1182,15 @@ def _baseline_verdict(attempts: int, failed: int,
     百分点）当阈值，当前只要不是零失败就会被判回归，而那个基线根本区分不了
     0% 与 20%。判定用的是 ``_failure_rate_precision``——与 ``--check-sample-size``
     同一把尺，不在这里另发明一个样本量门槛。
+
+    ``margin_pct`` 同时是「精度门槛」与「变化阈值」。这不是省一个参数，而是
+    「计数不变 ⇒ normal」这条不变量的**充要条件**（R67）：阈值 = 基线 + margin，
+    而可判条件保证基线的 95% 上界 ≤ 基线 + margin；两轮计数相同时当前区间与
+    基线区间逐位相同，上界必然 ≤ 阈值。把两个量拆开（精度 10、阈值 3）得到的
+    不是「更严的判据」，而是一个在**没有变化时也说不出 normal** 的判据——
+    可判的 workflow 会整批从「没有回归」变成「判不了」。这条代价由
+    ``--calibrate-lead-time`` 算成具体次数，并由
+    ``tests/test_live_snapshot_gate.py`` 的不变量用例钉住。
     """
     if baseline_attempts <= 0:
         return "undetermined", "历史基线没有尝试，判不了回归"
@@ -1305,10 +1329,15 @@ def per_workflow_regression_report(previous: dict[str, tuple[int, int]],
          "verdict",                            # exceeds / normal / undetermined
          "reason"}                             # 判决理由，报告层直接用
 
-    阈值是「上一轮失败率 + ``margin_pct``」，与合并层 ``_baseline_verdict``
-    同一把尺、同一个三分法，只是把总体换成单个 workflow。``eligible`` 用的
-    是 ``_failure_rate_precision``——与 ``--check-per-workflow`` / ``--sample-size``
-    完全同一把尺，可判集合因此与「精度达标」的那批重合。
+    阈值是「上一轮失败率 + ``margin_pct``」。三分法与合并层 ``_baseline_verdict``
+    相同，但**阈值增量不同**（合并层是 ``--regression-margin``，默认 3；这里是
+    ``--margin``，默认 10）——R62 写过的「同一把尺」是错的（R67 更正）：两层
+    判的是同一个问题（变化够不够大），严格程度却不一样。差 7 个百分点不是
+    随手取的，它是「计数不变 ⇒ normal」的充要条件：阈值必须 ≥ 基线自身的
+    95% 半宽，否则无变化也会判 ``undetermined``（见 ``_baseline_verdict``）。
+    ``eligible`` 用的是 ``_failure_rate_precision``——与 ``--check-per-workflow`` /
+    ``--sample-size`` 完全同一把尺，可判集合因此与「精度达标」的那批重合；
+    而「精度达标」正好保证上面那条不变量的前提成立。
 
     ``unchanged`` 单独给出而不是折进 ``normal``：两轮计数一模一样时判决必然
     是「没有回归」，但那**不是质量结论，是本轮没有新增样本**。把它写成计数，
@@ -1430,7 +1459,8 @@ def check_per_workflow_regression(data_dir: Path,
     ineligible = sorted(n for n in report if not report[n]["eligible"])
 
     summary = (
-        f"逐 workflow 回归（基线=历史上一轮, margin={margin:g}）："
+        f"逐 workflow 回归（基线=历史上一轮，阈值=基线+{margin:g}；"
+        f"合并层阈值=基线+{REGRESSION_MARGIN:g}）："
         f"{len(report)} 个 workflow 里 {len(eligible)} 个可判"
         f"（{len(exceeds)} 个判回归 / {len(normal)} 个没有回归 / "
         f"{len(straddle)} 个区间横跨阈值），{len(ineligible)} 个基线太薄判不了")
@@ -1466,10 +1496,282 @@ def check_per_workflow_regression(data_dir: Path,
         summary += (f"（另有 {invalid_history} 条历史形状无效已跳过，"
                     "基线可能不是紧邻的一轮）")
 
+    # R67：两个阈值增量不是同一个量，必须写进输出。逐 workflow 的增量等于
+    # 基线精度余量，才保证「计数不变 ⇒ normal」可达；合并层的 3 是另一件事
+    # （「变化够不够大」的政策余量）。只写一个数字会让读日志的人以为两层同样
+    # 严格，进而把「提前 2 次」误读成「同样严格下早 2 次」。
+    if eligible:
+        summary += (
+            f"。两层的阈值增量不是同一个量：逐 workflow {margin:g}（= 基线精度"
+            f"余量，保证「计数不变⇒normal」可达）、合并层 {REGRESSION_MARGIN:g}"
+            "（--regression-margin 的默认值）；提前量用 --calibrate-lead-time 复算")
+
     if exceeds:
         summary += "。退出码 1 的来源：逐 workflow 回归（" + "、".join(exceeds) + "）"
         return EXIT_GATE_TRIGGERED, summary
     return EXIT_OK, summary
+
+
+def _first_red_k(attempts: int, baseline_pct: float,
+                 delta_pct: float) -> int | None:
+    """在固定尝试数下，第几次失败会让三分法判 ``exceeds``（R67）。
+
+    「第几次失败开口」= 最小的 ``k``，使 ``k/attempts`` 的 95% 下界高于
+    ``baseline_pct + delta_pct``。只用于校准：它不改任何判决，也不读别的状态。
+    没有这样的 ``k``（阈值高到整段样本都够不着）时返回 ``None``，不返回一个
+    假装能判的哨兵值。
+    """
+    for failed in range(attempts + 1):
+        verdict, _ = _rate_verdict(attempts, failed, baseline_pct, delta_pct)
+        if verdict == "exceeds":
+            return failed
+    return None
+
+
+def lead_time_report(previous: dict[str, tuple[int, int]],
+                     current: dict[str, tuple[int, int]],
+                     precision_margin_pct: float,
+                     per_workflow_delta_pct: float,
+                     merged_delta_pct: float) -> dict[str, dict]:
+    """逐 workflow 层比合并层早多少次失败开口（R67，R62 §2 的可复算版）。
+
+    R62 §2 那张「提前 2 次 / 5 次」的表此前是手算的，而这份仓库的纪律是
+    **文档里的数必须能被判据自己的算术复算**（R63 的教训：文档会替判据吹牛）。
+    这里只用闸门自己的三个零件——``_cp_interval`` / ``_verdict_of_interval`` /
+    ``sample_size_margin_needed``（经 ``_rate_verdict`` 与 ``_failure_rate_precision``）
+    ——不写第二份公式。
+
+    口径固定成「**同样长的样本**」：当前轮的 attempts 保持不变，只在失败次数
+    ``k`` 上从 0 扫到 attempts。比较的是两条判据各自在哪一个 ``k`` 上第一次
+    判 ``exceeds``：
+
+    - 逐 workflow：``k`` 只加在**该 workflow 自己**的计数上，阈值 = 该
+      workflow 上一轮失败率 + ``per_workflow_delta_pct``；
+    - 合并层：``k`` 加进全局合计（其余 workflow 的失败数保持不变），阈值 =
+      上一轮全局失败率 + ``merged_delta_pct``。
+
+    两项的增量**不一样**（R67 更正 R62 的「同一把尺」）：逐 workflow 用的是
+    ``--margin``，合并层用 ``--regression-margin``。原因见
+    ``_baseline_verdict``——逐 workflow 的增量必须不小于基线自身的 95% 半宽，
+    否则「计数不变 ⇒ normal」不成立。
+
+    ``eligible`` 沿用 ``_failure_rate_precision``：基线太薄的 workflow 本层
+    根本不参与，给它算出来的 ``k`` 只是「假如能判」的假设值，报告层必须把
+    它和可判的分开写。覆盖变化（只在一边出现）的 workflow 不可比，单独标记。
+    """
+    previous_total_attempts = sum(a for a, _ in previous.values())
+    previous_total_failed = sum(f for _, f in previous.values())
+    current_total_attempts = sum(a for a, _ in current.values())
+    current_total_failed = sum(f for _, f in current.values())
+    merged_baseline_pct = (
+        previous_total_failed / previous_total_attempts * 100.0
+        if previous_total_attempts else None)
+
+    report: dict[str, dict] = {}
+    for name in sorted(set(previous) | set(current)):
+        prev = previous.get(name)
+        cur = current.get(name)
+        entry: dict = {
+            "comparable": bool(prev is not None and cur is not None),
+            "baseline_attempts": prev[0] if prev else 0,
+            "baseline_failed": prev[1] if prev else 0,
+            "baseline_rate_pct": (prev[1] / prev[0] * 100.0
+                                  if prev and prev[0] else None),
+            "attempts": cur[0] if cur else 0,
+            "failed": cur[1] if cur else 0,
+            "unchanged": bool(prev is not None and cur is not None and prev == cur),
+            "precision_needed_pct": None,
+            "eligible": False,
+            "per_workflow_threshold_pct": None,
+            "per_workflow_first_red_k": None,
+            "merged_threshold_pct": None,
+            "merged_first_red_k": None,
+            "lead_failures": None,
+            "current_verdict": None,
+            "reason": "",
+        }
+        if prev is None:
+            entry["reason"] = "上一轮没有这个 workflow（覆盖变化），失败率不可比"
+            report[name] = entry
+            continue
+        if cur is None:
+            entry["reason"] = "当前轮没有这个 workflow（覆盖变化），失败率不可比"
+            report[name] = entry
+            continue
+        if prev[0] <= 0:
+            entry["reason"] = "上一轮 attempts=0，没有基线"
+            report[name] = entry
+            continue
+
+        needed = sample_size_margin_needed(prev[0], prev[1])
+        entry["precision_needed_pct"] = needed
+        entry["eligible"] = needed is not None and needed <= precision_margin_pct
+        baseline_pct = entry["baseline_rate_pct"]
+        entry["per_workflow_threshold_pct"] = baseline_pct + per_workflow_delta_pct
+        entry["current_verdict"] = _rate_verdict(
+            cur[0], cur[1], baseline_pct, per_workflow_delta_pct)[0]
+        if entry["eligible"]:
+            entry["per_workflow_first_red_k"] = _first_red_k(
+                cur[0], baseline_pct, per_workflow_delta_pct)
+        if merged_baseline_pct is not None:
+            entry["merged_threshold_pct"] = merged_baseline_pct + merged_delta_pct
+            # 合并层要挪的是**全局**计数，不是该 workflow 自己的 attempts：
+            # 逐 k 扫到该 workflow 的上限为止（再多就不是「这个 workflow 变坏」）。
+            base = current_total_failed - cur[1]
+            for k in range(cur[0] + 1):
+                verdict, _ = _rate_verdict(
+                    current_total_attempts, base + k,
+                    merged_baseline_pct, merged_delta_pct)
+                if verdict == "exceeds":
+                    entry["merged_first_red_k"] = k
+                    break
+            if (entry["per_workflow_first_red_k"] is not None
+                    and entry["merged_first_red_k"] is not None):
+                entry["lead_failures"] = (
+                    entry["merged_first_red_k"]
+                    - entry["per_workflow_first_red_k"])
+            else:
+                entry["reason"] = (
+                    "两层里至少有一层在整段样本内都不会开口，提前量不可定义")
+        else:
+            entry["reason"] = "上一轮全局没有尝试，合并层基线不可用"
+        report[name] = entry
+    return report
+
+
+def check_lead_time(data_dir: Path, precision_margin: float,
+                    per_workflow_delta: float,
+                    merged_delta: float) -> tuple[int, str]:
+    """复算「逐 workflow 层比合并层早几次失败开口」（R67；只读，**不作判定**）。
+
+    为什么给它一个独立模式，而不是并进 ``--check-per-workflow-regression`` 的
+    输出：那条判据在真实快照上的说明已经很长，而提前量是**校准数据**——它与
+    本轮判了什么无关。做成命令有三个直接理由：
+
+    1. R62 §2 的「提前 2 / 5 次」是手算的。按本仓库的纪律（R63：文档会替判据
+       吹牛），它必须能被判据自己的算术复算；
+    2. 阈值增量换一个数，提前量就变（10 → 3 时 2 → 9），这个取舍要能被量化，
+       而不是写在文档里让读者自己推；
+    3. 它只读快照自身，不需要真实数据面，所以能进 CI。
+
+    **本模式不作判定**：没有任何输入会让它退出 1。退出 0 只表示「算出来了」，
+    不表示提前量够大、也不表示判据健康。无样本（3）与元数据漂移（4）沿用闸门
+    自己的码——它们描述「算不了」，与「算出来是不合格」是两件事。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    if not meta_path.is_file():
+        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法复算提前量：{meta_path}"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+
+    actual = recompute_per_workflow(data_dir / "workflows")
+    if not actual:
+        return EXIT_NO_SAMPLE, (
+            f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
+    drifts = _per_workflow_drift(meta.get("per_workflow") or {}, actual)
+    if drifts:
+        return EXIT_META_DRIFT, _drift_message(drifts)
+
+    rounds, invalid_history = snapshot_rounds(meta, actual)
+    if len(rounds) < 2:
+        return EXIT_NO_SAMPLE, (
+            "提前量校准：快照历史只有当前这一轮，没有可比的上一轮"
+            "（重导一次后下一轮才有基线）。**本步没有算出任何数**，"
+            "退出 3 表示算不了，不是判了不合格")
+
+    previous, current = rounds[-2], rounds[-1]
+    report = lead_time_report(previous, current, precision_margin,
+                              per_workflow_delta, merged_delta)
+    # 「若把逐 workflow 阈值对齐到合并层」的反事实：同一个函数、同一把尺，
+    # 换个 delta 再算一次。文档里「压到 +3 会变成 9 次」这句话就是这条输出。
+    aligned = lead_time_report(previous, current, precision_margin,
+                               merged_delta, merged_delta)
+
+    baseline_failed = sum(f for _, f in previous.values())
+    baseline_attempts = sum(a for a, _ in previous.values())
+    lines = [
+        "逐 workflow 提前量校准（只读，**不作判定**：退出 0 只表示算出来了）",
+        f"逐 workflow 阈值 = 基线 + {per_workflow_delta:g}（--margin，同时是基线"
+        f"精度余量）；合并层阈值 = 基线 + {merged_delta:g}（--regression-margin）",
+        f"基线取自历史上一轮（{len(previous)} 个 workflow，"
+        f"{baseline_failed}/{baseline_attempts}）",
+    ]
+
+    eligible_names: list[str] = []
+    ineligible: list[str] = []
+    for name in sorted(current):
+        entry = report[name]
+        if not entry["comparable"]:
+            lines.append(f"  {name}: {entry['reason']}")
+            continue
+        needed = entry["precision_needed_pct"]
+        needed_text = "形状无效" if needed is None else f"{needed:.2f}"
+        if not entry["eligible"]:
+            ineligible.append(f"{name}（95% 半宽 {needed_text} > "
+                              f"{precision_margin:g}）")
+            continue
+        eligible_names.append(name)
+        k_flow = entry["per_workflow_first_red_k"]
+        k_merged = entry["merged_first_red_k"]
+        lead = entry["lead_failures"]
+        lines.append(
+            f"  {name}: 基线 {entry['baseline_failed']}/"
+            f"{entry['baseline_attempts']}（{entry['baseline_rate_pct']:.2f}%），"
+            f"95% 半宽 {needed_text} ≤ {precision_margin:g} → 可判；"
+            f"逐 workflow 阈值 {entry['per_workflow_threshold_pct']:.2f}%，"
+            + (f"第 {k_flow} 次失败开口"
+               f"（{k_flow / entry['attempts'] * 100:.2f}%）"
+               if k_flow is not None else "整段样本内不会开口")
+            + "；合并层"
+            + (f"第 {k_merged} 次"
+               f"（{k_merged / entry['attempts'] * 100:.2f}%）"
+               if k_merged is not None else "整段样本内不会开口")
+            + (f"，提前 {lead} 次" if lead is not None else "，提前量不可定义")
+            + f"；当前计数{'不变' if entry['unchanged'] else '有变化'} → "
+            f"{entry['current_verdict']}")
+
+    if ineligible:
+        lines.append("  基线太薄、本层不参与（算出的开口点只是假设）："
+                     + "、".join(ineligible))
+    if eligible_names:
+        leads = [(n, report[n]["lead_failures"]) for n in eligible_names
+                 if report[n]["lead_failures"] is not None]
+        if leads:
+            lines.append(f"能提前开口的 {len(leads)} 个："
+                         + "、".join(f"{n}（{lead} 次）" for n, lead in leads))
+        else:
+            lines.append("**没有一个可判 workflow 能提前开口**：这一层在当前"
+                         "样本上没有增量（退出 0 不代表增量存在）")
+    else:
+        lines.append("**没有任何 workflow 可判**：这一层在当前样本上没有判定力")
+
+    # 反事实：阈值对齐合并层。只打印可判的那些，并把「说不出 normal」写出来。
+    aligned_notes: list[str] = []
+    for name in eligible_names:
+        entry = aligned[name]
+        k_flow = entry["per_workflow_first_red_k"]
+        if k_flow is None:
+            continue
+        note = (f"{name} 第 {k_flow} 次"
+                f"（{k_flow / entry['attempts'] * 100:.2f}%）"
+                f"→ 提前 {entry['lead_failures']} 次，当前计数"
+                f"{'不变' if entry['unchanged'] else '有变化'} → "
+                f"{entry['current_verdict']}")
+        if entry["current_verdict"] != "normal":
+            note += "（说不出 normal）"
+        aligned_notes.append(note)
+    if aligned_notes:
+        lines.append(
+            f"反事实：若把逐 workflow 阈值压到与合并层一致（+{merged_delta:g}）："
+            + "；".join(aligned_notes))
+        lines.append("取舍：压小阈值换来更早开口，代价是「计数不变」也可能判不了——"
+                     "判据只有在阈值 ≥ 基线精度时才能说 normal，所以默认不压")
+
+    if invalid_history:
+        lines.append(f"（另有 {invalid_history} 条历史形状无效已跳过）")
+    return EXIT_OK, "\n".join(lines)
 
 
 def _run_judgement(judgement) -> int:
@@ -1501,8 +1803,10 @@ def main() -> int:
                         help="快照根目录（含 workflows/ 与 snapshot-meta.json）；"
                              "缺省读 DETERMINFLOW_DATA_DIR，再缺省用入库快照路径")
     parser.add_argument("--margin", type=float, default=None,
-                        help="精度余量（百分点，默认 10），只用于 --check-* 判据："
-                             "样本量厚度与 per-workflow 判决都拿它当尺")
+                        help="精度余量（百分点，默认 10），用于 --check-* 判据与"
+                             "--calibrate-lead-time：样本量厚度、per-workflow 判决"
+                             "与可判集合都拿它当尺（逐 workflow 的**变化阈值**也"
+                             "等于它——两个量必须相同，见 _baseline_verdict）")
     parser.add_argument("--fail-if-above", type=float, default=None,
                         help="默认判定模式的政策上限（百分点，0 到 100 之间且不含 "
                              "100）：失败率 95%% 区间下界高于它才退出 1；不给则只报告不判定")
@@ -1523,6 +1827,9 @@ def main() -> int:
                         help="按 workflow 判失败率是否显著高于快照上一轮基线"
                              "（只读快照自身，CI 可跑；基线太薄的 workflow "
                              "判不了，不判失败）")
+    parser.add_argument("--calibrate-lead-time", action="store_true",
+                        help="复算逐 workflow 层比合并层早几次失败开口（只读，"
+                             "**不作判定**：退出 0 只表示算出来了）")
     parser.add_argument("--fail-on-exceeds", action="store_true",
                         help="--check-per-workflow-rate 时把 exceeds 判为退出码 1"
                              "（默认只报告，恒退出 0）")
@@ -1562,6 +1869,7 @@ def main() -> int:
             ("--check-per-workflow-rate", options.check_per_workflow_rate),
             ("--check-per-workflow-regression",
              options.check_per_workflow_regression),
+            ("--calibrate-lead-time", options.calibrate_lead_time),
         ) if on
     ]
     if len(chosen) > 1:
@@ -1576,10 +1884,15 @@ def main() -> int:
         parser.error(
             f"--fail-on-regression 不能与 {' 与 '.join(chosen)} 同时使用")
     if options.regression_margin is not None:
-        if not options.fail_on_regression:
+        if not (options.fail_on_regression or options.calibrate_lead_time):
             # 与 --margin/--fail-on-exceeds 同一纪律：不确定的配置在参数层炸掉，
-            # 而不是静默忽略。
-            parser.error("--regression-margin 只能配合 --fail-on-regression 使用")
+            # 而不是静默忽略。**逐 workflow 层不在可配置范围**：它的阈值必须
+            # 等于 --margin（基线精度余量），否则「计数不变 ⇒ normal」不成立
+            # （见 _baseline_verdict）；放开这个开关等于允许一个说不出 normal
+            # 的判据上线。
+            parser.error(
+                "--regression-margin 只用于合并层（--fail-on-regression）与校准"
+                "（--calibrate-lead-time）；逐 workflow 层的阈值必须等于 --margin")
         if not 0.0 <= options.regression_margin < 100.0:
             # 100 与 >100 永远等不到「整个区间在阈值之上」，是写着「不判回归」
             # 的恒绿配置；负数则相当于把阈值压到基线以下，任何持平都算回归。
@@ -1596,6 +1909,14 @@ def main() -> int:
         # 与 --fail-on-exceeds 同一纪律：不确定的配置在参数层就炸掉。
         parser.error("--margin 只用于 --check-* 判据；"
                      "默认判定模式的阈值请用 --fail-if-above / --regression-margin")
+
+    if options.calibrate_lead_time:
+        # 逐 workflow 层的增量就是 --margin（同一个量），合并层用
+        # --regression-margin 的默认值或显式值——校准必须与真判据同参。
+        return _run_judgement(lambda: check_lead_time(
+            options.data_dir or _default_data_dir(), margin, margin,
+            REGRESSION_MARGIN if options.regression_margin is None
+            else options.regression_margin))
 
     if options.check_per_workflow_rate:
         # 与 --check-sample-size 同理：只读快照自身，不需要 --source。
