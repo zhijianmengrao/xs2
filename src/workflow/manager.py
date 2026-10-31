@@ -1007,6 +1007,7 @@ class WorkflowManager(
             task.completed_at = _now_iso()
             self._save_task(task)
             self._push_task_update(workflow_id, task)
+            self._drop_running_marker_before_cleanup(task)
             await self._release_terminal_task_sessions(task)
             raise
         except Exception:
@@ -1015,6 +1016,7 @@ class WorkflowManager(
             task.completed_at = _now_iso()
             self._save_task(task)
             self._push_task_update(workflow_id, task)
+            self._drop_running_marker_before_cleanup(task)
             await self._release_terminal_task_sessions(task)
         else:
             await self._persist_execution_result(workflow_id, result_task)
@@ -1022,6 +1024,17 @@ class WorkflowManager(
             self._running_tasks.pop(task_id, None)
             if result_task is not None and result_task.status == "retry_waiting":
                 self._schedule_retry_for_task(result_task)
+
+    def _drop_running_marker_before_cleanup(self, task: WorkflowTask) -> None:
+        """终态落盘后立即摘除运行标记，再允许调用方 await 收尾。
+
+        节点控制（retry_node / skip_node）以磁盘上的终态为准，运行标记
+        只用于阻止「执行中改节点状态」。若标记活到 Session 释放之后，
+        就会出现「磁盘已 failed、控制动作仍被告知任务正在执行」的假冲突
+        （R66：executor pool 场景 flake 的根因）。摘标记必须与终态落盘
+        处在同一个同步段内，中间不能有任何 await。
+        """
+        self._running_tasks.pop(task.task_id, None)
 
     async def _persist_execution_result(
         self,
@@ -1059,6 +1072,7 @@ class WorkflowManager(
                 task.task_id,
                 task.status,
             )
+        self._drop_running_marker_before_cleanup(task)
         await self._release_terminal_task_sessions(task)
 
     async def _release_terminal_task_sessions(self, task: WorkflowTask) -> None:
@@ -1332,12 +1346,14 @@ class WorkflowManager(
         except asyncio.CancelledError:
             task.status = "stopped"; task.completed_at = _now_iso(); self._save_task(task)
             self._push_task_update(workflow_id, task)
+            self._drop_running_marker_before_cleanup(task)
             await self._release_terminal_task_sessions(task)
             raise
         except Exception:
             logger.exception(f"任务 {task_id} 运行异常")
             task.status = "failed"; task.completed_at = _now_iso(); self._save_task(task)
             self._push_task_update(workflow_id, task)
+            self._drop_running_marker_before_cleanup(task)
             await self._release_terminal_task_sessions(task)
         else:
             await self._persist_execution_result(workflow_id, result_task)

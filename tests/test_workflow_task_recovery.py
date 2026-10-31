@@ -50,11 +50,34 @@ class _SessionManager:
         return session
 
 
-def _manager(tmp_path, monkeypatch) -> WorkflowManager:
+class _GatedReleaseSessionManager(_SessionManager):
+    """把第一次 Session 释放卡在 await 里，把 R66 的窗口钉成确定性用例。
+
+    真实实现里 ``_release_terminal_task_sessions`` 会 ``await`` 每个
+    Session 的 ``cancel_active_invocation`` / ``async_save``；这个假实现
+    只是把那段时间变成一个可控的 Event，让用例能在「终态已落盘、收尾
+    未结束」的精确时刻检查闸门行为，而不是靠 sleep 碰运气。
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.release_entered = asyncio.Event()
+        self.release_gate = asyncio.Event()
+        self.release_calls = 0
+
+    async def release_workflow_task_sessions(self, workflow_id, task_id):
+        self.release_calls += 1
+        self.release_entered.set()
+        if self.release_calls == 1:
+            await self.release_gate.wait()
+        return {"matched": 0, "released": 0, "retained": 0}
+
+
+def _manager(tmp_path, monkeypatch, session_manager=None) -> WorkflowManager:
     workflows_dir = tmp_path / "workflows"
     monkeypatch.setattr(config_module, "WORKFLOWS_DIR", workflows_dir)
     monkeypatch.setattr(workflow_manager_module, "WORKFLOWS_DIR", workflows_dir)
-    manager = WorkflowManager(_SessionManager())
+    manager = WorkflowManager(session_manager or _SessionManager())
     manager._ws_manager = WorkspaceManager(
         base_dir=str(tmp_path / "workspace-root")
     )
@@ -367,6 +390,13 @@ class _AutomaticRetryProbeNode(BaseNodePlugin):
         return NodeResult(status="success", outputs={"result": "recovered"})
 
 
+class _FailingControlProbeNode(BaseNodePlugin):
+    node_type = "failing_control_probe"
+
+    async def execute(self, _ctx: NodeContext) -> NodeResult:
+        return NodeResult(status="failed", error="probe failure")
+
+
 class _MainTakeoverParentProbeNode(BaseNodePlugin):
     node_type = "main_takeover_parent_probe"
     parent_ids: list[str] = []
@@ -520,6 +550,68 @@ def test_manager_runs_zero_delay_automatic_retry_end_to_end(
         "failed", "completed",
     ]
     assert state.outputs == {"result": "recovered"}
+
+
+def test_terminal_status_is_controllable_while_session_release_is_pending(
+    tmp_path, monkeypatch,
+) -> None:
+    """终态落盘后运行标记必须已摘除，控制动作不再报假冲突。
+
+    R66：executor pool 场景偶发 ``node_control_conflict``（「任务正在执行，
+    不能同时修改节点状态」），根因是 ``_persist_execution_result`` 先落盘
+    failed、再 await Session 释放，而 ``_running_tasks`` 里那次执行要等收尾
+    结束才摘除。闸门先验过的正是磁盘终态，所以这段 await 里的控制动作
+    拿到的是一句自相矛盾的拒绝。
+    """
+    monkeypatch.setattr(llm_client_module, "create_llm", lambda **_kwargs: object())
+    sessions = _GatedReleaseSessionManager()
+    manager = _manager(tmp_path, monkeypatch, session_manager=sessions)
+    workflow_id = "wf-release-window"
+    task_id = "task-release-window"
+    definition = WorkflowDef(
+        workflow_id=workflow_id,
+        nodes=[WorkflowNode(
+            id="probe",
+            node_type=_FailingControlProbeNode.node_type,
+        )],
+    )
+    manager._save_task(WorkflowTask(
+        workflow_id=workflow_id,
+        task_id=task_id,
+        status="pending",
+        snapshot_definition=definition.to_dict(),
+    ))
+    registry.register(_FailingControlProbeNode, owner="test-release-window")
+
+    async def scenario():
+        try:
+            started = await manager.run_task(workflow_id, task_id)
+            assert started.get("success") is True, started
+            await asyncio.wait_for(sessions.release_entered.wait(), timeout=5)
+            persisted = manager._load_task(workflow_id, task_id)
+            assert persisted is not None
+            assert persisted.status == "failed"
+            # 收尾还卡在 await 里：此时磁盘已终态，运行标记必须已经摘除。
+            assert manager._running_tasks.get(task_id) is None
+            retried = await manager.retry_node(
+                workflow_id,
+                task_id,
+                "probe",
+                persisted.node_states["probe"].attempt_count,
+            )
+            assert retried.get("success") is True, retried
+            assert retried.get("error") is None, retried
+            return retried
+        finally:
+            sessions.release_gate.set()
+            await manager.shutdown_running_tasks()
+            await manager.shutdown_task_recovery()
+            registry.unregister_owner("test-release-window")
+
+    retried = asyncio.run(scenario())
+
+    assert retried["node_id"] == "probe"
+    assert sessions.release_calls >= 1
 
 
 def test_startup_recovery_closes_running_attempt_and_schedules_policy_retry(
