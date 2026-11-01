@@ -132,10 +132,21 @@ skill 条目）**保持未提交**，提交用显式路径 add。
 
 ## 9. 提交、推送与 CI 核对
 
-**本轮未提交、未推送**：用户未就推送选项作答，按「先本地、等确认」执行——
-改动全部停在工作树（3 个改动文件 + 本文 + `_r77_mutate.py` /
-`_r77_gate_backup.py` 两个辅助文件）。CI 面（ubuntu / windows 计数、五 job、
-容器冒烟）本轮**无实证**。
+两次提交（`ca0735a` test + `92c2f64` docs，显式路径 add）后推送
+`b91e6c4..92c2f64`（一次成功，全局 socks5 代理本轮可用）。CI run
+**41261068200**（push，01:26:02 → 01:30:51，约 4m49s）五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（01:26:04–01:28:04）/ windows-backend（01:26:05–01:30:51）/ frontend（01:26:04–01:27:46）/ container-config（01:26:14–01:26:18）/ container-build（01:26:04–01:26:46）全部 `success` |
+| ubuntu | `2267 passed, 65 skipped, 1 warning in 80.71s` = **2332** |
+| windows | `2303 passed, 29 skipped, 1 warning in 218.66s` = **2332** |
+| 新用例在 CI 真跑 | ubuntu 2263/65 → **2267/65**、windows 2299/29 → **2303/29**（各 +4） |
+| e2e / metrics | `[e2e] 10/10`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过`；`docker compose config -q` 成功 |
+| Desktop Windows / macOS | 未触发（`head_sha=92c2f64…` 下两者 `total_count=0`；本轮只改 tests/docs，paths 过滤不命中） |
 
 工作树里另有他人的 `config/skills_config.json`（+146 / −2）未提交，与本轮无关；
-将来提交时须用显式路径 add，不要带上它。
+两次提交均用显式路径 add，未带上它。两个辅助脚本已移出仓库到
+`F:\DeterminFlow x2\`（`_r77_mutate.py` md5 `10c26ce6…`、`_r77_gate_backup.py`
+md5 `1d0e0ac0…`）。
