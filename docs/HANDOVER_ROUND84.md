@@ -223,7 +223,31 @@ failed、不是 skipped（R71 的坑）。
 
 ## 10. 提交、推送与 CI 核对
 
-（待回填：提交哈希、推送通道、CI run 与五个 job 的计数。）
+两次提交（`7619d82` fix + `5dc011a` docs，显式路径 add）后推送 `366db79..5dc011a`。
+推送通道：本轮直接用 `git -c http.proxy= -c https.proxy= push`，一次成功（与 R58/R61/
+R62/R82/R83 同一条纪律：每轮先探路，不照抄上一轮的通道；socks5 10808 本轮未使用）。
+
+CI run **41291789133**（push，09:08:26 → 09:12:40，约 4m14s）五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（09:08:26–09:10:20）/ windows-backend（09:08:27–09:12:40）/ frontend（09:08:27–09:10:10）/ container-config（09:08:26–09:08:31）/ container-build（09:08:27–09:09:14）全部 `success` |
+| ubuntu | `2449 passed, 65 skipped, 1 warning in 76.44s` = **2514** |
+| windows | `2485 passed, 29 skipped, 1 warning in 195.33s` = **2514** |
+| 计数与 R83 相比 | ubuntu 2369/65 → **2449/65**、windows 2405/29 → **2485/29**（各 **+80**，与本轮新增用例数一致） |
+| 快照判据 | backend 第 7 步 fixture 自检 + 第 8–14 步七个真实快照判据全 `success`；第 14 步输出仍含「快照历史 3 轮（含当前）。连续 3 轮以上样本不足：…」共 8 个 workflow，退出 0；逐 wf 报告仍是 0 个超出 / 1 个正常 / 8 个样本不足 |
+| 新行为在 CI 真跑 | 第 6 步 pytest 覆盖了 R84 的 78 条新用例（ubuntu 2449/windows 2485 各 +80，含两条 fixture 扫描的新参数） |
+| e2e / metrics | `[e2e] 10/10 场景通过`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| e2e 趋势（R78 步骤） | backend 第 **17** 步 `e2e retry trend (history, read-only)` `success` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过: determinflow-core:ci` |
+| Desktop Windows / macOS | 未触发（该 SHA 下只有 CI 一个 run） |
+
+`$GITHUB_STEP_SUMMARY` 正文 API 不提供（与 R74 §7-2 / R80 §9 / R83 同一条限制）；CI 上能
+核到的是「这一批步骤都以 0 退出」。
+
+**如实记录平台异常（第二次）**：run 级 `status` 在 API 上仍停在 `in_progress`
+（`updated_at` 冻结在 09:08:27，五个 job 都已 `success`），与 R83 观察到的聚合滞后同一
+现象——本报告以 job 结论为准。
 
 ## 11. 本轮的三条教训
 
