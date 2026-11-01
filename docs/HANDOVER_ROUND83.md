@@ -161,4 +161,25 @@ $env:PYTHONPATH = "$sp;$sp\win32;$sp\win32\lib;$sp\pythonwin;$sp\pywin32_system3
 
 ## 10. 提交、推送与 CI 核对
 
-（推送与 CI 回填见下方补记。）
+两次提交（`f2c971b` fix + `2adac7b` docs，显式路径 add）后推送
+`27cfda7..2adac7b`。推送通道：本轮直接用
+`git -c http.proxy= -c https.proxy= push`，一次成功（与 R58/R61/R62/R82 同一条
+纪律：每轮先探路，不照抄上一轮的通道；socks5 10808 本轮未使用）。
+
+CI run **41286127641**（push，07:46:39 → 07:52:01，约 5m22s）五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（07:46:42–07:49:22）/ windows-backend（07:46:41–07:51:11）/ frontend（07:46:42–07:48:19）/ container-config（07:46:41–07:46:46）/ container-build（07:46:41–07:47:17）全部 `success` |
+| ubuntu | `2369 passed, 65 skipped, 1 warning in 112.91s` = **2434** |
+| windows | `2405 passed, 29 skipped, 1 warning in 211.36s` = **2434** |
+| 计数与 R82 相比 | ubuntu 2350/65 → **2369/65**、windows 2386/29 → **2405/29**（各 **+19**，与本轮新增用例数一致） |
+| 快照判据 | backend 第 7 步 fixture 自检 + 第 8–14 步七个真实快照判据全 `success`；R83 的 `_totals_key(recorded) != _totals_key(actual)` 就在这些入口里执行——两份入库 fixture 自洽（28/28、3/3），所以退出码与 R82 逐项相同（政策 8%→0 / 1%→1、回归→0、逐 wf 回归→0、提前量→0、样本量→0、逐 wf 报告→0、失败率硬门槛→0） |
+| 新行为在 CI 真跑 | 第 14 步输出仍含「快照历史 3 轮（含当前）。连续 3 轮以上样本不足：…」共 8 个 workflow，退出 0 |
+| e2e / metrics | `[e2e] 10/10 场景通过`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| e2e 趋势（R78 步骤） | backend 第 **17** 步 `e2e retry trend (history, read-only)` `success` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过: determinflow-core:ci` |
+| Desktop Windows / macOS | 未触发（该 SHA 下只有 CI 一个 run） |
+
+`$GITHUB_STEP_SUMMARY` 正文 API 不提供（与 R74 §7-2 / R80 §9 同一条限制）；CI 上能
+核到的是「这一批步骤都以 0 退出」。
