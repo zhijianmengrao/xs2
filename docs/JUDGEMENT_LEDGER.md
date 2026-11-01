@@ -162,6 +162,11 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | CI 回写历史的写权限/执行面分离（R88） | `tests/test_ci_history_writeback.py::test_write_permission_belongs_only_to_the_writeback_job`、`test_writeback_job_runs_no_repository_tests`、`test_writeback_uses_run_id_not_run_attempt` |
 | 写回重试语义由**行为**驱动、YAML 只委托（R89） | `tests/test_ci_history_writeback.py::test_writeback_delegates_retry_to_the_script` + `tests/test_ci_writeback_history.py::test_rejected_push_rebases_and_succeeds_on_the_second_attempt`、`test_permanent_rejection_stops_after_the_attempt_cap` |
 | 同一 run 重跑且观测一致 → **不产生提交**（R89） | `tests/test_e2e_retry_history.py::test_record_keeps_the_first_export_time_when_the_observation_is_identical`、`tests/test_ci_writeback_history.py::test_same_run_rerun_does_not_create_a_second_commit` |
+| 写回冲突 → 重算（R90） | `tests/test_ci_writeback_history.py::test_rebase_conflict_recomputes_instead_of_losing_the_round`、`test_conflict_stops_after_the_attempt_cap` |
+| 写回结果类别 + summary（R91） | `tests/test_ci_writeback_history.py::test_summary_records_missing_metrics_and_record_invalid_separately`、`test_result_categories_are_distinct_literals` |
+| PR 预检只读（R92） | `tests/test_e2e_retry_history.py::test_record_check_only_does_not_write`、`tests/test_ci_history_writeback.py::test_backend_prechecks_metrics_on_pull_requests` |
+| 条目来源 `source`（R93） | `tests/test_e2e_retry_history.py::test_record_writes_the_source`、`test_validate_history_rejects_unknown_source`、`test_check_reports_the_source_mix` |
+| 本地回放不碰源仓库（R94） | `tests/test_ci_writeback_history.py::test_dry_run_does_not_touch_the_repo`、`tests/test_replay_ci_writeback.py::test_replay_leaves_the_source_repo_untouched` |
 | p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
 | e2e 重跑历史的窗口 **40 轮**（R78，R89 由 20 提到 40） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window`（值 + 边界行为两条一起钉） |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
@@ -714,6 +719,74 @@ R88 的重试循环只写在 `ci.yml` 里：本地跑不了，测试只能对 YA
 - **边界（如实）**：本地仍不能复现 `actions/download-artifact` 与真实 token 的
   push 权限；覆盖的是脚本的输入契约与 git 行为。远端冲突时的处置仍是「响亮失败、
   本轮不入库」（与 R88 相同），没有自动重算。
+
+### 7.16 写回冲突：重算而不是丢轮次（R90）
+
+R89 的处置是「rebase 冲突 → `::error::` + 退出 1」。冲突意味着本地提交是在**旧
+历史**上算的；`record` 是幂等的，所以在最新历史上重算即可同时保住人工轮与 CI 轮。
+
+- **结构**：`record` 移进重试循环；`prepared` 标志区分「需要重新准备」与「只需重推」。
+- **两个可被变异咬住的细节**：①自身 rebase 成功后**不得**再 record——提交已在分支
+  上，再 record 会得到「没有变化」并提前返回 0，把这一轮丢掉；②冲突回退后**必须**
+  `prepared = False`——否则下一轮推一个空提交、报成功却什么都没写。
+- **守卫**：`tests/test_ci_writeback_history.py::test_rebase_conflict_recomputes_instead_of_losing_the_round`（两轮都在、无 merge 提交、第 2 次成功）、
+  `test_conflict_stops_after_the_attempt_cap`（冲突消耗一次尝试）。
+- **变异**：M9–M12 **4/4 全咬合**。
+- **边界**：重算丢弃本地写回提交（仅在本 job 的 checkout 里安全）；冲突消耗一次尝试。
+
+### 7.17 写回结果：固定类别 + step summary（R91）
+
+同一个退出码可能来自不同原因（R64 教训）。R91 把每轮结果升级成
+`(退出码, 类别, 说明)` 三元组，类别是固定字面值：
+
+`written` / `no-change` / `metrics-missing` / `record-invalid` /
+`push-rejected` / `rebase-conflict` / `git-error` / `usage`（R94 增 `dry-run`）。
+
+- 追加进 `GITHUB_STEP_SUMMARY`；**写不进去只告警**，不改判决（历史已在 git 里）。
+- 守卫：`test_summary_records_missing_metrics_and_record_invalid_separately`
+  （缺 metrics 与坏 metrics 不共用一句话）、`test_result_categories_are_distinct_literals`
+  （字面值固定且互异）、`test_summary_write_failure_does_not_change_the_verdict`。
+- 变异：M13–M17 **5/5 全咬合**。
+
+### 7.18 PR 预检：`record --check-only`（R92）
+
+坏 metrics 原先要等合入 main 后的写回 job 才炸。R92 把它左移到 PR：
+
+- `--check-only`：读 metrics/历史、算条目、校验结果，**不写文件**；退出码与正常
+  record 完全一致（3/4/2）。
+- **写入前自校验**（所有路径）：算出的 `trimmed` 历史必须通过 `validate_history`，
+  否则 4 且文件逐字节不动——覆盖 record 自己的覆盖/去重/裁剪算术。
+- CI：backend 增加只在 `pull_request` 上跑的只读预检步骤（无 `git commit`/
+  `git push`/`upload-artifact`），写权限仍只在 `e2e-history-writeback`。
+- 守卫：`test_record_check_only_does_not_write`、`test_record_validates_the_result_before_writing`、
+  `test_backend_prechecks_metrics_on_pull_requests`。
+- 变异：M18–M22 **5/5 全咬合**。**M20 第一次 MISSED 是用例配错**（只跑失败码用例，
+  没跑成功码用例）——R70「必须跑全部相关用例」。
+
+### 7.19 历史条目来源：`source`（R93）
+
+R88 之后历史同时含本机导出与 CI 写回，此前只能靠 `run_id` 形状猜。R93 让条目
+自己说 `source`：
+
+- `SOURCES = ("ci", "local")`；本机默认 `local`，写回脚本显式传 `ci`。
+- 旧条目**缺失合法** → 计「未标注」，**不根据 run_id 反推**（不把命名习惯变成事实）。
+- 出现但不在 `SOURCES` 里 → `HistoryError`（退出 4）——未知值不是「未标注」，是数据坏了。
+- `check` 多打印 `来源：CI n / 本机 m / 未标注 k`，**只读展示**、不改退出码。
+- 生产证据：run 41303273571 写回的条目 `source=ci`（前 8 轮保持未标注，不回填）。
+- 变异：M23–M27 **5/5 全咬合**。
+
+### 7.20 本地回放：`--dry-run` 与沙箱回放（R94）
+
+R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact 传输本身：
+
+- `--dry-run`：`TemporaryDirectory` 里的历史副本上真算一遍，报告 `历史 N/40 轮（+k）`，
+  不写文件、不提交、不推送。
+- `scripts/replay_ci_writeback.py`：裸克隆源仓库当 origin → 克隆工作区 → 跑真实
+  `writeback()`（提交/推送/重试都是真的，只是推到沙箱）；复核源仓库 HEAD 未变。
+- 守卫：`test_dry_run_does_not_touch_the_repo`、`test_replay_leaves_the_source_repo_untouched`、
+  `test_replay_dry_run_does_not_commit`。
+- 变异：M28–M30 **3/3 全咬合**。
+- **边界**：`actions/download-artifact` 的传输仍不能本地复现；replay 只回放已提交状态。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
