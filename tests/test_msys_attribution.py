@@ -1,15 +1,24 @@
-"""msys 传输不可用时 skip 的归因与判据边界（R71）。
+"""msys 传输不可用时 skip 的归因与判据边界（R71 建立，R81 更正归因）。
 
-R70 §6.1 的四行实测矩阵推翻了 ``tests/conftest.py`` 旧 skip 文案里的因果句：
-113 skips 不是「Low 令牌」的函数——用 ``SetTokenInformation`` 真降到
-``S-1-16-4096`` 与 High 同为 2189 passed / 113 skipped；Git Bash / cmd /
-PowerShell 三种启动器下 probe 全为 True，而直接在 Git Bash 里 ``git clone``
-成功（bash 自己早已挂接该对象）。真正的判别变量是**本会话能否挂接**
-``\\BaseNamedObjects\\msys-2.0S…``（``NtCreateDirectoryObject: 0xC0000022``）。
+R70 §6.1 的四行矩阵曾让仓库得出「113 skips 不是 IL 的函数」的结论：那次实测
+High 令牌与真降到 ``S-1-16-4096`` 的令牌同为 2189/113。R81 把对象的安全描述符
+读出来了，并做了创建者 × 打开者的交叉对照：
 
-本文件只钉**归因与判据边界**，不改「何时转 skip」的行为（R71 零行为变更）：
+* 对象 ``\\BaseNamedObjects\\msys-2.0S5-…`` 的 DACL 只有一条
+  ``Everyone -> 0x2000F``（READ_CONTROL + DIRECTORY_QUERY/TRAVERSE/CREATE_*），
+  **没有 SACL**；可 Low 打开者仍然被拒 ``CREATE_OBJECT``，High 打开者通过。
+* 同一 DACL 的合成对象：High 创建 → Low 被拒；Low 创建 → Low 通过。也就是说
+  对象隐式带着创建者的完整性级别，DACL 里写着允许并不够。
+* IL 由**启动器所在位置**决定：``F:\\...\\.venv\\python.exe`` 是 Low（即使父
+  shell 是 High），同一份 python.exe 复制到 C: 就是 High。
 
-1. 文案只写机制，不出现完整性级别——R70 反例的机械防复发；
+所以 R70 的「High 也失败」在本机不成立：High 解释器起来 ``sh.exe`` rc=0，
+全量 2373 passed / 28 skipped；Low 下 2288 passed / 113 skipped。
+
+本文件钉**归因与判据边界**，不改「何时转 skip」的行为：
+
+1. 文案写机制 + 可执行处方，但**不把责任钉成「本令牌是 Low」**（对象侧可能
+   比任何我们能拿到的令牌都高）；
 2. 判据的真值表只有两个自变量（签名、探针结果），令牌 IL 不是第三个；
 3. 同一条 clone 失败，仅 stderr 不同就必须翻转成「不转 skip」——这是
    「真实缺陷不会被伪装成环境问题」的可复现判据；
@@ -54,12 +63,14 @@ def _conftest():
     return module
 
 
-def test_skip_reason_names_the_mechanism_and_never_an_integrity_level() -> None:
-    """两种归因都只描述「挂不上共享对象」，且不出现任何 IL 断言（R70 反例）。
+def test_skip_reason_names_the_mechanism_and_the_actionable_fix() -> None:
+    """两种归因都描述机制，并给出照做就能过的处方（R81）。
 
-    旧文案 "cannot boot under this Low-integrity token" 的问题不是措辞难听，
-    而是**在 High 下同样发生**时仍然这么说——测试输出替环境下了一个错结论。
-    这里把「不含 integrity / 不含 high-IL 处方」写成判据。
+    R71 曾以「High 也会被挡」为据把处方删掉。R81 实测推翻了那条：同一份
+    ``python.exe`` 在 C: 是 High（``sh.exe`` rc=0、2373 passed / 28 skipped），
+    在 F: 是 Low（``0xC0000022``、2288 passed / 113 skipped）。所以处方回归，
+    但判据同时钉住两条边界：**不写具体 SID**、**不写 "Low-integrity token"
+    这种把责任钉死在令牌上的说法**——对象侧可能比任何我们能拿到的令牌都高。
     """
     cf = _conftest()
     for signature_hit in (True, False):
@@ -68,10 +79,12 @@ def test_skip_reason_names_the_mechanism_and_never_an_integrity_level() -> None:
         assert "msys" in lowered
         assert "attach" in lowered, reason
         assert "shared" in lowered, reason
-        assert "integrity" not in lowered, reason
-        assert "s-1-16" not in lowered, reason
-        # R70：High 也会被挡，不能再把 High-IL 写成修法。
-        assert "high-il" not in lowered and "high il" not in lowered, reason
+        # 处方必须可执行：复制过去的命令能照做。
+        assert "py.exe" in lowered, reason
+        assert "pythonpath" in lowered, reason
+        # 但不许把责任钉成「本令牌是 Low」，也不许写 SID 字面量。
+        assert "low-integrity token" not in lowered, reason
+        assert "s-1-16-" not in lowered, reason
     hit = cf._msys_skip_reason(True)
     miss = cf._msys_skip_reason(False)
     assert cf._MSYS_BOOT_FAILURE in hit, hit

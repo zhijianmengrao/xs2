@@ -80,16 +80,24 @@ _CAN_CREATE_SYMLINK = _can_create_symlink()
 # msys process; when this session cannot attach that object, the child dies at
 # boot with `NtCreateDirectoryObject(...): 0xC0000022`.
 #
-# **Attachability is session state — it is not a function of the token's
-# integrity level** (R70 §6.1). In R17's session a Low-IL interpreter was
-# blocked while High-IL worked; in R70's session High-IL was blocked too — the
-# suite reported 2189 passed / 113 skipped both at High and after really dropping
-# the token to S-1-16-4096. The skip reason therefore names the mechanism only
-# ("cannot attach the shared object") and never an integrity level;
-# `tests/test_msys_attribution.py` pins that wording (R71). Converting exactly
-# those failures into skips keeps `pytest -q` meaningful — a genuine git defect
-# carries no msys signature and still fails loudly. Native git verbs
-# (init/add/commit/rev-parse) are unaffected and keep running.
+# **Why a session cannot attach** (R81, measured on this machine): the object
+# carries the integrity level of the process that created it, implicitly — its
+# DACL grants Everyone `0x2000F` (read + DIRECTORY_CREATE_*), and yet a Low-IL
+# opener is denied every write right with 0xC0000022 while a High-IL opener gets
+# them. A synthetic object with the same DACL reproduced the same matrix: created
+# by High -> Low denied, created by Low -> Low allowed. Integrity level is
+# inherited from the parent token, but executables on F: are forced down to Low:
+# `F:\...\.venv\python.exe` runs Low even under a High shell, and the same
+# python.exe copied to C: inherits the shell's High. A Low process spawning
+# `C:\Windows\py.exe` stays Low, so the fix is to start pytest from a High shell
+# (Git Bash / PowerShell here) with a C: launcher. The skip reason names the
+# mechanism, the fact that the object was created above this launcher, and that
+# prescription — never a "this token is Low" causal claim: the object side may be
+# higher than any token we can get. `tests/test_msys_attribution.py` pins both
+# halves (R81 restored the prescription that R71 had dropped on R70's evidence).
+# Converting exactly those failures into skips keeps `pytest -q` meaningful — a
+# genuine git defect carries no msys signature and still fails loudly. Native git
+# verbs (init/add/commit/rev-parse) are unaffected and keep running.
 _MSYS_BOOT_FAILURE = "NtCreateDirectoryObject"
 
 # 这些模块的用例依赖 git 远程传输（clone/fetch）。传输不可用时，模块内的失败
@@ -169,28 +177,31 @@ def _msys_boot_failure(call) -> bool:
 def _msys_skip_applies(signature_hit: bool, module: str, transport_blocked: bool) -> bool:
     """转 skip 的判据：msys 签名，或「传输模块内 + 探针复现同一签名」。
 
-    只看签名与本会话的探测结果，**不看令牌完整性级别**（R70 §6.1：High 与
-    真降后的 Low 同为 2189/113）。``tests/test_msys_attribution.py`` 用真值表
-    把这条判据的四种组合逐格钉住。
+    只看签名与本会话的探测结果，**不看令牌完整性级别**。R81 把「为什么挂不上」
+    查清了（对象隐式带创建者 IL，启动器路径决定自己的 IL），但判据不变：
+    skip 只看「这次失败是不是环境造成的」，不按 IL 分支；
+    ``tests/test_msys_attribution.py`` 用真值表把四种组合逐格钉住。
     """
     return signature_hit or (module in _GIT_TRANSPORT_MODULES and transport_blocked)
 
 
 def _msys_skip_reason(signature_hit: bool) -> str:
-    """Skip 归因文案：只描述可复现的机制，不断言令牌完整性级别（R71）。
+    """Skip 归因文案：机制 + 可执行的处置（R81 恢复处方，R71 曾删除）。
 
-    R70 §6.1 实测：High 令牌与**真降到** ``S-1-16-4096`` 的令牌同为
-    2189 passed / 113 skipped——判别变量是本会话能否挂接
-    ``\\BaseNamedObjects\\msys-2.0*``，不是令牌 IL。旧文案
-    （"under this Low-integrity token"）把 High 也会发生的情况说成 Low 造成，
-    等于让测试输出替环境下结论。文案里刻意不出现 "integrity"：
-    ``tests/test_msys_attribution.py`` 以「不含该词」为判据。
+    R71 删掉「改用 High-IL 解释器」是因为 R70 §6.1 记录 High 也被挡。R81 实测
+    推翻那条：同一份 python.exe 放 C: 是 High（``sh.exe`` rc=0，2373 passed /
+    28 skipped），放 F: 是 Low（``0xC0000022``，2288 passed / 113 skipped）；
+    对象隐式带创建者 IL，Low 打开者连 DACL 里写着允许的 ``DIRECTORY_CREATE_*``
+    都会被拒。因此文案写回处方，但仍然**不把责任钉在「本令牌是 Low」**（对象侧
+    可能比任何我们能拿到的令牌都高），也不写具体 SID。
     """
     return (
         "msys git transport cannot attach this session's shared msys-2.0 object "
         + ("(matched NtCreateDirectoryObject boot signature)" if signature_hit
            else "(unattributable inside a git-transport module)")
-        + "; retry from a launcher that can attach \\BaseNamedObjects\\msys-2.0* "
+        + "; this launcher runs below the integrity level that created the object, "
+          "so re-run from a High-IL shell with a C: launcher, e.g. "
+          "C:\\Windows\\py.exe -m pytest with the venv site-packages on PYTHONPATH "
           "(see PROJECT_INFO.md platform note 9)"
     )
 
