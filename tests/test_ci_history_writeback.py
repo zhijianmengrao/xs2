@@ -114,11 +114,34 @@ def test_writeback_delegates_retry_to_the_script() -> None:
     """
     text = _text(_writeback())
     assert "ci_writeback_history.py" in text
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in _record_run()
     for inlined in ("git push", "pull --rebase", "for attempt"):
         assert inlined not in text, f"重试逻辑又写回 YAML 了：{inlined!r}"
     # [skip ci] 仍在提交信息里：GITHUB_TOKEN 的 push 本不触发 workflow，
     # 这条是为将来换成 PAT 留的保险。
     assert "[skip ci]" in text
+
+
+def test_backend_prechecks_metrics_on_pull_requests() -> None:
+    """R92：PR 上只做 ``--check-only`` 预检，不写、不提交、不推。
+
+    写权限与执行面分离不变：预检跑在 backend（contents: read），
+    ``--check-only`` 保证它不会落盘。
+    """
+    steps = _job("backend")["steps"]
+    hits = [
+        step for step in steps
+        if "--check-only" in json.dumps(step, ensure_ascii=False)
+    ]
+    assert len(hits) == 1, hits
+    step = hits[0]
+    assert "github.event_name == 'pull_request'" in str(step.get("if", ""))
+    run = str(step.get("run", ""))
+    assert "e2e_retry_history.py record" in run
+    assert "--check-only" in run
+    text = json.dumps(step, ensure_ascii=False)
+    for forbidden in ("git commit", "git push", "upload-artifact"):
+        assert forbidden not in text, f"预检步骤做了 {forbidden!r}"
 
 
 def test_writeback_serializes_concurrent_runs() -> None:

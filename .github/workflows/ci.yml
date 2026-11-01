@@ -370,6 +370,24 @@ jobs:
           python scripts/e2e_retry_history.py check \
             --history tests/fixtures/e2e_retry_history/history.json >> "$GITHUB_STEP_SUMMARY"
 
+      - name: e2e metrics precheck for history (read-only, PR only)
+        # R92：把「metrics 能否被历史接受」左移到合入前。这条只在 PR 上跑，
+        # 且只调 --check-only：不写文件、不提交——写权限仍然只在
+        # e2e-history-writeback job。没有 metrics（e2e 环境未启动）时跳过，
+        # 与写回 job 的处置一致（那一步已经红过了）。
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          metrics="$RUNNER_TEMP/e2e-metrics.json"
+          if [ ! -f "$metrics" ]; then
+            echo "没有 $metrics（e2e 环境未启动），跳过预检"
+            exit 0
+          fi
+          python scripts/e2e_retry_history.py record \
+            "$metrics" \
+            --history tests/fixtures/e2e_retry_history/history.json \
+            --run-id "pr-${{ github.event.pull_request.number }}" \
+            --check-only
+
   # R88：CI 回写 e2e 重跑历史。R81 §7 的结论是「不做」（代价表见交接），R85 的
   # 用户拍定改为「做」。落点是一个**独立 job**，不是 backend 里加一步：
   # 写权限（contents: write）只给这个 job，而它**不跑仓库测试**——token 的写入
@@ -410,7 +428,8 @@ jobs:
             --metrics "$RUNNER_TEMP/e2e/e2e-metrics.json" \
             --history tests/fixtures/e2e_retry_history/history.json \
             --run-id "ci-${{ github.run_id }}" \
-            --commit-message "chore(e2e): record CI run ${{ github.run_id }} [skip ci]"
+            --commit-message "chore(e2e): record CI run ${{ github.run_id }} [skip ci]" \
+            --summary "$GITHUB_STEP_SUMMARY"
 
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作

@@ -265,7 +265,7 @@ def _same_observation(existing: dict, entry: dict) -> bool:
 
 
 def record(metrics_path: Path, history_path: Path,
-           run_id: str | None = None) -> int:
+           run_id: str | None = None, check_only: bool = False) -> int:
     if not metrics_path.is_file():
         print(f"metrics 未生成（{metrics_path}）：e2e 可能在写出前就退出了",
               file=sys.stderr)
@@ -304,6 +304,19 @@ def record(metrics_path: Path, history_path: Path,
     else:
         history.append(record_entry)
     trimmed = history[-MAX_ROUNDS:]
+    # 写入前自校验（R92）：算出来的历史必须能通过自己的校验器。这条覆盖
+    # record 自己的算术（覆盖/去重/裁剪），不是再验一遍输入——输入已经验过。
+    try:
+        validate_history({"schema": SCHEMA, "history": trimmed})
+    except HistoryError as exc:
+        print(f"算出来的历史没有通过校验（不写入）：{exc}", file=sys.stderr)
+        return EXIT_META_DRIFT
+    if check_only:
+        print(f"check-only：将写入 run_id={run_id}："
+              f"{entry['retried']}/{entry['total']} 个场景重跑"
+              f"（总尝试 {entry['attempts']} 次），历史 {len(trimmed)}/"
+              f"{MAX_ROUNDS} 轮（未写入）")
+        return EXIT_OK
     try:
         _write_history(history_path, trimmed)
     except OSError as exc:
@@ -385,20 +398,23 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--run-id", default=None,
                      help="轮次标识（默认取入库时间的 UTC 时间戳）；"
                           "同一个 id 重复写入是覆盖而不是追加")
+    rec.add_argument("--check-only", action="store_true",
+                     help="只校验并打印将写入的条目，不写历史（PR 预检，R92）")
 
     chk = sub.add_parser("check", help="只读校验历史并渲染趋势（损坏 → 非零）")
     chk.add_argument("--history", type=Path, required=True,
                      help="历史文件")
     chk.add_argument("--limit", type=int, default=5,
-                     help="趋势表最多显示最近几轮（默认 5；只影响显示，"
-                          "不改历史窗口 20）")
+                     help=f"趋势表最多显示最近几轮（默认 5；只影响显示，"
+                          f"不改历史窗口 {MAX_ROUNDS}）")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "record":
-        return record(args.metrics, args.history, args.run_id)
+        return record(args.metrics, args.history, args.run_id,
+                      check_only=args.check_only)
     return check(args.history, args.limit)
 
 

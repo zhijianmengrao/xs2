@@ -302,6 +302,137 @@ def test_conflict_stops_after_the_attempt_cap(
     assert "历史未入库" in out
 
 
+# ------------------------------------------------- step summary（R91）
+def test_summary_records_a_successful_writeback(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    summary = tmp_path / "summary.md"
+    summary.write_text("先有的行\n", encoding="utf-8")
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, summary_path=summary)
+
+    assert code == 0
+    text = summary.read_text(encoding="utf-8")
+    assert text.startswith("先有的行\n"), "summary 必须是追加，不能覆盖"
+    assert "ci-1" in text
+    assert writeback.REASON_WRITTEN in text
+    assert f"1/{history.MAX_ROUNDS}" in text
+
+
+def test_summary_records_the_rejection_category(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    summary = tmp_path / "summary.md"
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, summary_path=summary)
+
+    assert code == 1
+    text = summary.read_text(encoding="utf-8")
+    assert writeback.REASON_PUSH_REJECTED in text
+    assert f"{writeback.DEFAULT_ATTEMPTS} 次" in text
+
+
+def test_summary_records_missing_metrics_and_record_invalid_separately(
+        tmp_path: Path, capsys) -> None:
+    """缺 metrics（退出 0）与 record 坏掉（退出 4）不能共用一句话（R64）。"""
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    summary = tmp_path / "summary.md"
+
+    assert writeback.writeback(
+        tmp_path / "missing.json", _history_path(work), "ci-1", work,
+        summary_path=summary) == 0
+    missing_text = summary.read_text(encoding="utf-8")
+    assert writeback.REASON_METRICS_MISSING in missing_text
+    assert writeback.REASON_PUSH_REJECTED not in missing_text
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert writeback.writeback(
+        broken, _history_path(work), "ci-2", work,
+        summary_path=summary) == 4
+    text = summary.read_text(encoding="utf-8")
+    assert writeback.REASON_RECORD_INVALID in text
+    assert "record 退出 4" in text
+    assert writeback.REASON_PUSH_REJECTED not in text
+
+
+def test_summary_records_no_change_on_a_rerun(
+        tmp_path: Path, monkeypatch) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    metrics = _write_metrics(tmp_path / "metrics.json")
+    summary = tmp_path / "summary.md"
+
+    assert writeback.writeback(
+        metrics, _history_path(work), "ci-1", work, summary_path=summary) == 0
+    monkeypatch.setattr(
+        history, "_iso_now", lambda: "2026-11-01T09:00:00+00:00")
+    assert writeback.writeback(
+        metrics, _history_path(work), "ci-1", work, summary_path=summary) == 0
+
+    text = summary.read_text(encoding="utf-8")
+    assert writeback.REASON_WRITTEN in text
+    assert writeback.REASON_NO_CHANGE in text
+
+
+def test_git_errors_are_classified_as_git_errors(
+        tmp_path: Path, capsys) -> None:
+    """不是 git 仓库：::error:: 与 summary 都要说 git-error，而不是 push-rejected。"""
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    summary = tmp_path / "summary.md"
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        repo / HISTORY_REL, "ci-1", repo, summary_path=summary)
+
+    assert code == 1
+    assert writeback.REASON_GIT_ERROR in summary.read_text(encoding="utf-8")
+    assert "::error::" in capsys.readouterr().err
+
+
+def test_summary_write_failure_does_not_change_the_verdict(
+        tmp_path: Path, capsys) -> None:
+    """summary 写不进去只告警：历史已经在 git 里了，判决不能被摘要翻掉。"""
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work,
+        summary_path=tmp_path / "no_such_dir" / "summary.md")
+
+    assert code == 0
+    assert "step summary 写入失败" in capsys.readouterr().err
+
+
+def test_result_categories_are_distinct_literals() -> None:
+    """类别是 CI 可读的契约：值固定且互不相同，改名要改这里。"""
+    values = [
+        writeback.REASON_WRITTEN,
+        writeback.REASON_NO_CHANGE,
+        writeback.REASON_METRICS_MISSING,
+        writeback.REASON_RECORD_INVALID,
+        writeback.REASON_PUSH_REJECTED,
+        writeback.REASON_REBASE_CONFLICT,
+        writeback.REASON_GIT_ERROR,
+        writeback.REASON_USAGE,
+    ]
+    assert values == [
+        "written", "no-change", "metrics-missing", "record-invalid",
+        "push-rejected", "rebase-conflict", "git-error", "usage",
+    ]
+    assert len(set(values)) == len(values)
+
+
 # ------------------------------------------------------------------ CLI
 def test_cli_has_the_same_semantics_as_the_function(tmp_path: Path) -> None:
     origin = _seed(tmp_path)
@@ -313,9 +444,12 @@ def test_cli_has_the_same_semantics_as_the_function(tmp_path: Path) -> None:
         "--run-id", "ci-9",
         "--repo", str(work),
         "--commit-message", "chore(e2e): record CI run 9 [skip ci]",
+        "--summary", str(tmp_path / "summary.md"),
     ])
 
     assert code == 0
     assert _origin_history(origin)["history"][-1]["run_id"] == "ci-9"
     subjects = _origin_log(origin, "log", "--format=%s", "main").splitlines()
     assert subjects[0] == "chore(e2e): record CI run 9 [skip ci]"
+    assert writeback.REASON_WRITTEN in (
+        tmp_path / "summary.md").read_text(encoding="utf-8")

@@ -171,6 +171,71 @@ def test_record_trims_to_the_window(tmp_path: Path) -> None:
     assert entries[-1]["run_id"] == f"r{history.MAX_ROUNDS}"
 
 
+def test_record_check_only_does_not_write(tmp_path: Path, capsys) -> None:
+    """PR 预检：校验 + 打印将写入的条目，但一个字节都不落盘（R92）。"""
+    source = _metrics_file(tmp_path / "metrics.json", _metrics())
+    target = tmp_path / "history.json"
+
+    assert history.record(source, target, run_id="pr-7", check_only=True) == 0
+
+    assert not target.exists(), "check-only 不能创建历史文件"
+    out = capsys.readouterr().out
+    assert "check-only" in out and "pr-7" in out
+    assert f"1/{history.MAX_ROUNDS}" in out
+
+    # 同一份输入随后真的写入：预检说的形状与实际写出来的形状一致。
+    assert history.record(source, target, run_id="pr-7") == 0
+    assert len(history.load_history(target)) == 1
+
+
+def test_record_check_only_uses_the_same_exit_codes(tmp_path: Path) -> None:
+    """check-only 不发明新码：坏 metrics 仍是 4、缺 metrics 仍是 3。"""
+    target = tmp_path / "history.json"
+    broken = _metrics(total=10)
+    broken["failed"] = 3          # passed + failed != total
+    bad = _metrics_file(tmp_path / "bad.json", broken)
+
+    assert history.record(bad, target, run_id="pr-1", check_only=True) == 4
+    assert history.record(
+        tmp_path / "missing.json", target, run_id="pr-1",
+        check_only=True) == 3
+    assert not target.exists()
+
+
+def test_record_validates_the_result_before_writing(
+        tmp_path: Path, monkeypatch) -> None:
+    """写入前的自校验：算出来的历史过不了校验器时，文件逐字节不动（R92）。"""
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r0")])
+    before = target.read_bytes()
+
+    original = history.validate_history
+    calls = {"n": 0}
+
+    def flaky(payload: object) -> list[dict]:
+        calls["n"] += 1
+        if calls["n"] >= 2:       # 1 = 读历史，2 = 写入前自校验
+            raise history.HistoryError("注入：算出来的历史无效")
+        return original(payload)
+
+    monkeypatch.setattr(history, "validate_history", flaky)
+
+    assert history.record(
+        _metrics_file(tmp_path / "m.json", _metrics()), target,
+        run_id="r1") == 4
+    assert target.read_bytes() == before, "校验失败时不能留下半份历史"
+
+
+def test_cli_wires_check_only(tmp_path: Path) -> None:
+    target = tmp_path / "history.json"
+    code = history.main([
+        "record", str(_metrics_file(tmp_path / "metrics.json", _metrics())),
+        "--history", str(target),
+        "--run-id", "pr-1",
+        "--check-only",
+    ])
+    assert code == 0
+    assert not target.exists()
 def test_record_refuses_to_append_onto_a_corrupt_history(
         tmp_path: Path) -> None:
     """坏历史不能被静默覆盖——那会把「数据坏了」改写成「刚记了一轮」。"""
@@ -317,9 +382,11 @@ def test_ci_checks_the_committed_history_file() -> None:
 
     没有这条，趋势可以悄悄停在某一轮——CI 全绿，而跨 run 那一层早就断了。
     """
+    # 只定位 **check** 那一步：R92 之后 backend 里还有一处 `record --check-only`
+    # 的 PR 预检（它不读结果、不写文件），不能把两者算成同一处。
     hits = [
         step for step in _backend_steps()
-        if "e2e_retry_history.py" in str(step.get("run", ""))
+        if "e2e_retry_history.py check" in str(step.get("run", ""))
     ]
     assert len(hits) == 1, (
         "backend job 必须且只能有一处校验重跑历史"
