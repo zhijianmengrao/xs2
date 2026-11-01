@@ -135,6 +135,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | #3 的 3/4 两条退出路径先于判决（R73） | `tests/test_judgement_flip_points.py::test_per_workflow_regression_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_per_workflow_regression_verdict`、`test_no_sample_preempts_the_per_workflow_regression_verdict` |
 | 样本量诊断的 3/4 两条退出路径先于报告（R76） | `tests/test_judgement_flip_points.py::test_metadata_drift_preempts_the_per_workflow_sample_report`、`test_no_sample_preempts_the_per_workflow_sample_report` |
 | 畸形 `per_workflow` → 4（不是 1/8，R75） | `tests/test_live_snapshot_gate.py::test_malformed_per_workflow_metadata_is_drift_not_a_verdict`、`test_malformed_metadata_exits_four_from_the_cli` |
+| 坏 JSON 的处置：4（不是 1/3/8，R77） | `tests/test_judgement_flip_points.py::test_unparseable_metadata_is_not_a_verdict_for_the_leave_one_out_rate`、`test_unparseable_metadata_is_not_a_verdict_for_the_per_workflow_regression`、`tests/test_live_snapshot_gate.py::test_unparseable_metadata_exits_four_from_the_cli` |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
 | msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
 | 「签名 / 模块 / 探针」真值表（R71） | `tests/test_msys_attribution.py::test_skip_truth_table_has_exactly_two_independent_variables` |
@@ -258,6 +259,38 @@ R54 的用例为什么挡不住：它测漂移用的是 10/1 + 10/1（两条都�
 
 新增量是「缺元数据文件」「坏 JSON」「全厚快照的漂移」三格与顺序断言；「缺块」
 「内容为空」两条分支与 R54 重复，不声称唯一覆盖。
+
+### 7.5 元数据不是 JSON：同一道门的另一格（R77）
+
+§7.2/§7.3/§7.4 把「退出 4 / 退出 3」这两道门接到了判决与报告上，但它们造的
+元数据**全是合法 JSON**——坏也只坏形状（R75 §9 的 `"junk"` / `"abc"` / `true`
+/ `-2`）。于是 `json.loads` 抛异常这条分支在三条判据上都没有用例（R76 §7-3
+挂的账），而两种改法在既有 2328 条上全绿：
+
+- **读不懂就按内容重算**：`except ValueError` 里换成
+  `meta = {"per_workflow": recompute_per_workflow(...)}`，一份真实快照照样判出
+  「超出 / 判回归」——元数据问题（处置是重导）被翻译成「判了且不合格」；
+- **读不懂当空元数据继续**：退出码从 4 变成 3（「没有数据可判」），回归那条
+  还会把「上一轮基线丢了」说成「只有当前这一轮」（退出 0）。
+
+坏 JSON 属于退出 4 这道门（处置与漂移相同），不是第三个退出码。要钉的是
+**同一组边界外计数**：先证明元数据可读时它确实说话，再把元数据换成
+`{not json` 看它闭嘴。
+
+| 前提 | 同一组计数下的期望 | 用例 |
+|---|---|---|
+| #4 坏 JSON 先于判决 | rest 30/0 + target 4/10（硬门槛下退出 1）→ 换成 `{not json` 后退出 4，消息含「无法解析」、不含「超出」「报告模式」；**报告模式同样退出 4** | `test_unparseable_metadata_is_not_a_verdict_for_the_leave_one_out_rate` |
+| #3 坏 JSON 先于判决 | 上一轮 2/79、当前 16/79（会判回归）→ 换成 `{not json` 后退出 4，消息不含「判回归」「退出码 1」 | `test_unparseable_metadata_is_not_a_verdict_for_the_per_workflow_regression` |
+| CLI 外部退出码 | 两条判据的 `--check-per-workflow-rate` / `--check-per-workflow-regression` 都以 **4** 退出，不是 8 | `test_unparseable_metadata_exits_four_from_the_cli` |
+
+**8 是这一格最容易冒充的码**：`_run_judgement` 把 `ValueError` 归成「判据算术
+失败」，而 `json.JSONDecodeError` 正是 `ValueError` 的子类——判据里那条
+`except` 一旦被删，进程就从 4 变成 8，人按 8 去查判据算术，处置全歪。
+
+**如实记录覆盖关系**：函数级用例与 CLI 用例在 M1–M5 上**同时判红**，CLI 不是
+唯一咬合者；两条函数级用例各自的唯一咬合只有「退出码不变、消息里先写出判决词」
+那两次变异（M6/M7）。CLI 用例的价值是把**外部退出码**也钉住，而不是多发现
+一种改法。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
