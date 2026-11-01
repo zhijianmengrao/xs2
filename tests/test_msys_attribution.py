@@ -64,13 +64,15 @@ def _conftest():
 
 
 def test_skip_reason_names_the_mechanism_and_the_actionable_fix() -> None:
-    """两种归因都描述机制，并给出照做就能过的处方（R81）。
+    """两种归因都描述机制，并给出照做就能过的处方（R81 / R84）。
 
     R71 曾以「High 也会被挡」为据把处方删掉。R81 实测推翻了那条：同一份
     ``python.exe`` 在 C: 是 High（``sh.exe`` rc=0、2373 passed / 28 skipped），
-    在 F: 是 Low（``0xC0000022``、2288 passed / 113 skipped）。所以处方回归，
-    但判据同时钉住两条边界：**不写具体 SID**、**不写 "Low-integrity token"
-    这种把责任钉死在令牌上的说法**——对象侧可能比任何我们能拿到的令牌都高。
+    在 F: 的 venv 里是 Low（``0xC0000022``、2288 passed / 113 skipped）。R84 找到了
+    机制：工作区整棵树带显式 Low 强制标签，带标签的镜像被创建时令牌降到 Low；
+    同一份二进制放到无标签目录就是 High。所以判据钉住：处方必须同时给出
+    「清标签」与「C: 解释器」两条路，并**不写具体 SID**、**不写
+    "Low-integrity token"**——对象侧可能比任何我们能拿到的令牌都高。
     """
     cf = _conftest()
     for signature_hit in (True, False):
@@ -84,6 +86,9 @@ def test_skip_reason_names_the_mechanism_and_the_actionable_fix() -> None:
         assert "python.exe" in lowered, reason
         assert "py.exe" not in lowered, reason
         assert "pythonpath" in lowered, reason
+        # R84：真正的机制是「镜像继承了 Low 强制标签」，两条处置都要写出来。
+        assert "mandatory label" in lowered, reason
+        assert "icacls" in lowered, reason
         # 但不许把责任钉成「本令牌是 Low」，也不许写 SID 字面量。
         assert "low-integrity token" not in lowered, reason
         assert "s-1-16-" not in lowered, reason

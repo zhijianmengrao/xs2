@@ -1,0 +1,39 @@
+{
+  "exported_at": "2026-11-01T08:46:16+00:00",
+  "source_root": "workflows",
+  "per_workflow": {
+    "xs2-novel-flywheel-build": {
+      "runs": 5,
+      "attempts": 5,
+      "failed": 5,
+      "failure_rate": 1.0
+    },
+    "xs2-novel-flywheel-export": {
+      "runs": 1,
+      "attempts": 1,
+      "failed": 1,
+      "failure_rate": 1.0
+    }
+  },
+  "history": [
+    {
+      "exported_at": "2026-11-01T08:46:16+00:00",
+      "per_workflow": {
+        "xs2-novel-flywheel-build": {
+          "attempts": 5,
+          "failed": 5
+        },
+        "xs2-novel-flywheel-export": {
+          "attempts": 1,
+          "failed": 1
+        }
+      }
+    }
+  ],
+  "totals": {
+    "runs": 6,
+    "attempts": 6,
+    "failed": 6,
+    "failure_rate": 1.0
+  }
+}

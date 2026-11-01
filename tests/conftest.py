@@ -189,24 +189,35 @@ def _msys_skip_reason(signature_hit: bool) -> str:
     """Skip 归因文案：机制 + 可执行的处置（R81 恢复处方，R71 曾删除）。
 
     R71 删掉「改用 High-IL 解释器」是因为 R70 §6.1 记录 High 也被挡。R81 实测
-    推翻那条：同一份 python.exe 放 C: 是 High（``sh.exe`` rc=0，2373 passed /
-    28 skipped），放 F: 是 Low（``0xC0000022``，2288 passed / 113 skipped）；
-    对象隐式带创建者 IL，Low 打开者连 DACL 里写着允许的 ``DIRECTORY_CREATE_*``
-    都会被拒。因此文案写回处方，但仍然**不把责任钉在「本令牌是 Low」**（对象侧
-    可能比任何我们能拿到的令牌都高），也不写具体 SID。
+    推翻那条：同一份 python.exe 在 C: 是 High（``sh.exe`` rc=0，2373 passed /
+    28 skipped），在 F: 的 venv 里是 Low（``0xC0000022``，2288 passed / 113
+    skipped）；对象隐式带创建者 IL，Low 打开者连 DACL 里写着允许的
+    ``DIRECTORY_CREATE_*`` 都会被拒。因此文案写回处方，但仍然**不把责任钉在
+    「本令牌是 Low」**（对象侧可能比任何我们能拿到的令牌都高），也不写具体 SID。
 
     R82 更正启动器：``C:\\Windows\\py.exe`` 是 Windows launcher，本机今天没有
     项目依赖（137 个 collection error）；实测有效的是 C: 上的 CPython 本体
     ``C:\\Program Files\\Python314\\python.exe``，并把 venv 的 site-packages
     与 ``win32`` / ``pythonwin`` / ``pywin32_system32`` 一起放进 ``PYTHONPATH``
     （``.pth`` 不生效，必须显式列出）。
+
+    R84 更正机制（不是「F: 上的可执行文件被降级」）：本工作区
+    ``F:\\DeterminFlow x2`` 整棵树带**显式 Low 强制标签**（``icacls`` 显示
+    ``Mandatory Label\\Low Mandatory Level:(OI)(CI)(NW)``），子项全部继承；带
+    Low 标签的镜像被创建时，进程令牌降到 Low。把同一份 python.exe 复制到
+    ``F:\\`` 根或别的无标签目录就是 High。因此文案给出两条并列处置：清标签，
+    或用 C: 解释器。文案对**别的机器**只说「镜像可能继承了 Low 标签，查
+    ``icacls``」，不声称这台机器的标签是唯一可能的原因。
     """
     return (
         "msys git transport cannot attach this session's shared msys-2.0 object "
         + ("(matched NtCreateDirectoryObject boot signature)" if signature_hit
            else "(unattributable inside a git-transport module)")
-        + "; this launcher runs below the integrity level that created the object, "
-          "so re-run from a High-IL shell with a C: interpreter, e.g. "
+        + "; the interpreter image runs below the integrity level that created "
+          "the object (an image that inherits a Low mandatory label is launched "
+          "at Low; check `icacls <tree>`), so either clear that label "
+          "(icacls <tree> /setintegritylevel Medium) or re-run from a High-IL "
+          "shell with a C: interpreter, e.g. "
           "C:\\Program Files\\Python314\\python.exe -m pytest with the venv "
           "site-packages on PYTHONPATH "
           "(see PROJECT_INFO.md platform note 9)"

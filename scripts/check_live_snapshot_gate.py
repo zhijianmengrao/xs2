@@ -289,6 +289,16 @@ def _load_snapshot_meta(data_dir: Path, purpose: str = "") -> tuple[
 # 于是旧格式的 totals 会被判漂移（4）——处置正是重导，导出脚本会补上它。
 _TOTALS_COUNT_FIELDS = ("runs", "attempts", "failed")
 
+# ``totals`` / ``per_workflow`` 里**不参与判定**的展示字段（R84 登记）。
+# ``failure_rate`` 是导出脚本按 4 位小数写给人看的派生值（``export_run_samples.py``
+# 的 ``totals`` 与每个 bucket 各一份）。它不能并进上面的计数表：
+# ``_count_value_error`` 只接受整数/整数字符串，``0.0392`` 会让每一份入库快照在
+# 形状校验处被判「形状无效」；而要做成判据就得比「四舍五入后相等」——那是另一族
+# 脆弱算术（台账 §7.10）。登记的含义是**任何判决都不读它**：守卫用例
+# ``test_failure_rate_is_display_only`` 把它的值改成 ``"abc"`` / ``true`` / 浮点 /
+# ``null`` 或整个删掉，六个读计数入口的退出码与**文案**必须逐字不变。
+_DISPLAY_ONLY_FIELDS = ("failure_rate",)
+
 
 def _totals_of(buckets: dict[str, dict]) -> dict[str, int]:
     """分组计数 → 全局合计 ``{runs, attempts, failed}``（R82 / R83）。

@@ -1,0 +1,34 @@
+{
+  "run_id": "run-6e0da8a3",
+  "workflow_id": "xs2-novel-flywheel-build",
+  "status": "failed",
+  "started_at": "2026-10-26T15:13:35.038249+08:00",
+  "completed_at": null,
+  "node_executions": [
+    {
+      "node_id": "agent_corelaws",
+      "status": "failed",
+      "started_at": "2026-10-26T15:13:35.038951+08:00",
+      "completed_at": "2026-10-26T15:17:03.794766+08:00",
+      "error": "No streaming chunk received for 120.0s (model=z-ai/glm-5.3-flash, chunks_received=910). The connection may be alive at the TCP layer but is not producing content. Tune or disable via the `stream_chunk_timeout` constructor kwarg (set to None or 0 to disable) or the `LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S` env var. See also `http_socket_options` for the kernel-level TCP timeout that catches dead TCP peers.",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "No streaming chunk received for 120.0s (model=z-ai/glm-5.3-flash, chunks_received=910). The connection may be alive at the TCP layer but is not producing content. Tune or disable via the `stream_chunk_timeout` constructor kwarg (set to None or 0 to disable) or the `LANGCHAIN_OPENAI_STREAM_CHUNK_TIMEOUT_S` env var. See also `http_socket_options` for the kernel-level TCP timeout that catches dead TCP peers.",
+          "started_at": "2026-10-26T15:13:35.038951+08:00",
+          "completed_at": "2026-10-26T15:17:03.794766+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}

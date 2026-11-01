@@ -393,9 +393,10 @@ def _snapshot_roots() -> list[Path]:
 
 
 def test_payload_scan_covers_every_snapshot_fixture() -> None:
-    """自动发现不能静默退化成空集：两个已知快照 fixture 必须在扫描范围内。"""
+    """自动发现不能静默退化成空集：三个已知快照 fixture 必须在扫描范围内。"""
     names = {p.name for p in _snapshot_roots()}
-    assert {"live_snapshot", "live_snapshot_exceeds"} <= names, (
+    assert {"live_snapshot", "live_snapshot_exceeds",
+            "live_snapshot_all_failed"} <= names, (
         f"载荷扫描没有覆盖全部快照 fixture：{sorted(names)}")
 
 
@@ -1575,6 +1576,132 @@ def test_every_count_reader_passes_the_committed_snapshot() -> None:
     }
     for name, (code, message) in readers.items():
         assert code == live_gate.EXIT_OK, f"{name}: {message}"
+
+
+# ------------------------------------------------- R84：展示字段不参与判决
+# ``failure_rate`` 有两个副本（``totals`` 与每个 ``per_workflow`` bucket），都是
+# 导出器写给读者看的派生值。登记为只读展示字段之后，守住的是**结构**：它不在
+# 两张计数表里，形状校验、漂移比较、求和都碰不到它。下面的用例把「碰不到」变成
+# 可执行断言——改坏它之后六个入口的 ``(code, message)`` 必须逐字不变。
+_DISPLAY_FIELD_VALUES = ["abc", True, 3.7, 0.99, None]
+_DISPLAY_FIELD_DELETE = "__missing__"
+
+
+def _write_display_field(root: Path, value: object = 0.0392) -> None:
+    """模拟导出器的正常输出：``totals`` 与每个 bucket 都带 ``failure_rate``。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["totals"]["failure_rate"] = value
+    for bucket in meta["per_workflow"].values():
+        bucket["failure_rate"] = value
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _mutate_display_field(root: Path, location: str, value: object) -> None:
+    """把展示字段改成坏值（或删掉）；三个计数保持真实。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    targets = ([meta["totals"]] if location == "totals"
+               else list(meta["per_workflow"].values()))
+    for target in targets:
+        if value == _DISPLAY_FIELD_DELETE:
+            target.pop("failure_rate", None)
+        else:
+            target["failure_rate"] = value
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_display_only_registry_is_structurally_excluded() -> None:
+    """「只读」必须由结构保证：登记清单与两张计数表无交集（R84）。"""
+    assert set(live_gate._DISPLAY_ONLY_FIELDS) == {"failure_rate"}
+    for count_table in (live_gate._TOTALS_COUNT_FIELDS,
+                        live_gate._PER_WORKFLOW_COUNT_FIELDS):
+        assert not set(live_gate._DISPLAY_ONLY_FIELDS) & set(count_table)
+
+
+def test_committed_snapshot_carries_the_display_field() -> None:
+    """登记的前提：真实入库快照里确实有它。
+
+    ``live_snapshot_exceeds`` 没有这个字段，那正好是「缺失不判」的现成证据；但
+    真实快照必须带着它，否则下面的守卫只是在测「字段根本不存在」。
+    """
+    meta = json.loads(
+        (SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
+    assert "failure_rate" in meta["totals"]
+    assert all("failure_rate" in bucket
+               for bucket in meta["per_workflow"].values())
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _ALL_COUNT_READERS],
+                         ids=[n for n, _ in _ALL_COUNT_READERS])
+@pytest.mark.parametrize("location", ["totals", "per_workflow"])
+@pytest.mark.parametrize("value",
+                         _DISPLAY_FIELD_VALUES + [_DISPLAY_FIELD_DELETE],
+                         ids=lambda v: "missing" if v == _DISPLAY_FIELD_DELETE
+                         else repr(v))
+def test_failure_rate_is_display_only(tmp_path: Path, judge, location: str,
+                                      value: object) -> None:
+    """把展示字段改坏/删掉，六个入口的退出码与文案必须逐字不变（R84）。
+
+    只比退出码不够：一个「读了但只在文案里用」的入口会漏过去。这里比整个
+    ``(code, message)``——任何入口偷读它，文案里的数字或措辞就会变。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    _write_display_field(tmp_path)
+    baseline = judge(tmp_path)
+
+    _mutate_display_field(tmp_path, location, value)
+    assert judge(tmp_path) == baseline
+
+
+# ------------------------------------------------- R84：p=1.0 的真实数据
+# R53 修了「全部失败时 ``p(1-p)=0`` 让样本量判据恒绿」，但一直只有构造样本验证
+# （R83 §9-4 挂账）。真实数据里恰好有 6 个 ``failed == attempts`` 的 run（5 个
+# build + 1 个 export，全是 1 次尝试 1 次失败）。导出成独立 fixture 后，这条
+# 分支第一次由**真实载荷**走完 导出 → 元数据 → 闸门 全链，并由 CI 常驻钉住。
+ALL_FAILED_ROOT = REPO_ROOT / "tests" / "fixtures" / "live_snapshot_all_failed"
+
+
+def test_all_failed_fixture_is_a_real_export() -> None:
+    """来源必须是真实导出（``source_root`` 不是 ``synthetic``），且内容自洽。"""
+    meta = json.loads(
+        (ALL_FAILED_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
+    assert meta["source_root"] == "workflows"
+    assert (meta["totals"]["runs"], meta["totals"]["attempts"],
+            meta["totals"]["failed"]) == (6, 6, 6)
+    assert live_gate.recompute_totals(ALL_FAILED_ROOT / "workflows") == {
+        "runs": 6, "attempts": 6, "failed": 6}
+
+    payloads = [json.loads(path.read_text(encoding="utf-8"))
+                for path in ALL_FAILED_ROOT.glob("workflows/*/runs/run-*.json")]
+    assert len(payloads) == 6
+    assert {payload["status"] for payload in payloads} == {"failed"}
+
+
+def test_all_failed_fixture_uses_the_all_failed_closed_form() -> None:
+    """真实 p=1.0 走的是全失败闭式；正态近似在这里算成 0，会判「样本足够」。"""
+    needed = live_gate.sample_size_margin_needed(6, 6)
+    assert needed is not None
+    assert abs(needed - 39.303776899708275) < 1e-9
+    assert abs(needed - (1 - 0.05 ** (1 / 6)) * 100) < 1e-9
+
+
+def test_real_all_failed_snapshot_is_thin_and_says_why() -> None:
+    """6/6 真实快照判 7，且文案必须写出「全部失败」与所需样本量（29 次）。"""
+    code, message = live_gate.check_sample_size(ALL_FAILED_ROOT, 10.0)
+    assert code == live_gate.EXIT_THIN_SAMPLE, message
+    assert "全部失败时到 100% 的 95% 单侧距离 39.30 个百分点" in message, message
+    assert "n=6" in message, message
+    assert "约 29 次尝试" in message, message
+
+
+def test_real_all_failed_snapshot_exceeds_the_policy_ceiling() -> None:
+    """6/6 的 95% 区间是 [60.70%, 100%]：对 8% 上限判超阈，不是「样本不足所以通过」。"""
+    code, message = live_gate.evaluate(ALL_FAILED_ROOT, ceiling=8.0)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "失败率 100.00%（n=6, 失败 6）" in message, message
+    assert "95% 区间 [60.70%, 100.00%]" in message, message
+    assert "判超阈" in message, message
 
 
 def test_per_workflow_detects_run_count_drift(tmp_path: Path) -> None:
