@@ -149,4 +149,22 @@ R77 说「`snapshot-meta.json` 是目录」是同一个 `except` 的另一种注
 
 ## 9. 提交、推送与 CI 核对
 
-（回填）
+两次提交（`5a86694` feat + `1d6ef42` docs，显式路径 add）后推送
+`bf5fd77..1d6ef42`（一次成功；本轮 socks5 与直连同时可用，用的是全局 socks5）。
+CI run **41265908796**（push，02:36:31 → 02:40:51，约 4m20s）五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（02:36:34–02:39:06）/ windows-backend（02:36:34–02:40:51）/ frontend（02:36:34–02:38:20）/ container-config（02:36:34–02:36:40）/ container-build（02:36:34–02:37:13）全部 `success` |
+| ubuntu | `2309 passed, 65 skipped, 1 warning in 110.02s` = **2374** |
+| windows | `2345 passed, 29 skipped, 1 warning in 195.72s` = **2374** |
+| 新用例在 CI 真跑 | ubuntu 2285/65 → **2309/65**、windows 2321/29 → **2345/29**（各 **+24**） |
+| 快照判据 | backend 第 8–14 步（真实快照闸门 / 回归 / 逐 workflow 回归 / 提前量 / 样本量 / per-workflow 报告 / 失败率门槛）全 `success`；windows 第 7–11 步同 |
+| e2e / metrics | `[e2e] 10/10 场景通过`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| e2e 趋势（R78 步骤） | backend 第 **17** 步 `e2e retry trend (history, read-only)` `success` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过`；`docker compose config -q` 成功 |
+| Desktop Windows / macOS | 未触发（该 SHA 下只有 CI 一个 run） |
+
+`$GITHUB_STEP_SUMMARY` 正文 API 不提供，趋势表由本地同一个 `render_trend()` 逐字
+验证（与 R74 §7-2 同一条限制）；CI 上能核到的是「这一步以 0 退出」。
+
