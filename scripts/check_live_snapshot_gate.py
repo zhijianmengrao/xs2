@@ -281,31 +281,26 @@ def _load_snapshot_meta(data_dir: Path, purpose: str = "") -> tuple[
     return meta, None
 
 
+def _totals_of(buckets: dict[str, dict]) -> tuple[int, int]:
+    """分组计数 → 全局合计 ``(attempts, failed)``（R82）。
+
+    内容计数的**唯一**求和口径：``recompute_totals`` 与六处读计数的判据都从这里
+    取全局数。两处各写一份求和，迟早出现「这边合计与那边分组合不上」的分裂——
+    而分裂之后两块元数据各自都能与自己对得上，没人看得出它们说的不是同一份数据。
+    """
+    return (sum(int(bucket.get("attempts") or 0) for bucket in buckets.values()),
+            sum(int(bucket.get("failed") or 0) for bucket in buckets.values()))
+
+
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
-    """从快照内容复算 (attempts, failed)——与闸门脚本同一口径。"""
-    attempts = failed = 0
-    if not workflows_dir.is_dir():
-        return 0, 0
-    for wf_dir in sorted(workflows_dir.iterdir()):
-        runs_dir = wf_dir / "runs"
-        if not wf_dir.is_dir() or not runs_dir.is_dir():
-            continue
-        for run_file in sorted(runs_dir.glob("run-*.json")):
-            try:
-                run = json.loads(run_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            profile = build_run_profile(
-                run.get("node_executions") or [],
-                run_id=str(run.get("run_id") or run_file.stem),
-                workflow_id=wf_dir.name,
-                status=str(run.get("status", "")),
-                started_at=run.get("started_at"),
-                completed_at=run.get("completed_at"),
-            )
-            attempts += profile["totals"]["attempts"]
-            failed += profile["totals"]["failed"]
-    return attempts, failed
+    """从快照内容复算 ``(attempts, failed)``——``recompute_per_workflow`` 的合计。
+
+    R82 起不再单独走一遍内容：全局合计由分组复算求和而来。``totals`` 与
+    ``per_workflow`` 两块于是被钉到**同一次**内容复算上，「两块互相一致」是构造
+    保证，而不是一条每次都要重新求和的判据（求和对账永远只能后手确认，且在两块
+    都被钉到内容之后不会唯一决定任何事）。
+    """
+    return _totals_of(recompute_per_workflow(workflows_dir))
 
 
 def evaluate(data_dir: Path, ceiling: float | None = None,
@@ -339,23 +334,34 @@ def evaluate(data_dir: Path, ceiling: float | None = None,
     if rec_attempts <= 0:
         return EXIT_NO_SAMPLE, "快照元数据 attempts=0，真实数据面为空"
 
-    actual_attempts, actual_failed = recompute_totals(data_dir / "workflows")
+    # 一次内容遍历供三处共用：全局漂移、分组交叉校验、回归基线（R82）。三项各
+    # 走一遍，迟早出现「这边判的总数与那边分组复算不是同一份内容」。
+    current = recompute_per_workflow(data_dir / "workflows")
+    actual_attempts, actual_failed = _totals_of(current)
     if actual_attempts != rec_attempts or actual_failed != rec_failed:
-        return EXIT_META_DRIFT, (
-            f"快照内容与元数据不一致：元数据 {rec_failed}/{rec_attempts}，"
-            f"内容复算 {actual_failed}/{actual_attempts}。"
-            "改过快照就要重导：python scripts/export_run_samples.py "
-            "--dest tests/fixtures/live_snapshot --limit 2")
+        return EXIT_META_DRIFT, _totals_drift_message(
+            recorded, (actual_attempts, actual_failed))
+
+    # R82：另一块也不能说谎。默认判定此前只比 totals：把一次失败从 A 工作流挪到
+    # B，全局合计分毫不动，它照样退出 0——而 CI 的默认判定就是这一步。另一块
+    # 缺失时跳过，但必须写明「本步没有做交叉校验」（R63：说不出话不许沉默）。
+    per_workflow_recorded, per_workflow_error = _per_workflow_block_error(
+        meta, current)
+    if per_workflow_error:
+        return EXIT_META_DRIFT, per_workflow_error
 
     policy_verdict, policy_detail = _ceiling_verdict(
         rec_attempts, rec_failed, ceiling)
     parts = [policy_detail]
+    if not per_workflow_recorded:
+        parts.append(
+            "元数据没有 per_workflow 块：本次未做分组交叉校验"
+            "（默认判定只校验了 totals）")
     regression_verdict = "report"
     if regression_margin is not None:
         # 与 ``snapshot_rounds`` 同一口径：当前轮取快照**内容**复算的分组计数，
         # 不取元数据里的一句话。全局漂移校验只比总数，把一次失败从 A 挪到 B
         # 它看不出来，而那种改动恰好会改变「当前这一轮」的身份。
-        current = recompute_per_workflow(data_dir / "workflows")
         baseline, invalid_history, note = historical_baseline(meta, current)
         if baseline is None:
             regression_verdict = "undetermined"
@@ -757,23 +763,36 @@ def check_sample_size(data_dir: Path, margin: float) -> tuple[int, str]:
         return EXIT_NO_SAMPLE, "快照元数据 attempts=0，没有可判的样本量"
 
     # 与 ``evaluate`` 同一条纪律：内容必须与元数据复算一致，否则判的是别的数字。
-    actual_attempts, actual_failed = recompute_totals(data_dir / "workflows")
+    current = recompute_per_workflow(data_dir / "workflows")
+    actual_attempts, actual_failed = _totals_of(current)
     if (actual_attempts, actual_failed) != (attempts, failed):
-        return EXIT_META_DRIFT, (
-            f"快照内容与元数据不一致：元数据 {failed}/{attempts}，"
-            f"内容复算 {actual_failed}/{actual_attempts}。改过快照就要重导")
+        return EXIT_META_DRIFT, _totals_drift_message(
+            recorded, (actual_attempts, actual_failed))
+
+    # R82：另一块也不能说谎——本步的判决只用 totals，但工件是一份：per_workflow
+    # 坏了说明这份快照不该被任何判据当真。缺失时跳过并写明（旧快照合法）。
+    per_workflow_recorded, per_workflow_error = _per_workflow_block_error(
+        meta, current)
+    if per_workflow_error:
+        return EXIT_META_DRIFT, per_workflow_error
+    cross_note = ("" if per_workflow_recorded
+                  else "。（元数据没有 per_workflow 块：本次未做分组交叉校验）")
 
     ok, detail = _failure_rate_precision(attempts, failed, margin)
     if not ok:
         return EXIT_THIN_SAMPLE, (
             f"快照样本太薄，失败率估计不足以当闸门基线：{detail}。"
             "重导更多 run：python scripts/export_run_samples.py "
-            "--dest tests/fixtures/live_snapshot --limit 5")
-    return EXIT_OK, f"快照样本量足够支撑失败率判定：{detail}"
+            "--dest tests/fixtures/live_snapshot --limit 5" + cross_note)
+    return EXIT_OK, (
+        f"快照样本量足够支撑失败率判定：{detail}" + cross_note)
 
 
 def recompute_per_workflow(workflows_dir: Path) -> dict[str, dict]:
-    """按 workflow 复算 ``(runs, attempts, failed)``——``recompute_totals`` 的分组版。
+    """按 workflow 复算 ``(runs, attempts, failed)``——**唯一**的内容计数口径。
+
+    ``recompute_totals`` 与全局合计都从这份分组结果求和（R82），所以
+    ``totals`` 与 ``per_workflow`` 两块元数据永远被钉在同一份内容上。
 
     为什么需要分组复算而不是只信全局合计：``recompute_totals`` 只比总数。
     一次「把 A 工作流的一次失败改成 B 工作流的」改动不会改变全局 attempts/failed，
@@ -963,6 +982,69 @@ def _metadata_shape_message(error: str, section: str = "per-workflow") -> str:
         "--dest tests/fixtures/live_snapshot --limit 2")
 
 
+def _totals_drift_message(recorded: dict, actual: tuple[int, int]) -> str:
+    """``totals`` 与内容复算不一致 → 退出码 4 的统一说明（R82）。
+
+    与 ``_drift_message`` 同一处置（重导），但必须点名是**哪一块**在说谎：四条
+    per-workflow 判据本来看不到 totals，日志里只写「内容与元数据不一致」会让读的人
+    去查 per_workflow。块名写在这里，六个入口共用同一句。
+    """
+    return (
+        f"totals 元数据与内容不一致：元数据 "
+        f"{int(recorded.get('failed') or 0)}/{int(recorded.get('attempts') or 0)}，"
+        f"内容复算 {actual[1]}/{actual[0]}。"
+        "改过快照就要重导：python scripts/export_run_samples.py "
+        "--dest tests/fixtures/live_snapshot --limit 2")
+
+
+def _totals_block_error(meta: dict, actual: tuple[int, int]) -> str | None:
+    """``totals`` 块的形状与内容一致性；合法或缺失时 ``None``（R82）。
+
+    只给四条**读 per_workflow** 的判据用：它们本来根本不看 totals，一份说谎的
+    totals 在它们眼里不存在。缺失不是错误——旧快照可以没有这一块，而这类判据的
+    判决不依赖它（``None`` 表示「没有可校验的另一块」）。
+    """
+    recorded, block_error = _count_block(meta, "totals")
+    if block_error:
+        return _metadata_shape_message(block_error, "totals")
+    if not recorded:
+        return None
+    shape_error = _totals_shape_error(recorded)
+    if shape_error:
+        return _metadata_shape_message(shape_error, "totals")
+    if (int(recorded.get("attempts") or 0),
+            int(recorded.get("failed") or 0)) != actual:
+        return _totals_drift_message(recorded, actual)
+    return None
+
+
+def _per_workflow_block_error(meta: dict, actual: dict[str, dict]
+                              ) -> tuple[dict, str | None]:
+    """``per_workflow`` 块：``(块, 形状或漂移错误)``；缺失时 ``({}, None)``（R82）。
+
+    供 ``evaluate`` / ``check_sample_size`` 使用——它们本来只比 totals。缺失与
+    「内容里没有任何 run」都由调用方自己判 3（两类判据的措辞不同），这里只报
+    形状无效与漂移（4）。
+
+    内容为空时跳过漂移：否则每个元数据条目都会被报成「元数据有、内容无」，
+    而真实状况是「还没有内容」，处置是导出而不是修元数据。
+    """
+    recorded, block_error = _count_block(meta, "per_workflow")
+    if block_error:
+        return {}, _metadata_shape_message(block_error)
+    if not recorded:
+        return {}, None
+    shape_error = _per_workflow_shape_error(recorded)
+    if shape_error:
+        return {}, _metadata_shape_message(shape_error)
+    if not actual:
+        return recorded, None
+    drifts = _per_workflow_drift(recorded, actual)
+    if drifts:
+        return recorded, _drift_message(drifts)
+    return recorded, None
+
+
 def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     """按 workflow 分别判「失败率估计精度够不够」（R54）。
 
@@ -994,27 +1076,24 @@ def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     if error is not None:
         return error
 
-    recorded, block_error = _count_block(meta, "per_workflow")
+    actual = recompute_per_workflow(data_dir / "workflows")
+    recorded, block_error = _per_workflow_block_error(meta, actual)
     if block_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+        return EXIT_META_DRIFT, block_error
     if not recorded:
         return EXIT_NO_SAMPLE, (
             "快照元数据缺 per_workflow 块，无法判 per-workflow 样本量。"
             "重导一次即可补上：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
-
-    shape_error = _per_workflow_shape_error(recorded)
-    if shape_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
-
-    actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
         return EXIT_NO_SAMPLE, (
             f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
 
-    drifts = _per_workflow_drift(recorded, actual)
-    if drifts:
-        return EXIT_META_DRIFT, _drift_message(drifts)
+    # R82：另一块（totals）也必须与内容一致——工件只有一份，一块说谎就说明这份
+    # 快照不该被任何判据当真。缺失时跳过（旧快照可以没有这一块）。
+    totals_error = _totals_block_error(meta, _totals_of(actual))
+    if totals_error:
+        return EXIT_META_DRIFT, totals_error
 
     thin: list[str] = []
     thick: list[str] = []
@@ -1479,29 +1558,25 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
     if error is not None:
         return error
 
-    recorded, block_error = _count_block(meta, "per_workflow")
+    actual = recompute_per_workflow(data_dir / "workflows")
+    recorded, block_error = _per_workflow_block_error(meta, actual)
     if block_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+        return EXIT_META_DRIFT, block_error
     if not recorded:
         return EXIT_NO_SAMPLE, (
             "快照元数据缺 per_workflow 块，无法判 per-workflow 失败率。"
             "重导一次即可补上：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
-
-    shape_error = _per_workflow_shape_error(recorded)
-    if shape_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
-
-    actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
         return EXIT_NO_SAMPLE, (
             f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
 
     # 与 --check-per-workflow 完全同一层校验：判失败率之前，先确认判的是内容
     # 而不是一句写在元数据里的话。两处各写一份漂移检查会各自演化出差异。
-    drifts = _per_workflow_drift(recorded, actual)
-    if drifts:
-        return EXIT_META_DRIFT, _drift_message(drifts)
+    # R82 起「同一层」扩展到整份工件：另一块（totals）说谎同样退出 4。
+    totals_error = _totals_block_error(meta, _totals_of(actual))
+    if totals_error:
+        return EXIT_META_DRIFT, totals_error
 
     report = per_workflow_rate_report(actual, margin)
     exceeds = [n for n in sorted(report) if report[n]["verdict"] == "exceeds"]
@@ -1661,29 +1736,24 @@ def check_per_workflow_regression(data_dir: Path,
     if error is not None:
         return error
 
-    recorded, block_error = _count_block(meta, "per_workflow")
+    actual = recompute_per_workflow(data_dir / "workflows")
+    recorded, block_error = _per_workflow_block_error(meta, actual)
     if block_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+        return EXIT_META_DRIFT, block_error
     if not recorded:
         return EXIT_NO_SAMPLE, (
             "快照元数据缺 per_workflow 块，无法判逐 workflow 回归。"
             "重导一次即可补上：python scripts/export_run_samples.py "
             "--dest tests/fixtures/live_snapshot --limit 2")
-
-    shape_error = _per_workflow_shape_error(recorded)
-    if shape_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
-
-    actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
         return EXIT_NO_SAMPLE, (
             f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
 
     # 与另两条 per-workflow 判据同一层校验：先确认判的是内容而不是元数据里
-    # 的一句话，再谈回归。
-    drifts = _per_workflow_drift(recorded, actual)
-    if drifts:
-        return EXIT_META_DRIFT, _drift_message(drifts)
+    # 的一句话，再谈回归。R82 起同一层覆盖整份工件（另一块 totals 也算）。
+    totals_error = _totals_block_error(meta, _totals_of(actual))
+    if totals_error:
+        return EXIT_META_DRIFT, totals_error
 
     rounds, invalid_history = snapshot_rounds(meta, actual)
     if len(rounds) < 2:
@@ -1912,15 +1982,13 @@ def check_lead_time(data_dir: Path, precision_margin: float,
     # 旧写法把 truthy 的 ``"junk"`` 直接交给 ``_per_workflow_drift``，在
     # ``set(recorded)`` / ``.get`` 上抛 ``AttributeError`` → CLI 以 **1** 退出；
     # ``"failed": "abc"`` 则被归成 **8**。两种都在冒充结论，处置都是重导。
-    recorded, block_error = _count_block(meta, "per_workflow")
+    _recorded, block_error = _per_workflow_block_error(meta, actual)
     if block_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
-    shape_error = _per_workflow_shape_error(recorded)
-    if shape_error:
-        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
-    drifts = _per_workflow_drift(recorded, actual)
-    if drifts:
-        return EXIT_META_DRIFT, _drift_message(drifts)
+        return EXIT_META_DRIFT, block_error
+    # R82：另一块（totals）也必须与内容一致；缺失时跳过。
+    totals_error = _totals_block_error(meta, _totals_of(actual))
+    if totals_error:
+        return EXIT_META_DRIFT, totals_error
 
     rounds, invalid_history = snapshot_rounds(meta, actual)
     if len(rounds) < 2:

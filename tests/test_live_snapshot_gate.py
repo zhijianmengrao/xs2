@@ -1301,26 +1301,192 @@ def test_per_workflow_catches_drift_the_global_totals_miss(tmp_path: Path) -> No
     """R54 的全部动机：把一次失败从一个 workflow 挪到另一个。
 
     两个 workflow 各 10 次尝试、各 1 次失败。全局 attempts/failed 都是
-    (20, 2)，分毫不动——所以 ``recompute_totals`` 的全局校验通过；而
-    ``per_workflow`` 元数据里 a 已写成 2 次失败，与内容不一致。
-    全局判据看不出来的洞，只能由分组复算补。
+    (20, 2)，分毫不动——所以只比总数的判据看不出来；而 ``per_workflow``
+    元数据里 a 已写成 2 次失败，与内容不一致。
+
+    R82 起**默认判定也走分组校验**：这条用例原先还在第二半断言
+    ``evaluate`` 仍退 0（把缺口本身钉住），现在同一份改动必须让它退 4。
     """
     _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
     # 先确认基线：全局与 per-workflow 都一致时双绿。
     assert live_gate.evaluate(tmp_path, ceiling=8.0)[0] == live_gate.EXIT_OK
     assert live_gate.check_per_workflow(tmp_path, margin=10.0)[0] == live_gate.EXIT_OK
 
-    meta = json.loads((tmp_path / "snapshot-meta.json").read_text(encoding="utf-8"))
-    meta["per_workflow"]["wf-a"]["failed"] = 2
-    meta["per_workflow"]["wf-b"]["failed"] = 0
-    (tmp_path / "snapshot-meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    _move_one_failure(tmp_path)
 
-    # 全局合计未变 → 全局判据仍然绿（这正是缺口本身）。
-    assert live_gate.evaluate(tmp_path, ceiling=8.0)[0] == live_gate.EXIT_OK
-    # 分组复算必须抓到。
+    # 分组复算抓到（R54）。
     code, message = live_gate.check_per_workflow(tmp_path, margin=10.0)
     assert code == live_gate.EXIT_META_DRIFT, message
     assert "wf-a" in message and "wf-b" in message
+    # R82：默认判定也抓到——全局合计未变不再是免罪理由。
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "wf-a" in message and "wf-b" in message
+
+
+def _move_one_failure(root: Path) -> None:
+    """把 wf-a 的一次失败挪给 wf-b：全局合计不变，分组元数据说谎。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-a"]["failed"] = 2
+    meta["per_workflow"]["wf-b"]["failed"] = 0
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _lie_about_totals(root: Path) -> None:
+    """只改 totals（内容与 per_workflow 都保持真实）。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["totals"] = {"attempts": meta["totals"]["attempts"] + 1,
+                      "failed": meta["totals"]["failed"]}
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+# R82：六个读计数的入口都必须校验**整份**计数工件。前两条判据本来只比 totals，
+# 后四条本来只比 per_workflow——各自都说得通，但一块说谎时另一半的读者完全
+# 看不见。参数化保证每条入口的补丁各有一条用例**唯一**咬住。
+_MOVED_FAILURE_JUDGES = [
+    ("evaluate", lambda root: live_gate.evaluate(root, ceiling=8.0)),
+    ("check_sample_size", lambda root: live_gate.check_sample_size(root, 10.0)),
+]
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _MOVED_FAILURE_JUDGES],
+                         ids=[n for n, _ in _MOVED_FAILURE_JUDGES])
+def test_moved_failure_is_drift_for_every_totals_reader(
+        tmp_path: Path, judge) -> None:
+    """per_workflow 说谎：两个只读 totals 的入口也必须退 4。
+
+    不先断言基线退出码——这份 20 次尝试的小样本本身就判 7（太薄），
+    要钉的是「改坏 per_workflow 之前不是 4，之后必须是 4」。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    assert judge(tmp_path)[0] != live_gate.EXIT_META_DRIFT
+
+    _move_one_failure(tmp_path)
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "wf-a" in message and "wf-b" in message
+
+
+_LYING_TOTALS_JUDGES = [
+    ("check_per_workflow",
+     lambda root: live_gate.check_per_workflow(root, 10.0)),
+    ("check_per_workflow_rate",
+     lambda root: live_gate.check_per_workflow_rate(root, 10.0)),
+    ("check_per_workflow_regression",
+     lambda root: live_gate.check_per_workflow_regression(root, 10.0)),
+    ("check_lead_time",
+     lambda root: live_gate.check_lead_time(root, 10.0, 10.0, 3.0)),
+]
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _LYING_TOTALS_JUDGES],
+                         ids=[n for n, _ in _LYING_TOTALS_JUDGES])
+def test_lying_totals_is_drift_for_every_per_workflow_reader(
+        tmp_path: Path, judge) -> None:
+    """totals 说谎：四个只读 per_workflow 的入口也必须退 4。
+
+    不先断言基线退出码——这四条判据在没有历史时本来就分别给 0 与 3
+    （``check_lead_time`` 没有上一轮时退 3）。要钉的是「改坏 totals 之前不是 4，
+    之后必须是 4」。
+    """
+    _rate_snapshot(tmp_path, {"good-a": (30, 0), "good-b": (30, 0),
+                              "bad": (40, 40)})
+    assert judge(tmp_path)[0] != live_gate.EXIT_META_DRIFT
+
+    _lie_about_totals(tmp_path)
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "totals" in message
+
+
+@pytest.mark.parametrize("flags, corrupt", [
+    ([], "per_workflow"),
+    (["--check-sample-size"], "per_workflow"),
+    (["--check-per-workflow-rate"], "totals"),
+])
+def test_contradicting_blocks_exit_four_from_the_cli(
+        monkeypatch, tmp_path: Path, flags: list, corrupt: str) -> None:
+    """外部退出码：两块互相矛盾时三种模式都以 4 退出（不是 0/1/8）。"""
+    import sys
+
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    if corrupt == "per_workflow":
+        _move_one_failure(tmp_path)
+    else:
+        _lie_about_totals(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", *flags, "--data-dir", str(tmp_path)])
+    assert live_gate.main() == live_gate.EXIT_META_DRIFT
+
+
+def test_absent_per_workflow_block_is_reported_not_judged(tmp_path: Path) -> None:
+    """反方向：另一块**缺失**不是失败，但必须写明本步没有做交叉校验。
+
+    旧快照可以没有 ``per_workflow`` 块；把它抬成 4 是向错方向的假红。沉默同样
+    不行——读者会以为默认判定校验了两块。
+    """
+    _write_snapshot_with_totals(tmp_path, attempts=60, failed=0)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "未做分组交叉校验" in message
+
+
+def test_sample_size_without_per_workflow_block_says_no_cross_check(
+        tmp_path: Path) -> None:
+    """样本量判据同一句话：缺块时退出码照旧，但输出不许沉默。"""
+    _write_snapshot_with_totals(tmp_path, attempts=60, failed=0)
+    code, message = live_gate.check_sample_size(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "未做分组交叉校验" in message
+
+
+def test_absent_totals_block_is_not_a_contradiction(tmp_path: Path) -> None:
+    """缺失的 totals 不是「说谎的 totals」：四条 per_workflow 判据不许退 4。"""
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["totals"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    assert live_gate.check_per_workflow(tmp_path, 10.0)[0] == live_gate.EXIT_OK
+
+
+def test_content_counting_has_one_rule(tmp_path: Path) -> None:
+    """``totals`` 与 ``per_workflow`` 必须来自同一次复算（R82 的不变量）。
+
+    两块各自与内容比，仍可能因为两份复算实现分叉而「各自自洽」。这里钉住：
+    全局合计就是分组结果的求和——在入库快照与一份含坏 run 文件的临时快照上
+    都成立（坏文件被两边同样跳过）。
+    """
+    assert (live_gate.recompute_totals(SNAPSHOT_ROOT / "workflows")
+            == live_gate._totals_of(
+                live_gate.recompute_per_workflow(SNAPSHOT_ROOT / "workflows")))
+
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 0)})
+    broken = tmp_path / "workflows" / "wf-a" / "runs" / "run-broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    buckets = live_gate.recompute_per_workflow(tmp_path / "workflows")
+    assert (live_gate.recompute_totals(tmp_path / "workflows")
+            == live_gate._totals_of(buckets) == (20, 1))
+
+
+def test_every_count_reader_passes_the_committed_snapshot() -> None:
+    """六个入口在入库快照上都必须通过——否则 CI 一接就红。"""
+    readers = {
+        "evaluate": live_gate.evaluate(SNAPSHOT_ROOT, ceiling=8.0),
+        "check_sample_size": live_gate.check_sample_size(SNAPSHOT_ROOT, 10.0),
+        "check_per_workflow": live_gate.check_per_workflow(SNAPSHOT_ROOT, 10.0),
+        "check_per_workflow_rate": live_gate.check_per_workflow_rate(
+            SNAPSHOT_ROOT, 10.0),
+        "check_per_workflow_regression":
+            live_gate.check_per_workflow_regression(SNAPSHOT_ROOT, 10.0),
+        "check_lead_time": live_gate.check_lead_time(
+            SNAPSHOT_ROOT, 10.0, 10.0, 3.0),
+    }
+    for name, (code, message) in readers.items():
+        assert code == live_gate.EXIT_OK, f"{name}: {message}"
 
 
 def test_per_workflow_detects_run_count_drift(tmp_path: Path) -> None:
@@ -2801,13 +2967,19 @@ _MVP = "xs2-novel-flywheel-mvp"
 
 
 def _committed_two_rounds():
-    """入库快照的 (上一轮, 当前轮) 计数。"""
+    """入库快照的 (上一轮, 当前轮) 计数。
+
+    R82 重导又追加了一轮（同一批 run、计数逐字相同），历史因此不再恰好两轮。
+    提前量表只用**紧邻的两轮**：最后一轮就是当前内容，前一轮与它逐字相同，
+    2 / 5 的结论不变。要求「至少两轮」而不是「恰好两轮」，避免以后每次重导
+    都要改这条用例——但也因此不能把「恰好两轮」当成另一个事实来断言。
+    """
     meta = json.loads(
         (SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
     current = live_gate.recompute_per_workflow(SNAPSHOT_ROOT / "workflows")
     rounds, invalid = live_gate.snapshot_rounds(meta, current)
     assert invalid == [], "入库快照的 history 形状失效，提前量无法复算"
-    assert len(rounds) == 2, f"期望两轮历史，实际 {len(rounds)} 轮"
+    assert len(rounds) >= 2, f"期望至少两轮历史，实际 {len(rounds)} 轮"
     return rounds[-2], rounds[-1]
 
 
