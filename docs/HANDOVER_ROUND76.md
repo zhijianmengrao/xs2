@@ -116,4 +116,33 @@ M3/M4 与 R54 共用同一批分支——不声称唯一覆盖。
 
 ## 9. 推送与 CI 核对
 
-（待推送后补记）
+推送 `674b5be`（两次提交：`77c3928` test + `674b5be` docs；一次
+`git -c http.proxy= -c https.proxy= push`，`37699db..674b5be`）。全局
+`http.proxy` 仍指向失效的 socks5，清空后直连成功。
+
+> 过程中踩到一次**行尾噪声**：`core.autocrlf=true` 下先 `git add` 再
+> `git commit -- <path>`（且 commit 显式 `-c core.autocrlf=false`）会把工作树
+> 的 CRLF 原样写进 blob，`PROJECT_INFO.md` 被记成 706 行全替换。已 `reset --soft`
+> 重做该提交，重做后净变化 **+1 / −0**（与原意一致）。
+
+| run | commit | 结果 |
+|---|---|---|
+| **41256641646** | `674b5be` | 五 job 全部 `success`，00:24:55 → 00:29:48（约 4m53s） |
+| — | Desktop Windows / macOS | 未触发（`head_sha=674b5be…` 下两者 `total_count=0`） |
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（00:27:34）/ windows-backend（00:29:48）/ frontend（00:26:45）/ container-config（00:25:01）/ container-build（00:25:34）全部 `success` |
+| ubuntu | `2263 passed, 65 skipped, 1 warning in 111.20s` = **2328** |
+| windows | `2299 passed, 29 skipped, 1 warning in 221.72s` = **2328** |
+| 新用例在 CI 真跑 | ubuntu 2261/65 → **2263/65**、windows 2297/29 → **2299/29**（各 +2） |
+| e2e / metrics | `[e2e] 10/10`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| 前端 / 容器 | 前端 8 块 **490/0**（TAP `# pass` 求和）；`容器镜像冒烟全部通过` |
+
+**三面实测一致**：本机 Low `2215+113` = 2328、ubuntu `2263+65` = 2328、
+windows `2299+29` = 2328。**本机 High 本会话不可得**（进程即 Low），不写第四面。
+
+**本轮的特殊点**：闸门脚本 md5 未变（`1d0e0ac0…`）；Desktop Windows 的 paths
+过滤不含 `tests/`、`docs/`，而本轮改动全在这两处，因此 `head_sha=674b5be…` 下
+两个桌面 workflow 的 `total_count` 都是 0，与 R70/R73 的预期一致。
+
