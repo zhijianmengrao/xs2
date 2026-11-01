@@ -55,6 +55,11 @@ SCHEMA = 1
 # 只剩 6~7 个工作轮的量。40 ≈ 13 轮，回到 R88 前的日历跨度。
 MAX_ROUNDS = 40
 
+# 条目来源（R93）：CI 写回与本机显式导出是两个不同的入口，历史要能自己说清
+# 哪一轮来自哪。旧条目没有这个字段——按「未标注」报告，**不猜**（不拿 run_id
+# 的形状反推来源：那会把命名习惯变成事实）。
+SOURCES = ("ci", "local")
+
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_NO_SAMPLE = 3
@@ -211,6 +216,10 @@ def validate_history(payload: object) -> list[dict]:
             raise HistoryError(
                 f"{label}.exported_at 不是可解析的 ISO 时间："
                 f"{entry.get('exported_at')!r}")
+        source = entry.get("source")
+        if source is not None and source not in SOURCES:
+            raise HistoryError(
+                f"{label}.source 是 {source!r}，期望 {'/'.join(SOURCES)} 或缺失")
         reason = _counts_error(entry, label)
         if reason:
             raise HistoryError(reason)
@@ -265,7 +274,8 @@ def _same_observation(existing: dict, entry: dict) -> bool:
 
 
 def record(metrics_path: Path, history_path: Path,
-           run_id: str | None = None, check_only: bool = False) -> int:
+           run_id: str | None = None, check_only: bool = False,
+           source: str = "local") -> int:
     if not metrics_path.is_file():
         print(f"metrics 未生成（{metrics_path}）：e2e 可能在写出前就退出了",
               file=sys.stderr)
@@ -287,7 +297,12 @@ def record(metrics_path: Path, history_path: Path,
     elif not run_id.strip():
         print("--run-id 不能为空", file=sys.stderr)
         return EXIT_USAGE
-    record_entry = {"run_id": run_id, "exported_at": exported_at, **entry}
+    if source not in SOURCES:
+        print(f"--source 必须是 {'/'.join(SOURCES)}，收到 {source!r}",
+              file=sys.stderr)
+        return EXIT_USAGE
+    record_entry = {"run_id": run_id, "exported_at": exported_at,
+                    "source": source, **entry}
 
     replaced = False
     unchanged = False
@@ -365,6 +380,23 @@ def render_trend(history: list[dict], limit: int = 5) -> str:
     return "\n".join(lines)
 
 
+def render_sources(history: list[dict]) -> str:
+    """来源分布（R93）：只展示，不参与判决。
+
+    旧条目没有 ``source`` → 计入「未标注」，**不根据 run_id 形状猜**。
+    """
+    counts = {source: 0 for source in SOURCES}
+    unmarked = 0
+    for entry in history:
+        source = entry.get("source")
+        if source in counts:
+            counts[source] += 1
+        else:
+            unmarked += 1
+    return (f"来源：CI {counts['ci']} / 本机 {counts['local']} / "
+            f"未标注 {unmarked}（共 {len(history)} 轮）")
+
+
 def check(history_path: Path, limit: int = 5) -> int:
     if history_path.exists() and not history_path.is_file():
         print(f"历史路径不是文件（{history_path}）", file=sys.stderr)
@@ -383,6 +415,7 @@ def check(history_path: Path, limit: int = 5) -> int:
               file=sys.stderr)
         return EXIT_NO_SAMPLE
     print(render_trend(history, limit))
+    print(render_sources(history))
     return EXIT_OK
 
 
@@ -400,6 +433,8 @@ def build_parser() -> argparse.ArgumentParser:
                           "同一个 id 重复写入是覆盖而不是追加")
     rec.add_argument("--check-only", action="store_true",
                      help="只校验并打印将写入的条目，不写历史（PR 预检，R92）")
+    rec.add_argument("--source", default="local",
+                     help=f"条目来源：{'/'.join(SOURCES)}（默认 local；R93）")
 
     chk = sub.add_parser("check", help="只读校验历史并渲染趋势（损坏 → 非零）")
     chk.add_argument("--history", type=Path, required=True,
@@ -414,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "record":
         return record(args.metrics, args.history, args.run_id,
-                      check_only=args.check_only)
+                      check_only=args.check_only, source=args.source)
     return check(args.history, args.limit)
 
 

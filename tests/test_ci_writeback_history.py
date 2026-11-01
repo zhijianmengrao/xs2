@@ -123,6 +123,8 @@ def test_push_succeeds_on_the_first_attempt(
     assert subjects[0].startswith("chore(e2e)"), subjects
     assert subjects[0].endswith("[skip ci]"), subjects
     assert _origin_history(origin)["history"][-1]["run_id"] == "ci-1"
+    # R93：写回入口标注来源，历史自己说清这一轮来自 CI。
+    assert _origin_history(origin)["history"][-1]["source"] == "ci"
 
 
 def test_rejected_push_rebases_and_succeeds_on_the_second_attempt(

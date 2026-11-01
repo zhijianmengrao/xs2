@@ -141,7 +141,8 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
     last_failure = REASON_PUSH_REJECTED
     for attempt in range(1, attempts + 1):
         if not prepared:
-            code = history.record(metrics_path, history_path, run_id=run_id)
+            code = history.record(metrics_path, history_path, run_id=run_id,
+                                  source="ci")
             if code != history.EXIT_OK:
                 return (code, REASON_RECORD_INVALID,
                         f"record 退出 {code}，本轮不入库")

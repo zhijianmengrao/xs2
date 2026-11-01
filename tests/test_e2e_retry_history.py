@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from scripts import e2e_retry_history as history
@@ -236,6 +237,84 @@ def test_cli_wires_check_only(tmp_path: Path) -> None:
     ])
     assert code == 0
     assert not target.exists()
+def test_record_writes_the_source(tmp_path: Path) -> None:
+    """R93：条目自己说清来源；不传就记本机（显式导出的默认路径）。"""
+    target = tmp_path / "history.json"
+    assert history.record(
+        _metrics_file(tmp_path / "a.json", _metrics()), target,
+        run_id="ci-1", source="ci") == 0
+    assert history.record(
+        _metrics_file(tmp_path / "b.json", _metrics()), target,
+        run_id="local-1") == 0
+
+    entries = history.load_history(target)
+    assert [entry["source"] for entry in entries] == ["ci", "local"]
+
+
+def test_record_rejects_unknown_source(tmp_path: Path) -> None:
+    target = tmp_path / "history.json"
+    assert history.record(
+        _metrics_file(tmp_path / "m.json", _metrics()), target,
+        run_id="r1", source="hosted") == 2
+    assert not target.exists()
+
+
+def test_validate_history_accepts_legacy_entries_without_source() -> None:
+    """旧条目没有 source：合法，按「未标注」报告（不猜来源）。"""
+    entries = history.validate_history({"schema": 1, "history": [_entry("old")]})
+    assert "source" not in entries[0]
+
+
+def test_validate_history_rejects_unknown_source() -> None:
+    bad = _entry("r1")
+    bad["source"] = "hosted"
+    with pytest.raises(history.HistoryError):
+        history.validate_history({"schema": 1, "history": [bad]})
+
+
+def test_check_reports_the_source_mix(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    _write_history(target, [
+        {**_entry("a"), "source": "ci"},
+        {**_entry("b"), "source": "ci"},
+        {**_entry("c"), "source": "local"},
+        _entry("d"),
+    ])
+
+    assert history.check(target) == 0
+    out = capsys.readouterr().out
+    assert "CI 2" in out and "本机 1" in out and "未标注 1" in out
+
+
+def test_source_report_does_not_change_the_verdict(tmp_path: Path) -> None:
+    """来源是只读展示：有没有 source（或全都没有）退出码都必须是 0。"""
+    with_source = tmp_path / "with.json"
+    _write_history(with_source, [
+        {**_entry("a"), "source": "ci"},
+        {**_entry("b"), "source": "local"},
+    ])
+    legacy = tmp_path / "legacy.json"
+    _write_history(legacy, [_entry("a"), _entry("b")])
+
+    assert history.check(with_source) == 0
+    assert history.check(legacy) == 0
+
+
+def test_cli_wires_source(tmp_path: Path) -> None:
+    target = tmp_path / "history.json"
+    metrics = _metrics_file(tmp_path / "metrics.json", _metrics())
+    assert history.main([
+        "record", str(metrics), "--history", str(target),
+        "--run-id", "ci-1", "--source", "ci",
+    ]) == 0
+    assert history.load_history(target)[0]["source"] == "ci"
+
+    assert history.main([
+        "record", str(metrics), "--history", str(target),
+        "--run-id", "ci-2", "--source", "hosted",
+    ]) == 2
+
+
 def test_record_refuses_to_append_onto_a_corrupt_history(
         tmp_path: Path) -> None:
     """坏历史不能被静默覆盖——那会把「数据坏了」改写成「刚记了一轮」。"""
