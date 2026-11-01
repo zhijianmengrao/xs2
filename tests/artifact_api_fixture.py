@@ -47,6 +47,8 @@ def server(routes: dict, recorded: list | None = None):
                     (self.path, {key.lower(): value
                                  for key, value in self.headers.items()}))
             route = routes.get(self.path)
+            if callable(route):
+                route = route(self)
             if route is None:
                 self.send_response(404)
                 self.end_headers()

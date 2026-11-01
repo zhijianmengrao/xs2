@@ -116,9 +116,25 @@ def test_fetch_step_is_loud_on_transport_errors() -> None:
         '--run-id "${{ github.run_id }}"',
         "--artifact e2e-metrics",
         '--path "$RUNNER_TEMP/e2e"',
+        '--summary "$GITHUB_STEP_SUMMARY"',
+        '--result-json "$RUNNER_TEMP/fetch-result.json"',
     ):
         assert required in run, required
     assert "GITHUB_TOKEN" in (step.get("env") or {})
+
+
+def test_fetch_result_artifact_is_uploaded_even_on_failure() -> None:
+    steps = [
+        step for step in _writeback()["steps"]
+        if step.get("name") == "Upload fetch result"
+    ]
+    assert len(steps) == 1, steps
+    step = steps[0]
+    assert step.get("if") == "always()"
+    assert "upload-artifact" in str(step.get("uses", ""))
+    assert step["with"]["name"] == "fetch-result"
+    assert step["with"]["path"] == "${{ runner.temp }}/fetch-result.json"
+    assert step["with"]["if-no-files-found"] == "warn"
 
 
 def test_upload_fetch_and_writeback_agree_on_the_metrics_filename() -> None:

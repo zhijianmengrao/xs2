@@ -426,7 +426,18 @@ jobs:
             --repo "${{ github.repository }}" \
             --run-id "${{ github.run_id }}" \
             --artifact e2e-metrics \
-            --path "$RUNNER_TEMP/e2e"
+            --path "$RUNNER_TEMP/e2e" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --result-json "$RUNNER_TEMP/fetch-result.json"
+      - name: Upload fetch result
+        # R98：与 summary 共用同一组 reason/detail；失败也上传。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fetch-result
+          path: ${{ runner.temp }}/fetch-result.json
+          if-no-files-found: warn
+          retention-days: 1
       - name: Record and write back the e2e round
         # R89：提交/推送的重试循环已从 YAML 搬进 scripts/ci_writeback_history.py。
         # YAML 里的逻辑本地跑不了，测试只能做子串断言——「写了 for attempt in

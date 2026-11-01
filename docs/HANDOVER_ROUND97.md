@@ -71,7 +71,26 @@ record 坏、push 被拒、git 错误、dry-run）：
 
 ## 6. 提交与 CI
 
-（待推送后回填）
+- 与 R96 同一提交 `aa62a29`；CI run **41325738034** 六 job 全 `success`
+  （backend 2573/65、windows 2609/29 = 2638）。
+- 生产 `writeback-result` artifact 下载后内容与设计一致：
+
+  ```json
+  {
+    "schema": 1,
+    "run_id": "ci-41325738034",
+    "source": "ci",
+    "reason": "written",
+    "detail": "第 1 次尝试，历史 12/40 轮",
+    "exit_code": 0,
+    "rounds": 12,
+    "push_attempts": 1,
+    "dry_run": false
+  }
+  ```
+
+- `upload-artifact` 在 `contents: write + actions: read` 权限下正常工作，
+  **不需要** `actions: write`——§5 的边界关闭。
 
 ## 7. 本轮教训
 

@@ -172,3 +172,157 @@ def test_missing_repo_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:
         "--path", str(tmp_path / "e2e"),
     ])
     assert code == 2
+
+
+# ------------------------------------------------------- 重试与分类（R98）
+def _fetch_direct(base: str, tmp_path: Path, **kwargs) -> int:
+    return fetch.fetch(
+        RUN_ID, "owner/repo", "e2e-metrics", tmp_path / "e2e",
+        token="test-token", api_url=base, **kwargs)
+
+
+def test_fetch_retries_a_transient_5xx(tmp_path: Path) -> None:
+    sleeps: list = []
+    state = {"calls": 0, "base": ""}
+    result = tmp_path / "result.json"
+
+    def listing_route(_handler):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return 500, {}, b'{"message": "boom"}'
+        return (200, {"Content-Type": "application/json"},
+                listing(f"{state['base']}/archive"))
+
+    routes = {
+        API_PATH: listing_route,
+        "/archive": (200, {"Content-Type": "application/zip"},
+                     zip_bytes({"e2e-metrics.json": b"{}"})),
+    }
+    with server(routes) as base:
+        state["base"] = base
+        assert _fetch_direct(
+            base, tmp_path, attempts=3, sleep=sleeps.append,
+            result_path=result) == 0
+
+    assert state["calls"] == 2
+    assert sleeps == [0.5]
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    # 列表重试 2 次 + 下载 1 次 = 3 次 HTTP 请求。
+    assert payload["attempts"] == 3
+    assert payload["reason"] == fetch.REASON_FETCHED
+
+
+def test_fetch_gives_up_after_the_attempt_cap(tmp_path: Path) -> None:
+    sleeps: list = []
+    calls = {"count": 0}
+
+    def failing(_handler):
+        calls["count"] += 1
+        return 500, {}, b'{"message": "boom"}'
+
+    result = tmp_path / "result.json"
+    with server({API_PATH: failing}) as base:
+        assert _fetch_direct(
+            base, tmp_path, attempts=3, sleep=sleeps.append,
+            result_path=result) == 1
+
+    assert calls["count"] == 3
+    assert sleeps == [0.5, 1.0]
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == fetch.REASON_FAILED
+    assert payload["attempts"] == 3
+
+
+def test_fetch_does_not_retry_auth_errors(tmp_path: Path) -> None:
+    sleeps: list = []
+    calls = {"count": 0}
+
+    def unauthorized(_handler):
+        calls["count"] += 1
+        return 401, {}, b'{"message": "bad credentials"}'
+
+    with server({API_PATH: unauthorized}) as base:
+        assert _fetch_direct(
+            base, tmp_path, attempts=3, sleep=sleeps.append) == 1
+
+    assert calls["count"] == 1
+    assert sleeps == []
+
+
+def test_fetch_result_and_summary_share_reason_and_detail(
+        tmp_path: Path) -> None:
+    routes: dict = {}
+    result = tmp_path / "result.json"
+    summary = tmp_path / "summary.md"
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": b"{}"}))
+        assert _run(base, tmp_path,
+                    "--result-json", str(result),
+                    "--summary", str(summary)) == 0
+
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["schema"] == fetch.RESULT_SCHEMA
+    assert payload["reason"] == fetch.REASON_FETCHED
+    assert payload["exit_code"] == 0
+    assert payload["files"] == 1
+    text = summary.read_text(encoding="utf-8")
+    assert payload["reason"] in text
+    assert payload["detail"] in text
+
+
+def test_fetch_classifies_missing_and_expired(tmp_path: Path) -> None:
+    result = tmp_path / "result.json"
+    routes: dict = {}
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            json.dumps({"total_count": 0, "artifacts": []}).encode())
+        assert _run(base, tmp_path, "--result-json", str(result)) == 0
+        assert json.loads(result.read_text())["reason"] == fetch.REASON_MISSING
+
+    routes = {}
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive", expired=True))
+        assert _run(base, tmp_path, "--result-json", str(result)) == 0
+        assert json.loads(result.read_text())["reason"] == fetch.REASON_EXPIRED
+
+
+def test_fetch_classifies_a_bad_zip_as_invalid(tmp_path: Path) -> None:
+    routes: dict = {}
+    result = tmp_path / "result.json"
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"}, b"not a zip")
+        assert _run(base, tmp_path, "--result-json", str(result)) == 1
+
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == fetch.REASON_INVALID
+    assert payload["exit_code"] == 1
+
+
+def test_fetch_result_write_failure_only_warns(
+        tmp_path: Path, capsys) -> None:
+    routes: dict = {}
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": b"{}"}))
+        assert _run(base, tmp_path,
+                    "--result-json", str(blocker / "result.json")) == 0
+
+    assert "结果工件写入失败" in capsys.readouterr().err

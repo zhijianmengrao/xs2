@@ -41,6 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import ci_reporting
 from scripts import e2e_retry_history as history
 
 EXIT_OK = 0
@@ -103,24 +104,6 @@ REASON_DRY_RUN = "dry-run"
 RESULT_SCHEMA = 1
 
 
-def _default_summary_path() -> Path | None:
-    raw = os.environ.get("GITHUB_STEP_SUMMARY")
-    return Path(raw) if raw else None
-
-
-def _emit_summary(summary_path: Path | None, run_id: str, reason: str,
-                  detail: str) -> None:
-    """把本轮结果追加进 step summary；写不进去只告警，**不改判决**。"""
-    if summary_path is None:
-        return
-    line = f"- `{run_id}` — **{reason}**：{detail}\n"
-    try:
-        with summary_path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-    except OSError as exc:
-        print(f"step summary 写入失败（{summary_path}）：{exc}", file=sys.stderr)
-
-
 def _rounds(history_path: Path) -> str:
     try:
         return str(len(history.load_history(history_path)))
@@ -145,25 +128,6 @@ def _remote_rounds(repo: Path, branch: str, history_path: Path) -> int | None:
         return len(history.validate_history(json.loads(result.stdout)))
     except (ValueError, history.HistoryError):
         return None
-
-
-def _emit_result(result_path: Path | None, payload: dict) -> None:
-    """把本轮结果写成机读 JSON；写不进去只告警，**不改判决**（R97）。"""
-    if result_path is None:
-        return
-    tmp = result_path.with_name(result_path.name + ".tmp")
-    try:
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
-        os.replace(tmp, result_path)
-    except OSError as exc:
-        print(f"结果工件写入失败（{result_path}）：{exc}", file=sys.stderr)
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
 
 
 def _has_staged_change(repo: Path, history_path: Path) -> bool:
@@ -311,8 +275,8 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
         except WritebackError as exc:
             print(f"::error::{exc}", file=sys.stderr)
             code, reason, detail = EXIT_FAILED, REASON_GIT_ERROR, str(exc)
-    _emit_summary(summary_path, run_id, reason, detail)
-    _emit_result(result_path, {
+    ci_reporting.emit_summary(summary_path, run_id, reason, detail)
+    ci_reporting.emit_result(result_path, {
         "schema": RESULT_SCHEMA,
         "run_id": run_id,
         "source": "ci",
@@ -356,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         args.metrics, args.history, args.run_id, args.repo,
         branch=args.branch, attempts=args.attempts,
         commit_message=args.commit_message,
-        summary_path=args.summary or _default_summary_path(),
+        summary_path=args.summary or ci_reporting.default_summary_path(),
         dry_run=args.dry_run, result_path=args.result_json)
 
 

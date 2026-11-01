@@ -846,6 +846,24 @@ R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact �
   CI 首次上传实证；`git-error` 的 `push_attempts` 固定 0（异常时无法可靠知道
   已发起的次数）。
 
+### 7.24 fetch 重试与分类：白名单 + 异常携带计数（R98）
+
+- **只重试瞬时错误**：`RETRY_STATUS = {429,500,502,503,504}` + 网络/超时；
+  401/403 不重试（重试只会把「凭证坏了」拖成三次）。最多
+  `DEFAULT_ATTEMPTS = 3`，退避 0.5s / 1s，可注入 `sleep`。
+- **失败路径的 attempts 必须由异常携带**：`_read_with_retries` 成功才 return，
+  `attempts_used += used` 在 return 之后，失败时永远加不上；改为
+  `FetchError(msg, used)`，外层 `attempts_used += exc.attempts`。
+- 类别：`artifact-fetched` / `missing` / `expired` / `fetch-failed` /
+  `invalid` / `usage`；`ArtifactInvalid` 覆盖坏 zip、路径穿越、缺 archive_url。
+- summary/result 写入抽到 `scripts/ci_reporting.py`，写回与 fetch 共用；
+  写失败只告警。
+- 守卫：`tests/test_fetch_ci_artifact.py` +7、
+  `tests/test_ci_history_writeback.py` +1。
+- 变异：M50–M56 **7/7 全咬合**。
+- **边界**：真实 GitHub 网络层的重试从未发生（生产两次 fetch 均首次成功）；
+  `attempts` 是列表 + 下载的**总请求数**，不是「重试轮数」。
+
 ## 8. 环境归因：skip 判据的自变量（R71）
 
 R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。把四行实测矩阵
