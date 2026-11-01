@@ -21,7 +21,9 @@ R72 补的是这些翻转点的**前提**：#4 的「元数据漂移 → 退出 
 两条路径，R56 的用例各测各的、与这里用的不是同一组计数。本文件用 #4 的同一组
 计数把门与翻转点绑在一起——翻转点不仅要翻得动，还得真的能被走到。R73 把同一
 形状补到 #3（回归判据）：character 16/79 才是边界外，R62 的漂移/无样本用例
-都落在判不出回归的计数上。
+都落在判不出回归的计数上。R76 补最后一个：`check_per_workflow`（逐 workflow
+样本量诊断）没有数字翻转点，它的「判决」是一份报告（达标 / 不达标）；R54 的
+用例没有一条证明这两个词不可能出现在退出 4/3 的消息里。
 """
 
 from __future__ import annotations
@@ -380,6 +382,96 @@ def test_no_sample_preempts_the_leave_one_out_verdict(tmp_path: Path) -> None:
     assert code == gate.EXIT_NO_SAMPLE, message
     assert "没有任何带 run 记录的工作流" in message, message
     assert "超出" not in message, message
+
+
+# ------------------------------------------------ 样本量诊断的退出路径前提（R76）
+
+def test_metadata_drift_preempts_the_per_workflow_sample_report(
+        tmp_path: Path) -> None:
+    """漂移必须说在报告之前：同一组计数下只能退出 4，且消息里不许出现「达标」。
+
+    R54 的漂移用例用 10/1 + 10/1，两条都判不出「全达标」——于是「只有发现薄
+    样本时才查漂移」这种改法在它面前全绿：一份**全厚**的快照配上说谎的元数据
+    会静默通过，而全厚恰恰是日常快照最常见的样子。这里分两格：
+
+    - wf-thin 5/0（需约 45 个百分点）+ wf-thick 30/0（约 10 个百分点）时，
+      报告同时说出「达标」与「不达标」；
+    - wf-a / wf-b 各 30/0 时，报告只剩「0 个不达标」——这一格专门咬住「只在
+      报告有话说时才查漂移」的改法；
+    - 元数据不是合法 JSON 时同样退出 4：它与漂移同一处置（重导），不能被读成
+      无样本（退出 3），也不能带着报告出来。
+    """
+    mixed = tmp_path / "mixed"
+    _write_rate_snapshot(mixed, {"wf-thin": (5, 0), "wf-thick": (30, 0)})
+    code, message = gate.check_per_workflow(mixed, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_OK, message
+    assert "达标" in message and "不达标" in message, message
+
+    meta_path = mixed / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-thick"]["failed"] = 1
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = gate.check_per_workflow(mixed, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_META_DRIFT, message
+    assert "wf-thick" in message and "重导" in message, message
+    assert "达标" not in message, message
+
+    thick = tmp_path / "thick"
+    _write_rate_snapshot(thick, {"wf-a": (30, 0), "wf-b": (30, 0)})
+    code, message = gate.check_per_workflow(thick, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_OK, message
+    # 摘要恒定写「N 个不达标」，N=0 也照写——这里钉的是「0 个」，不是「没有这个词」。
+    assert "2 个 workflow 的失败率估计精度达标，0 个不达标" in message, message
+
+    meta_path = thick / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"]["wf-a"]["failed"] = 1
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = gate.check_per_workflow(thick, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_META_DRIFT, message
+    assert "wf-a" in message and "重导" in message, message
+    assert "达标" not in message, message
+
+    broken = tmp_path / "broken"
+    _write_rate_snapshot(broken, {"wf-thin": (5, 0), "wf-thick": (30, 0)})
+    (broken / "snapshot-meta.json").write_text("{not json", encoding="utf-8")
+    code, message = gate.check_per_workflow(broken, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_META_DRIFT, message
+    assert "无法解析" in message, message
+    assert "达标" not in message, message
+
+
+def test_no_sample_preempts_the_per_workflow_sample_report(
+        tmp_path: Path) -> None:
+    """无样本先于报告：退出 3 的三条分支都不许说出「达标」。
+
+    R54 只测了「缺 ``per_workflow`` 块」与「快照里没有 workflow」两条的**退出
+    码**，既没测「缺元数据文件」这一条，也没有任何一条检查消息里有没有报告词。
+    这里用同一组 5/0 + 30/0 的计数把三条分支各走一遍：任何「元数据里有数就拿来
+    报告」的改法都会让一份空快照说出「2 个 workflow 精度达标」。
+    """
+    missing_meta = tmp_path / "missing-meta"
+    missing_meta.mkdir()
+    code, message = gate.check_per_workflow(missing_meta, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "快照元数据缺失" in message, message
+    assert "达标" not in message, message
+
+    missing_block = tmp_path / "missing-block"
+    _write_rate_snapshot(missing_block, {"wf-thin": (5, 0), "wf-thick": (30, 0)},
+                         declare_meta=False)
+    code, message = gate.check_per_workflow(missing_block, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "per_workflow" in message, message
+    assert "达标" not in message, message
+
+    empty_content = tmp_path / "empty-content"
+    _write_rate_snapshot(empty_content, {"wf-thin": (5, 0), "wf-thick": (30, 0)})
+    shutil.rmtree(empty_content / "workflows")
+    code, message = gate.check_per_workflow(empty_content, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_NO_SAMPLE, message
+    assert "没有任何带 run 记录的工作流" in message, message
+    assert "达标" not in message, message
 
 
 # ------------------------------------------------ #5 样本量 margin 10 个百分点
