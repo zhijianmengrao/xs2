@@ -133,6 +133,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 留一法基线（#4） | `tests/test_judgement_flip_points.py::test_leave_one_out_baseline_drives_the_flip_point`（从计数出发算基线，再判翻转） |
 | #4 的 3/4 两条退出路径先于判决（R72） | `tests/test_judgement_flip_points.py::test_leave_one_out_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_leave_one_out_verdict`、`test_no_sample_preempts_the_leave_one_out_verdict` |
 | #3 的 3/4 两条退出路径先于判决（R73） | `tests/test_judgement_flip_points.py::test_per_workflow_regression_flip_point_through_the_real_gate`、`test_metadata_drift_preempts_the_per_workflow_regression_verdict`、`test_no_sample_preempts_the_per_workflow_regression_verdict` |
+| 样本量诊断的 3/4 两条退出路径先于报告（R76） | `tests/test_judgement_flip_points.py::test_metadata_drift_preempts_the_per_workflow_sample_report`、`test_no_sample_preempts_the_per_workflow_sample_report` |
 | 畸形 `per_workflow` → 4（不是 1/8，R75） | `tests/test_live_snapshot_gate.py::test_malformed_per_workflow_metadata_is_drift_not_a_verdict`、`test_malformed_metadata_exits_four_from_the_cli` |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
 | msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
@@ -235,6 +236,28 @@ R72 用 #4 的同一组计数（rest 30/0、target 4/10——正是 §7 第 4 �
 
 「缺 `per_workflow` 块」这一分支与 R62 的用例重复，不声称唯一覆盖；新增量是
 「缺元数据文件」「内容为空」两条分支与顺序断言。
+
+### 7.4 样本量诊断的前提：3/4 退出路径（R76）
+
+与 §7.2/§7.3 同一形状，换到 `check_per_workflow`。它**不是判据，是诊断**
+（§2 没有它的行）：R54 定下它只有两件事能红——元数据漂移（退出 4）与无样本
+（退出 3），薄只进报告、恒退出 0。所以这里没有「判决词」，要钉的是报告词
+**「达标 / 不达标」**不得出现在退出 4/3 的消息里。
+
+R54 的用例为什么挡不住：它测漂移用的是 10/1 + 10/1（两条都需约 29.4 个百分点
+> margin，报告说不出「达标」），于是「只有发现薄样本时才查漂移」在它面前全绿
+——一份**全厚**快照（日常最常见的形状）配上说谎的元数据会静默通过；它也没有
+任何一条检查消息里有没有报告词。
+
+| 前提 | 同一组计数下的期望 | 用例 |
+|---|---|---|
+| 内容与元数据一致 | wf-thin 5/0（需 45.07）+ wf-thick 30/0（需 9.50）→ 退出 0，报告同时说「达标」与「不达标」 | `test_metadata_drift_preempts_the_per_workflow_sample_report` |
+| 元数据漂移先于报告 | 同一份内容，元数据把 wf-thick 写成失败 1 次 → 退出 4，消息不含「达标」；**全厚**快照（30/0 ×2）同样退出 4 | 同上 |
+| 元数据不是合法 JSON | 同一份内容 + `{not json` → 退出 4（不是 3，也不是带着报告出来的 0） | 同上 |
+| 无样本先于报告 | 缺元数据文件 / 缺 `per_workflow` 块 / 元数据说有但内容为空 → 退出 3，消息不含「达标」 | `test_no_sample_preempts_the_per_workflow_sample_report` |
+
+新增量是「缺元数据文件」「坏 JSON」「全厚快照的漂移」三格与顺序断言；「缺块」
+「内容为空」两条分支与 R54 重复，不声称唯一覆盖。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
