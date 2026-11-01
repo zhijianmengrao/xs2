@@ -105,15 +105,19 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 |---|---|---|---|
 | 0 | 通过 | — | 全部 |
 | 1 | 判了，且不合格 | 查数据 / 查供应商 | 默认判定（政策上限、回归）、per-workflow 回归/失败率、e2e 编排行为 |
-| 3 | 无样本 | 重导快照 | 全部读快照的模式 |
-| 4 | 元数据漂移 | 重导快照（内容变了没重导 / 形状无效） | 全部读快照的模式 |
+| 3 | 无样本 | 重导快照 / 重录历史 | 全部读快照的模式、e2e 重跑历史（缺失或为空） |
+| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
 | 5 | 快照过期 | 重导快照 | 仅 `--check-stale` |
 | 6 | 覆盖度缺口 | 重导快照 | 仅 `--check-coverage` |
 | 7 | 样本太薄 | 攒更多 run 再导 | 仅 `--check-sample-size` |
-| 8 | 判据算术失败，**未作判定** | 修判据 | 全部（`_run_judgement` 统一套用） |
+| 8 | 判据算术失败，**未作判定** | 修判据 | 全部判据模式（`_run_judgement` 统一套用）；e2e 重跑历史**不适用**（所有失败都是数据问题） |
 
 **1 与 8 必须分开**：1 是「有结论」，8 是「没有结论」。共用退出码时，读日志的
 人会把一次崩溃读成「失败率突破政策」，两种处置（查数据 / 修判据）互相冒充。
+
+**e2e 重跑历史（R78）刻意没有 8**：它只校验数据有效性，没有可失败的判据算术。
+坏历史是 4（重录/修文件）、没有历史是 3（先跑一轮）、计数矛盾是 4——留一个
+走不到的 8，只会让读日志的人去查一个没坏的判据。
 
 ## 6. 这一页上的数由谁复核
 
@@ -136,6 +140,13 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 样本量诊断的 3/4 两条退出路径先于报告（R76） | `tests/test_judgement_flip_points.py::test_metadata_drift_preempts_the_per_workflow_sample_report`、`test_no_sample_preempts_the_per_workflow_sample_report` |
 | 畸形 `per_workflow` → 4（不是 1/8，R75） | `tests/test_live_snapshot_gate.py::test_malformed_per_workflow_metadata_is_drift_not_a_verdict`、`test_malformed_metadata_exits_four_from_the_cli` |
 | 坏 JSON 的处置：4（不是 1/3/8，R77） | `tests/test_judgement_flip_points.py::test_unparseable_metadata_is_not_a_verdict_for_the_leave_one_out_rate`、`test_unparseable_metadata_is_not_a_verdict_for_the_per_workflow_regression`、`tests/test_live_snapshot_gate.py::test_unparseable_metadata_exits_four_from_the_cli` |
+| e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
+| 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
+| 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
+| 「本步不判趋势」必须写进输出（R78） | `test_check_says_it_has_no_judgement_power` |
+| 坏历史 → 4（不是 3/1/8，R78） | `test_check_exits_four_on_unparseable_history_not_eight`、`test_check_exits_four_on_contradictory_counts`、`test_check_exits_four_on_duplicate_run_ids` |
+| 跳过坏条目继续渲染会被咬住（R78） | `test_check_rejects_bad_json_even_when_one_entry_would_render` |
+| CI 只读校验**入库的**历史（R78） | `tests/test_e2e_retry_history.py::test_ci_checks_the_committed_history_file` |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
 | msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
 | 「签名 / 模块 / 探针」真值表（R71） | `tests/test_msys_attribution.py::test_skip_truth_table_has_exactly_two_independent_variables` |
@@ -291,6 +302,42 @@ R54 的用例为什么挡不住：它测漂移用的是 10/1 + 10/1（两条都�
 唯一咬合者；两条函数级用例各自的唯一咬合只有「退出码不变、消息里先写出判决词」
 那两次变异（M6/M7）。CLI 用例的价值是把**外部退出码**也钉住，而不是多发现
 一种改法。
+
+### 7.6 趋势判据不判趋势：先钉「数据有效」（R78）
+
+R74 让单次 run 的重跑频率可机读，跨 run 那一层缺存储与判据。R78 的形态是：
+**本机显式 `record`、随被判数据入库（快照式）、CI 只读 `check`**（不改
+`permissions: contents: read`）。这里有一个必须写清楚的选择：**趋势不判红**。
+
+原因是判据自己的算术，不是保守：
+
+- e2e 只有 **10 个场景**，`retried/total` 的取值只能是 0、10、20…100 个百分点。
+  阈值因此只能落在「第 k 次重跑」上：任何小于 10pp 的余量都会被**一次**重跑
+  越过（0 → 10pp），而「小幅变差」在 10 个场景的格点上根本不存在——这就是
+  R63 §3「小量级被判据自己的量级压成单点窗口」的同一条算术。
+- 于是 `check` 的 **0 退出只表示「历史可读」**，输出必须逐字写出「不判趋势
+  好坏」与当前分辨率（`100 / 最近一轮 total`，是算出来的量，不是写死的 10）。
+  退出码里**没有 1 和 8**：所有失败都是数据问题。
+
+| 情形 | 退出码 | 处置 | 用例 |
+|---|---|---|---|
+| 历史可读 | 0（**不是**「趋势合格」） | 继续攒轮次 | `test_check_says_it_has_no_judgement_power` |
+| 没有历史 / 历史为空 | 3 | 先跑一轮 e2e 并 record | `test_check_exits_three_without_a_history_file`、`test_check_exits_three_for_an_empty_history` |
+| 读不懂 / 形状无效 / 计数矛盾 / `run_id` 重复 | 4 | 重录或修文件 | `test_check_exits_four_on_unparseable_history_not_eight` 等 |
+| 判据算术失败 | **不适用** | — | 没有可失败的算术，不设 8 |
+
+**最隐蔽的一种改法是「跳过坏条目继续渲染」**：剩下的好条目会让趋势表看起来
+完整，「0 次重跑」与真实数据一模一样（R74 对 summary 的同一条批评）。因此
+`validate_history` 对整份文件校验，不做逐条过滤；
+`test_check_rejects_bad_json_even_when_one_entry_would_render` 专门咬这一口。
+
+**轮次去重**：条目带 `run_id`（默认取入库时间戳），同一 id 重复 `record` 是
+**覆盖**而不是追加——否则修一次数据就会在趋势里凭空多出一轮。窗口 20 轮，
+第 21 轮写入时最早一轮掉出（`test_record_trims_to_the_window`）。
+
+**如实记录这一层的覆盖范围**：CI 每次 push 都跑 e2e，但**不入库**——入库是
+本机显式动作。所以趋势的轮次密度取决于「本机跑 e2e 并提交」的频率，不是
+push 频率；CI 的职责只有「入库的那份历史仍然可读」。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
