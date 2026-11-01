@@ -289,7 +289,7 @@ def _load_snapshot_meta(data_dir: Path, purpose: str = "") -> tuple[
 # 于是旧格式的 totals 会被判漂移（4）——处置正是重导，导出脚本会补上它。
 _TOTALS_COUNT_FIELDS = ("runs", "attempts", "failed")
 
-# ``totals`` / ``per_workflow`` 里**不参与判定**的展示字段（R84 登记）。
+# 元数据里**不参与判定**的展示字段（R84 / R86 登记）。
 # ``failure_rate`` 是导出脚本按 4 位小数写给人看的派生值（``export_run_samples.py``
 # 的 ``totals`` 与每个 bucket 各一份）。它不能并进上面的计数表：
 # ``_count_value_error`` 只接受整数/整数字符串，``0.0392`` 会让每一份入库快照在
@@ -297,7 +297,13 @@ _TOTALS_COUNT_FIELDS = ("runs", "attempts", "failed")
 # 脆弱算术（台账 §7.10）。登记的含义是**任何判决都不读它**：守卫用例
 # ``test_failure_rate_is_display_only`` 把它的值改成 ``"abc"`` / ``true`` / 浮点 /
 # ``null`` 或整个删掉，六个读计数入口的退出码与**文案**必须逐字不变。
-_DISPLAY_ONLY_FIELDS = ("failure_rate",)
+# ``source_root`` 是导出脚本写在**顶层** meta 的目录名（``workflows_dir.name``），
+# 全仓库没有任何判据读它（R84 §9-1 发现的最后一个「写了没人看」字段）。它与
+# ``failure_rate`` 同族：删除只是把「没人读」变成「不存在」，做成判据又需要先
+# 定义「合成快照」的边界；登记后由 ``test_source_root_is_display_only`` 钉住六个
+# 入口的 ``(code, message)``。它与 ``failure_rate`` 的位置不同（顶层 meta，不是
+# ``totals``/``per_workflow`` 的副本），守卫用例按位置分开写。
+_DISPLAY_ONLY_FIELDS = ("failure_rate", "source_root")
 
 
 def _totals_of(buckets: dict[str, dict]) -> dict[str, int]:

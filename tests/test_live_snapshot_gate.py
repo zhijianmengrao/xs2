@@ -1612,8 +1612,8 @@ def _mutate_display_field(root: Path, location: str, value: object) -> None:
 
 
 def test_display_only_registry_is_structurally_excluded() -> None:
-    """「只读」必须由结构保证：登记清单与两张计数表无交集（R84）。"""
-    assert set(live_gate._DISPLAY_ONLY_FIELDS) == {"failure_rate"}
+    """「只读」必须由结构保证：登记清单与两张计数表无交集（R84 / R86）。"""
+    assert set(live_gate._DISPLAY_ONLY_FIELDS) == {"failure_rate", "source_root"}
     for count_table in (live_gate._TOTALS_COUNT_FIELDS,
                         live_gate._PER_WORKFLOW_COUNT_FIELDS):
         assert not set(live_gate._DISPLAY_ONLY_FIELDS) & set(count_table)
@@ -1630,6 +1630,9 @@ def test_committed_snapshot_carries_the_display_field() -> None:
     assert "failure_rate" in meta["totals"]
     assert all("failure_rate" in bucket
                for bucket in meta["per_workflow"].values())
+    # R86：顶层 ``source_root`` 同样是登记过的展示字段，真实快照必须带着它，
+    # 否则 ``test_source_root_is_display_only`` 只是在测「字段根本不存在」。
+    assert meta["source_root"] == "workflows"
 
 
 @pytest.mark.parametrize("judge", [j for _, j in _ALL_COUNT_READERS],
@@ -1651,6 +1654,50 @@ def test_failure_rate_is_display_only(tmp_path: Path, judge, location: str,
     baseline = judge(tmp_path)
 
     _mutate_display_field(tmp_path, location, value)
+    assert judge(tmp_path) == baseline
+
+
+# ------------------------------------------------- R86：顶层 source_root 同族
+# ``source_root`` 只有一个副本、在顶层 meta（导出脚本写目录名）。它与
+# ``failure_rate`` 同属「写了没人看」，但位置不同，所以守卫用例按位置分开写：
+# 值改成 ``"abc"`` / ``True`` / ``3.7`` / ``None`` 或整个删掉，六个入口的
+# ``(code, message)`` 必须逐字不变。
+def _write_source_root(root: Path, value: object = "workflows") -> None:
+    """模拟导出器的正常输出：顶层 meta 带 ``source_root``。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["source_root"] = value
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _mutate_source_root(root: Path, value: object) -> None:
+    """把 ``source_root`` 改成坏值（或删掉）；所有计数保持真实。"""
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if value == _DISPLAY_FIELD_DELETE:
+        meta.pop("source_root", None)
+    else:
+        meta["source_root"] = value
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _ALL_COUNT_READERS],
+                         ids=[n for n, _ in _ALL_COUNT_READERS])
+@pytest.mark.parametrize("value",
+                         _DISPLAY_FIELD_VALUES + [_DISPLAY_FIELD_DELETE],
+                         ids=lambda v: "missing" if v == _DISPLAY_FIELD_DELETE
+                         else repr(v))
+def test_source_root_is_display_only(tmp_path: Path, judge, value: object) -> None:
+    """顶层 ``source_root`` 改坏/删掉，六个入口的退出码与文案必须逐字不变。
+
+    只比退出码抓不到「读了但只用在文案里」的入口；这里比整个
+    ``(code, message)``。``None`` / ``True`` / 浮点是最容易被误当字符串用的值。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    _write_source_root(tmp_path)
+    baseline = judge(tmp_path)
+
+    _mutate_source_root(tmp_path, value)
     assert judge(tmp_path) == baseline
 
 
