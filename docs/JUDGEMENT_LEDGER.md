@@ -156,6 +156,8 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 旧格式缺 `totals.runs` → 4（不是静默，R83） | `tests/test_live_snapshot_gate.py::test_totals_without_runs_is_incomplete_not_silent` |
 | 漂移文案写全三计数（R83） | `tests/test_live_snapshot_gate.py::test_totals_drift_message_names_all_three_counts` |
 | `totals.runs` 的形状规则（R83） | `tests/test_live_snapshot_gate.py::test_malformed_totals_is_drift_not_a_verdict`（runs 的 `true`/浮点/字符串/负数四格） |
+| 展示字段不参与判决（两处 `failure_rate`，R84） | `tests/test_live_snapshot_gate.py::test_failure_rate_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
+| p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
@@ -544,9 +546,56 @@ runs）**1 红，唯一咬合**；M6（形状校验漏掉 runs）4 红，恰好�
 `runs` 畸形格。全部输出都是 failed、没有 skipped（R71 的教训）。`cp` 快照还原
 后 md5 逐字节相同（`19507a3d…`）。
 
-**未做（如实记录）**：`totals.failure_rate` 仍是导出时写给人看的派生值，没有
-判据读它。把它也做成判据会引入「浮点四舍五入相等」的判据——那是另一个族的
-脆弱算术，不属本轮范围；若它将来被消费，按 R83 的方式并入同一把尺。
+**R84 处置（2026-11-01）：登记为只读展示字段，不删除、不做判据。**
+
+`totals.failure_rate` 与 `per_workflow[*].failure_rate` 是导出脚本按 4 位小数
+写给人看的派生值（`export_run_samples.py:262-265`、`:281-287`）。R84 把两处一起
+登记进 `_DISPLAY_ONLY_FIELDS`（`scripts/check_live_snapshot_gate.py`），登记的
+含义是**任何判决都不读它**：
+
+- **不并入计数表**：`_count_value_error` 只接受整数/整数字符串，`0.0392` 会让
+  每一份入库快照在形状校验处被判「形状无效」（4）；而要做成判据就得比「四舍五入
+  后相等」——反正都是另一族脆弱算术（与 §7.3 记的「门槛随共模偏移漂移」同类）。
+- **不删除**：它是读者要的信息（28 run / 255 次尝试 / 3.92%），删掉只是把
+  「没人读」变成「不存在」，与 R83 对 `runs` 的处置理由相同。
+- 守卫用例 `test_failure_rate_is_display_only` 参数化六个读计数入口 × 两个副本 ×
+  六种值（`"abc"` / `true` / 浮点 / 合理的错值 0.99 / `null` / 整个删掉），断言
+  `(退出码, 文案)` **逐字不变**——只比退出码抓不到「读了但只用在文案里」的入口。
+- `test_display_only_registry_is_structurally_excluded` 钉住登记清单与两张计数表
+  无交集：结构上碰不到，而不是靠注释承诺。
+
+### 7.11 p=1.0 的真实数据：分支第一次由真实载荷走完（R84）
+
+R53 修了「全部失败时 `p(1-p)=0` 让样本量判据恒绿」，但自 R54 起每一轮都挂着
+「没有真实数据验证，只有构造样本」（`HANDOVER_ROUND53.md:375` 起）。
+
+R84 查清了真实数据的形状：`data/workflows` 40 个 run 里有 **6 个
+`failed == attempts`**（build 5 个 + export 1 个，全部是 1 次尝试 1 次失败，都是
+供应商流式超时）。把它们导出成 `tests/fixtures/live_snapshot_all_failed/` 之后，
+`p=1.0` 这条分支第一次由**真实载荷**走完 导出 → 元数据 → 闸门 全链：
+
+| 量 | 真实值 | 说明 |
+|---|---|---|
+| 快照 | 6 run / 6 尝试 / 6 失败 / 100.00% | `source_root` = `workflows`（真实导出，不是 synthetic） |
+| `sample_size_margin_needed(6, 6)` | **39.3038 个百分点** | 全失败闭式 `1 - 0.05**(1/n)`；正态近似在这里算成 0，会把「全挂」判成「样本足够」 |
+| `--check-sample-size`（margin 10） | **7** | 文案含「全部失败时到 100% 的 95% 单侧距离 39.30 个百分点」「n=6」「约 29 次尝试」 |
+| `evaluate --fail-if-above 8` | **1** | 95% 区间 `[60.70%, 100.00%]` 整个在 8% 之上，判超阈 |
+
+| 前提 | 期望 | 用例 |
+|---|---|---|
+| 来源是真实导出、内容自洽 | 6/6，`source_root=workflows`，6 个 run 全 `status=failed` | `test_all_failed_fixture_is_a_real_export` |
+| `p=1.0` 走全失败闭式 | 39.3038（与 `1-0.05**(1/6)` 一致） | `test_all_failed_fixture_uses_the_all_failed_closed_form` |
+| 真实全失败快照的样本量判决 | 7，文案写全失败与 29 次 | `test_real_all_failed_snapshot_is_thin_and_says_why` |
+| 真实全失败快照的政策判决 | 1，区间 `[60.70%, 100.00%]` | `test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
+
+**仍未验证（如实记录）**：自然状态不会出现 n≥29 的全失败样本——本机有史以来
+全失败 run 只有这 6 个，全部 1 次尝试。要让这份快照在 margin 10 下合格需要
+**29 次全失败尝试**；为一条判据故意跑坏 29 次真实工作流，代价与污染都不值得。
+所以这项挂账从「分支没有真实数据验证」改写成「分支已由真实数据验证；n≥29 的
+自然样本不存在，这是数据事实而不是缺口」。
+
+其余边界：fixture 只含 2 个 workflow，`--check-coverage` 对它退 6 属设计内
+（它是分支钉子，不是覆盖率样本）；CI 不新增步骤，pytest 在 CI 里就会跑这条。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
@@ -571,9 +620,8 @@ Low 124.94s）。**R71 复测（同机同码，约 20 小时后）方向反过�
   打开者的写权限仍然全拒（`0xC0000022`），High 打开者全通。
 - 同一 DACL 的合成临时对象：**High 创建 → Low 被拒；Low 创建 → Low 通过**。
   所以对象**隐式带着创建者的完整性级别**，DACL 里写着允许并不够。
-- IL 由父令牌继承，但 `F:` 上的可执行文件被强制降到 Low（`F:\...\.venv\python.exe`
-  → Low；同一二进制复制到 C: → 继承父的 High；**Low 进程再起 C: 的 `py.exe`
-  仍是 Low**）。
+- IL 由父令牌继承。R81 当时写成「`F:` 上的可执行文件被强制降到 Low」——**R84
+  更正：降级的是带 Low 强制标签的那棵目录树，不是卷**（见下条）。
 
 于是「113 vs 28」的判别变量是**启动器的 IL**，而不是「会话状态」这种不可操作的
 说法。R70 的「High 也失败」在本机不复现（Git Bash / PowerShell / py.exe 三种 C:
@@ -590,6 +638,43 @@ Low 124.94s）。**R71 复测（同机同码，约 20 小时后）方向反过�
 （`.pth` 在 PYTHONPATH 下不执行）。R82 全量 High 2387/28、R83 复跑 2406/28
 都用这条命令；`tests/conftest.py::_msys_skip_reason` 与 PROJECT_INFO 平台注意
 事项 9 已同步。
+
+**R84 找到机制（2026-11-01，只读取证）**：`F:\DeterminFlow x2` 本身带一条
+**显式**的 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`（`icacls` 里没有
+`(I)`），整棵树继承；`F:\` 根、`F:\新建文件夹`、`F:\DeterminFlow`（旧仓库）都
+**没有**标签。Windows 创建进程时把令牌降到镜像的强制标签：于是 venv 里的
+`python.exe` 一启动就是 `S-1-16-4096`，而同一份二进制放到 `F:\` 根或别的无标签
+目录就是 `S-1-16-12288`。判别实验（同一台机器、同一个 High 父进程）：
+
+| 实验 | 镜像位置 | 结果 |
+|---|---|---|
+| 对照 | `C:\Program Files\Python314\python.exe` | High |
+| 卷级假设 | `cmd.exe` 复制到 `F:\` 根 | **High**（推翻「F: 上的可执行文件」） |
+| 名字假设 | `cmd.exe` 改名成 `F:\python.exe` | **High**（推翻「按文件名」） |
+| 字节假设 | `python.exe` 复制到 `F:\_r84_py_copy.exe` | **High**（推翻「按哈希」） |
+| 因果对照 | 同一份 `python.exe` 放进新建的无标签 `F:\_r84_label_test\` | High |
+| 因果验证 | 对同目录执行 `icacls ... /setintegritylevel (OI)(CI)Low` | **Low** |
+
+第三、四、五行是关键：降级**只在镜像继承了 Low 标签时发生**。R81 的「F: 上的
+可执行文件被强制降到 Low」把目录树属性误读成了卷属性——它当时的样本全部落在
+`F:\DeterminFlow x2` 树下。本机 minifilter 只有 Windows 自带组件（`fltmc filters`
+列出的是 bindflt / UCPD / storqosflt / wcifs / CldFlt / bfs / FileCrypt / UnionFS /
+npsvctrig / Wof / FileInfo），AV 只有 Windows Defender，因此排除「安全软件驱动
+在 `CreateProcess` 时改令牌」这一类。
+
+后果：**113-skip 的 Low profile 是这棵树带标签的结果，不是机器的属性**。别的
+机器、别的目录（无标签）上，venv 解释器继承父进程的 IL，msys 不会因此失败。
+C: 解释器处方仍然有效（C: 不在标签树下），但它是**绕开**；真正的根修是清掉那棵
+树的标签：
+
+```
+icacls "F:\DeterminFlow x2" /setintegritylevel (OI)(CI)Medium
+```
+
+本条**没有执行**这一步：改用户目录的安全属性不是测试该做的事。`conftest.py` 的
+skip 文案因此同时给出「清标签」与「C: 解释器」两条路（R84 已同步，用例钉住）。
+R36 记录的「服务进程为 Low-IL」与此一致，但本轮没有回查当时的标签状态，不把
+因果钉到某个具体轮次。
 
 判据本身（`_msys_skip_applies`）只有两个自变量：
 
