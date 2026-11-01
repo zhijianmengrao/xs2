@@ -169,4 +169,22 @@ Low `2237 + 113` = **2350**。
 
 ## 9. 提交、推送与 CI 核对
 
-（推送后补记）
+两次提交（`23ef26b` feat + `26b61ab` docs，显式路径 add）后推送
+`7b90850..26b61ab`（一次成功；本轮 socks5 与直连同时可用，用的是全局
+socks5）。CI run **41263390282**（push，02:00:35 → 02:04:21，约 3m46s）
+五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（02:00:38–02:03:22）/ windows-backend（02:00:37–02:04:20）/ frontend（02:00:37–02:02:06）/ container-config（02:00:37–02:00:42）/ container-build（02:00:38–02:01:15）全部 `success` |
+| ubuntu | `2285 passed, 65 skipped, 1 warning in 113.30s` = **2350** |
+| windows | `2321 passed, 29 skipped, 1 warning in 169.44s` = **2350** |
+| 新用例在 CI 真跑 | ubuntu 2267/65 → **2285/65**、windows 2303/29 → **2321/29**（各 **+18**） |
+| 新步骤 | backend 第 **17** 步 `e2e retry trend (history, read-only)` **success**；日志里有 `##[group]Run python scripts/e2e_retry_history.py check \` |
+| e2e / metrics | `[e2e] 10/10 场景通过`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过`；`docker compose config -q` 成功 |
+| Desktop Windows / macOS | 未触发（该 SHA 下只有 CI 一个 run） |
+
+`$GITHUB_STEP_SUMMARY` 正文 API 不提供，趋势表由本地同一个 `render_trend()`
+逐字验证（与 R74 §7-2 同一条限制）；CI 上能核到的是「这一步以 0 退出」。
+
