@@ -393,10 +393,11 @@ def _snapshot_roots() -> list[Path]:
 
 
 def test_payload_scan_covers_every_snapshot_fixture() -> None:
-    """自动发现不能静默退化成空集：三个已知快照 fixture 必须在扫描范围内。"""
+    """自动发现不能静默退化成空集：五个已知快照 fixture 必须在扫描范围内。"""
     names = {p.name for p in _snapshot_roots()}
     assert {"live_snapshot", "live_snapshot_exceeds",
-            "live_snapshot_all_failed"} <= names, (
+            "live_snapshot_all_failed", "live_snapshot_all_failed_28",
+            "live_snapshot_all_failed_29"} <= names, (
         f"载荷扫描没有覆盖全部快照 fixture：{sorted(names)}")
 
 
@@ -1749,6 +1750,72 @@ def test_real_all_failed_snapshot_exceeds_the_policy_ceiling() -> None:
     assert "失败率 100.00%（n=6, 失败 6）" in message, message
     assert "95% 区间 [60.70%, 100.00%]" in message, message
     assert "判超阈" in message, message
+
+
+# ------------------------------------------------- R87：n≥29 全失败样本（真实执行）
+# R84 §3.3 的记录是「n≥29 的自然全失败样本不存在」。用户在 R85 拍定主动制造：
+# 用 e2e 的桩 provider 真跑 29 次首节点带 ``[stub:fail]`` 的工作流（隔离
+# ``DETERMINFLOW_DATA_DIR``，不碰仓库 ``data/``），全部 run 记录 ``status=failed``，
+# 再按真实导出链落成两份 fixture。n=29 是 margin 10 的翻转点：
+# 全失败闭式 ``1-0.05**(1/29)=9.81pp < 10``；n=28 是 ``10.15pp > 10``。
+MANUFACTURED_ALL_FAILED_29 = (
+    REPO_ROOT / "tests" / "fixtures" / "live_snapshot_all_failed_29")
+MANUFACTURED_ALL_FAILED_28 = (
+    REPO_ROOT / "tests" / "fixtures" / "live_snapshot_all_failed_28")
+
+
+@pytest.mark.parametrize("root, expected", [
+    (MANUFACTURED_ALL_FAILED_29, 29),
+    (MANUFACTURED_ALL_FAILED_28, 28),
+], ids=["n29", "n28"])
+def test_manufactured_all_failed_fixture_is_a_real_export(
+        root: Path, expected: int) -> None:
+    """两份 fixture 都是真实执行记录：每个 run ``status=failed``、计数自洽。"""
+    meta = json.loads((root / "snapshot-meta.json").read_text(encoding="utf-8"))
+    assert meta["source_root"] == "workflows"
+    assert (meta["totals"]["runs"], meta["totals"]["attempts"],
+            meta["totals"]["failed"]) == (expected, expected, expected)
+    payloads = [json.loads(path.read_text(encoding="utf-8"))
+                for path in root.glob("workflows/*/runs/run-*.json")]
+    assert len(payloads) == expected
+    assert {payload["status"] for payload in payloads} == {"failed"}
+
+
+def test_n29_all_failed_sample_passes_the_margin() -> None:
+    """n=29 是全失败闭式在 margin 10 下的最小合格样本（9.81pp）。"""
+    code, message = live_gate.check_sample_size(MANUFACTURED_ALL_FAILED_29, 10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "9.81" in message, message
+    assert "n=29" in message, message
+
+
+def test_n28_all_failed_sample_is_the_flip_point() -> None:
+    """n=28 差一个 run 就判 7：文案必须说「需要约 29 次尝试」。"""
+    code, message = live_gate.check_sample_size(MANUFACTURED_ALL_FAILED_28, 10.0)
+    assert code == live_gate.EXIT_THIN_SAMPLE, message
+    assert "10.15" in message, message
+    assert "约 29 次尝试" in message, message
+
+
+def test_manufactured_fixtures_differ_by_exactly_one_run() -> None:
+    """两份 fixture 的差异只能是「少一个 run」——否则翻转不是样本量造成的。"""
+    def names(root: Path) -> set[str]:
+        return {path.relative_to(root).as_posix()
+                for path in root.glob("workflows/*/runs/run-*.json")}
+
+    fewer = names(MANUFACTURED_ALL_FAILED_28)
+    more = names(MANUFACTURED_ALL_FAILED_29)
+    assert len(more) == 29 and len(fewer) == 28
+    assert fewer < more
+    assert len(more - fewer) == 1
+
+
+def test_n29_all_failed_snapshot_still_exceeds_the_policy_ceiling() -> None:
+    """样本量合格不等于政策合格：29 全失败仍以 1 退出（区间 [90.19%, 100%]）。"""
+    code, message = live_gate.evaluate(MANUFACTURED_ALL_FAILED_29, ceiling=8.0)
+    assert code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "失败率 100.00%（n=29, 失败 29）" in message, message
+    assert "95% 区间 [90.19%, 100.00%]" in message, message
 
 
 def test_per_workflow_detects_run_count_drift(tmp_path: Path) -> None:

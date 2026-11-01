@@ -1,0 +1,29 @@
+{
+  "exported_at": "2026-11-01T10:03:09+00:00",
+  "source_root": "workflows",
+  "per_workflow": {
+    "wf-r87-all-failed": {
+      "runs": 28,
+      "attempts": 28,
+      "failed": 28,
+      "failure_rate": 1.0
+    }
+  },
+  "history": [
+    {
+      "exported_at": "2026-11-01T10:03:09+00:00",
+      "per_workflow": {
+        "wf-r87-all-failed": {
+          "attempts": 28,
+          "failed": 28
+        }
+      }
+    }
+  ],
+  "totals": {
+    "runs": 28,
+    "attempts": 28,
+    "failed": 28,
+    "failure_rate": 1.0
+  }
+}

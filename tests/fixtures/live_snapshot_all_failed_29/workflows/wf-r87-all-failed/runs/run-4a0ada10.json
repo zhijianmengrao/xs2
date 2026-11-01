@@ -1,0 +1,34 @@
+{
+  "run_id": "run-4a0ada10",
+  "workflow_id": "wf-r87-all-failed",
+  "status": "failed",
+  "started_at": "2026-11-01T18:02:44.318295+08:00",
+  "completed_at": "2026-11-01T18:02:44.347710+08:00",
+  "node_executions": [
+    {
+      "node_id": "broken",
+      "status": "failed",
+      "started_at": "2026-11-01T18:02:44.318521+08:00",
+      "completed_at": "2026-11-01T18:02:44.345286+08:00",
+      "error": "stub induced failure",
+      "attempt_count": 1,
+      "automatic_retry_count": 0,
+      "output_repair_count": 0,
+      "next_attempt_trigger": "initial",
+      "rejection_count": 0,
+      "reject_upstream_count": 0,
+      "attempt_history": [
+        {
+          "attempt_number": 1,
+          "trigger": "initial",
+          "status": "failed",
+          "error": "stub induced failure",
+          "started_at": "2026-11-01T18:02:44.318521+08:00",
+          "completed_at": "2026-11-01T18:02:44.345286+08:00",
+          "automatic_retry_count": 0,
+          "output_repair_count": 0
+        }
+      ]
+    }
+  ]
+}
