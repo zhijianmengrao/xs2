@@ -160,8 +160,10 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 展示字段不参与判决（顶层 `source_root`，R86） | `tests/test_live_snapshot_gate.py::test_source_root_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
 | n≥29 全失败样本（R87） | `tests/test_live_snapshot_gate.py::test_n29_all_failed_sample_passes_the_margin`、`test_n28_all_failed_sample_is_the_flip_point`、`test_manufactured_all_failed_fixture_is_a_real_export`、`test_manufactured_fixtures_differ_by_exactly_one_run` |
 | CI 回写历史的写权限/执行面分离（R88） | `tests/test_ci_history_writeback.py::test_write_permission_belongs_only_to_the_writeback_job`、`test_writeback_job_runs_no_repository_tests`、`test_writeback_uses_run_id_not_run_attempt` |
+| 写回重试语义由**行为**驱动、YAML 只委托（R89） | `tests/test_ci_history_writeback.py::test_writeback_delegates_retry_to_the_script` + `tests/test_ci_writeback_history.py::test_rejected_push_rebases_and_succeeds_on_the_second_attempt`、`test_permanent_rejection_stops_after_the_attempt_cap` |
+| 同一 run 重跑且观测一致 → **不产生提交**（R89） | `tests/test_e2e_retry_history.py::test_record_keeps_the_first_export_time_when_the_observation_is_identical`、`tests/test_ci_writeback_history.py::test_same_run_rerun_does_not_create_a_second_commit` |
 | p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
-| e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
+| e2e 重跑历史的窗口 **40 轮**（R78，R89 由 20 提到 40） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window`（值 + 边界行为两条一起钉） |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
 | 「本步不判趋势」必须写进输出（R78） | `test_check_says_it_has_no_judgement_power` |
@@ -659,12 +661,59 @@ R88 的落点是**独立 job**，不是给 backend 加一步，理由：写权�
   20 轮窗口在密集提交下会更快滚完。趋势仍不判好坏（R78），所以这个变化只影响
   「历史覆盖多长时间」，不影响判决。
 
-守卫：`tests/test_ci_history_writeback.py` 的 9 条用例（写权限只在写回 job、
+守卫：`tests/test_ci_history_writeback.py` 的 9 条接线用例（写权限只在写回 job、
 只 main push、写 job 不跑 pytest/e2e/npm/docker、artifact 同名、run_id 非
-重试次数、重试/串行化/`[skip ci]`、入库历史仍能通过 `validate_history`）。
+重试次数、串行化/`[skip ci]`、入库历史仍能通过 `validate_history`）。**R89 起
+重试语义改由 `tests/test_ci_writeback_history.py` 用真实 git 仓驱动**（见 §7.15）。
 
 边界：main 当前无分支保护；若将来加保护，bot 直推会失败——三次重试后以
 `::error::` 显式报错，而不是静默丢历史。
+
+### 7.15 写回链路搬进可执行代码：重试必须在重试发生时被走过（R89）
+
+R88 的重试循环只写在 `ci.yml` 里：本地跑不了，测试只能对 YAML 做子串断言
+（`for attempt in 1 2 3`、`git pull --rebase origin main`）。子串断言证明不了
+「push 被拒之后真的会 rebase 再推」——R68 的教训是重试路径必须在重试真的发生
+时被走过一次。
+
+- **提取**：提交/推送/重试搬进 `scripts/ci_writeback_history.py`；YAML 只剩一次
+  调用（`--metrics` / `--history` / `--run-id` / `--commit-message`）。重试语义
+  只有一份：`test_writeback_delegates_retry_to_the_script` 反向钉住 YAML 里不得
+  再出现 `git push` / `pull --rebase` / `for attempt`（R80：同一个事实写两处会分裂）。
+- **行为用例**（`tests/test_ci_writeback_history.py`，真实 git 临时仓）：
+
+| 用例 | 让什么真的发生 |
+|---|---|
+| `test_push_succeeds_on_the_first_attempt` | 快进：第 1 次成功；提交信息带 `[skip ci]` |
+| `test_rejected_push_rebases_and_succeeds_on_the_second_attempt` | other 仓先推一个提交 → work 的 push **真的被拒** → rebase → 第 2 次成功；远端无 merge 提交 |
+| `test_permanent_rejection_stops_after_the_attempt_cap` | pre-receive 钩子永久拒绝：恰好 `DEFAULT_ATTEMPTS`（3）次后 `::error::` + 退出 1 |
+| `test_same_run_rerun_does_not_create_a_second_commit` | 同一 run 重跑（第二次时间戳被推后）：历史逐字节不变、没有第二次提交 |
+| `test_commit_does_not_sweep_unrelated_changes` | 工作树里有**已暂存**的杂项，写回提交也只含 history.json |
+| `test_missing_metrics_is_not_a_failure` | 没有 metrics：退出 0、历史不动 |
+| `test_rebase_conflict_fails_loudly_instead_of_losing_the_round` | 远端也改了 history.json：rebase 冲突 → `::error::` + 退出 1（不静默丢轮次） |
+| `test_cli_has_the_same_semantics_as_the_function` | CLI 与函数同一语义 |
+
+- **顺带修掉的一个真缺陷**：`record` 原先每次重跑都写新的 `exported_at`，所以
+  R88 文案里的「内容不变就不提交」在重跑时并不成立——会多一次**非空**提交。
+  现在同一 `run_id` 且观测（`total/passed/failed/retried/attempts/scenarios`）
+  完全一致时保留首次时间戳；观测变了照常更新（反向边界
+  `test_record_updates_the_export_time_when_the_observation_changes`）。
+- **身份**：bot 身份走 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` 环境变量，而不是只给
+  `git commit` 加 `-c`——被拒后的 `pull --rebase` 也会重写提交、也需要身份
+  （R89 实测：只给 commit 加 `-c` 时 rebase 会因缺身份而失败）。
+- **窗口 20 → 40**：R88 把「一轮 = 一次显式导出」改成「一轮 = 一次 main push」，
+  doc-only 提交也占一格；R88 自己就吃掉 3 轮，20 轮只剩 6~7 个工作轮的量。
+  窗口是**保留期**，不是判决门槛（趋势仍不判好坏）。
+- **变异验证（8/8 全咬合，还原源是当前文件快照，不用 `git checkout`）**：
+  M1 `pull` 不带 `--rebase` → 1 红；M2 重试上限 3→1 → 2 红；M3 没有 metrics
+  当失败 → 1 红；M4 无变化仍然提交 → 1 红；M5 默认信息丢 `[skip ci]` → 1 红；
+  M6 commit 不带 pathspec → 1 红；M7 重跑总是改写 `exported_at` → **2 红**；
+  M8 窗口 40→20 → 1 红。**M7 第一次实测只有函数级用例咬住**：端到端重跑用例
+  在同一秒内会假绿（同秒的 `exported_at` 本来就相同），把第二次重跑的时间戳
+  显式推后才变成两处咬合。
+- **边界（如实）**：本地仍不能复现 `actions/download-artifact` 与真实 token 的
+  push 权限；覆盖的是脚本的输入契约与 git 行为。远端冲突时的处置仍是「响亮失败、
+  本轮不入库」（与 R88 相同），没有自动重算。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
