@@ -185,4 +185,26 @@ collection error；改用同一份 C: 解释器 `C:\Program Files\Python314\pyth
 
 ## 10. 提交、推送与 CI 核对
 
-（待提交后回填。）
+两次提交（`422972a` fix + `e48970b` docs，显式路径 add）后推送
+`4475fc2..e48970b`。推送通道：全局 socks5 10808 已失效
+（`schannel: failed to receive handshake`）；`git -c http.proxy= -c https.proxy=`
+第一次 `Connection was reset`、第二次成功（与 R58/R61 同一条纪律：先探路，别照抄
+上一轮的通道）。
+
+CI run **41281752270**（push，06:40:12 → 06:45:04，约 4m52s）五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（06:40:15–06:42:49）/ windows-backend（06:40:15–06:45:04）/ frontend（06:40:15–06:41:26）/ container-config（06:40:15–06:40:21）/ container-build（06:40:15–06:40:51）全部 `success` |
+| ubuntu | `2350 passed, 65 skipped, 1 warning in 112.92s` = **2415** |
+| windows | `2386 passed, 29 skipped, 1 warning in 224.56s` = **2415** |
+| 计数与 R81 相比 | ubuntu 2336/65 → **2350/65**、windows 2372/29 → **2386/29**（各 **+14**，与本轮新增用例数一致） |
+| 快照判据 | backend 第 7 步 fixture 自检 + 第 8–14 步七个真实快照判据全 `success`（政策 8%→0 / 1%→1、回归→0、逐 wf 回归→0、提前量→0、样本量→0、逐 wf 报告→0、失败率硬门槛→0；exceeds fixture 的三条反向验证在输出里各退 1）；windows 第 7–11 步同 |
+| 新行为在 CI 真跑 | 第 14 步输出含「快照历史 3 轮（含当前）。连续 3 轮以上样本不足：…」共 8 个 workflow，退出 0——重导的预期可见变化在 CI 上逐字复现 |
+| e2e / metrics | `[e2e] 10/10 场景通过`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| e2e 趋势（R78 步骤） | backend 第 **17** 步 `e2e retry trend (history, read-only)` `success` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过: determinflow-core:ci`；`docker compose config -q` 成功 |
+| Desktop Windows / macOS | 未触发（该 SHA 下只有 CI 一个 run） |
+
+`$GITHUB_STEP_SUMMARY` 正文 API 不提供（与 R74 §7-2 / R80 §9 同一条限制）；CI 上能
+核到的是「这一批步骤都以 0 退出」。
