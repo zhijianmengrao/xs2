@@ -97,4 +97,20 @@ e2e-history-writeback: download-artifact (continue-on-error)
 
 ## 7. 提交、推送与 CI 核对
 
-（待补记）
+- 提交 `736ea3f`（feat：ci.yml + 脚本 docstring + 9 条接线测试）与 `8382a77`
+  （docs），推送 `4413aa2..8382a77`（直连前两次失败、第三次成功）。
+- CI run **41297112074**（push，10:21:07 → 10:26:13，约 5m6s）**六个 job** 全部
+  `success`（新增的 `e2e-history-writeback` 在 10:23:25–10:23:34，仅 9 秒）：
+
+| 项 | 实证 |
+|---|---|
+| backend | `2504 passed, 65 skipped, 1 warning in 91.91s` = **2569** |
+| windows-backend | `2540 passed, 29 skipped, 1 warning in 228.42s` = **2569** |
+| 与 R87 相比 | ubuntu 2495/65 → **2504/65**、windows 2531/29 → **2540/29**（各 +9，与新增接线测试数一致） |
+| **写回 job** | `e2e-history-writeback` **success**（9 秒）：artifact 往返 + record + commit + push 全走通 |
+| **写回结果** | main 头变成 bot 提交 **`63c601f`**「chore(e2e): record CI run 41297112074 [skip ci]」，父提交 `8382a77`；`history.json` 1 轮 → **2 轮**（新增 `ci-41297112074`，total=10 / passed=10 / retried=0） |
+| **无自触发** | `runs?head_sha=63c601f` → **total_count=0**：GITHUB_TOKEN 的 bot push 没有产生新 CI run |
+| e2e / 前端 / 容器 | e2e 10/10；frontend / container-config / container-build 均 `success` |
+
+**这是本轮的核心证据**：写回不是纸面设计——它在这次 run 里真实产生了一个 bot
+提交与一轮历史，且没有触发循环。下一轮起，`check` 读到的历史就会包含 CI 轮次。
