@@ -348,6 +348,16 @@ jobs:
         run: |
           python scripts/e2e_retry_summary.py "$RUNNER_TEMP/e2e-metrics.json" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: e2e retry trend (history, read-only)
+        # R78：跨 run 趋势随被判数据入库（本机显式 record 后提交），CI 只读
+        # 校验——不改 permissions（仍是 contents: read）。历史读不懂/计数矛盾
+        # 以 4 退出（重录/修文件），没有历史以 3 退出；**不判趋势好坏**，因为
+        # 10 个场景下 1 次重跑就是 10 个百分点（R63/R69）。
+        if: always()
+        run: |
+          python scripts/e2e_retry_history.py check \
+            --history tests/fixtures/e2e_retry_history/history.json >> "$GITHUB_STEP_SUMMARY"
+
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
   # 快速跨平台信号；本 job 与本机 High-IL 全量跑（docs/PROJECT_INFO.md 测试环境）

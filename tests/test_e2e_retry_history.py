@@ -1,0 +1,285 @@
+"""e2e 重跑率的跨 run 趋势（R78）。
+
+R74 只让**单次** run 的重跑频率可机读；本文件钉住跨 run 那一层。判据边界是
+用户拍定的：**只判历史数据有效，不判趋势好坏**——因为 e2e 只有 10 个场景，
+1 次重跑 = 10 个百分点，样本量撑不起「变差」的判决（R63/R69）。
+
+最容易冒充的三条（R75/R76/R77 的同族教训）：
+
+1. **历史坏了当「没有样本」（3）**——人会更勤快地跑 e2e，而文件根本没被读过；
+2. **历史坏了当「趋势不合格」（1）**——人去查 e2e 抖动，处置全歪；
+3. **跳过坏条目继续渲染**——趋势表只显示剩下的好条目，「0 次重跑」看起来和
+   真实数据一模一样。
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import yaml
+
+from scripts import e2e_retry_history as history
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+COMMITTED = (REPO_ROOT / "tests" / "fixtures" / "e2e_retry_history"
+             / "history.json")
+
+
+def _metrics(total: int = 10, retried: int = 0) -> dict:
+    """一份合法的 e2e metrics payload；``retried`` 个场景各多跑一次。"""
+    scenarios = [
+        {
+            "name": f"scenario_{index}",
+            "passed": True,
+            "attempts": 2 if index < retried else 1,
+            "first_failure": "第一次红了" if index < retried else "",
+        }
+        for index in range(total)
+    ]
+    return {
+        "schema": 1,
+        "total": total,
+        "passed": total,
+        "failed": 0,
+        "retried": retried,
+        "scenarios": scenarios,
+    }
+
+
+def _entry(run_id: str, total: int = 10, retried: int = 0,
+           exported_at: str = "2026-11-01T00:00:00+00:00") -> dict:
+    return {
+        "run_id": run_id,
+        "exported_at": exported_at,
+        **history.entry_from_metrics(_metrics(total=total, retried=retried)),
+    }
+
+
+def _write_history(path: Path, entries: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": 1, "history": entries}, ensure_ascii=False),
+        encoding="utf-8")
+
+
+def _metrics_file(path: Path, payload: dict) -> Path:
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _backend_steps() -> list[dict]:
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    return list(workflow["jobs"]["backend"]["steps"])
+
+
+# ---------------------------------------------------------------- record
+def test_record_creates_a_history_with_one_round(tmp_path: Path) -> None:
+    source = _metrics_file(tmp_path / "metrics.json", _metrics())
+    target = tmp_path / "history.json"
+
+    assert history.record(source, target) == 0
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["schema"] == 1
+    assert len(payload["history"]) == 1
+    entry = payload["history"][0]
+    assert entry["total"] == 10 and entry["attempts"] == 10
+    assert entry["retried"] == 0
+    assert entry["run_id"] == entry["exported_at"]
+
+
+def test_record_replaces_the_same_run_id_instead_of_appending(
+        tmp_path: Path) -> None:
+    target = tmp_path / "history.json"
+    assert history.record(
+        _metrics_file(tmp_path / "a.json", _metrics(retried=0)), target,
+        run_id="round-1") == 0
+    assert history.record(
+        _metrics_file(tmp_path / "b.json", _metrics(retried=1)), target,
+        run_id="round-1") == 0
+
+    entries = history.load_history(target)
+    assert len(entries) == 1, "同一个 run_id 必须是覆盖，不是追加"
+    assert entries[0]["retried"] == 1
+
+
+def test_record_trims_to_the_window(tmp_path: Path) -> None:
+    """窗口常量是 20：写入第 21 轮时最早一轮必须掉出去。"""
+    assert history.MAX_ROUNDS == 20
+    target = tmp_path / "history.json"
+    for index in range(21):
+        assert history.record(
+            _metrics_file(tmp_path / f"{index}.json", _metrics()),
+            target, run_id=f"r{index}") == 0
+
+    entries = history.load_history(target)
+    assert len(entries) == history.MAX_ROUNDS
+    assert entries[0]["run_id"] == "r1"
+    assert entries[-1]["run_id"] == "r20"
+
+
+def test_record_refuses_to_append_onto_a_corrupt_history(
+        tmp_path: Path) -> None:
+    """坏历史不能被静默覆盖——那会把「数据坏了」改写成「刚记了一轮」。"""
+    target = tmp_path / "history.json"
+    target.write_text("{not json", encoding="utf-8")
+
+    assert history.record(
+        _metrics_file(tmp_path / "m.json", _metrics()), target) == 4
+    assert target.read_text(encoding="utf-8") == "{not json"
+
+
+def test_record_rejects_contradictory_metrics_counts(tmp_path: Path) -> None:
+    payload = _metrics()
+    payload["failed"] = 1  # passed 10 + failed 1 != total 10
+    target = tmp_path / "history.json"
+
+    assert history.record(
+        _metrics_file(tmp_path / "m.json", payload), target) == 4
+    assert not target.exists(), "坏 metrics 不能留下半份历史"
+
+
+def test_record_rejects_a_bool_where_a_count_belongs(tmp_path: Path) -> None:
+    """``True``/``False`` 是 ``int`` 的子类；当作 1/0 会凭空造出一轮。
+
+    计数必须**自洽**才能咬住这条：``total=False`` 配 0/0/0、空 scenarios 时，
+    去掉 ``_is_int`` 的 bool 检查会得到一轮「0 场景 0 重跑」的历史。
+    """
+    payload = {"schema": 1, "total": False, "passed": 0, "failed": 0,
+               "retried": 0, "scenarios": []}
+    target = tmp_path / "history.json"
+    assert history.record(
+        _metrics_file(tmp_path / "m.json", payload), target) == 4
+    assert not target.exists()
+
+
+# ---------------------------------------------------------------- check
+def test_check_renders_the_recent_rounds(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1"), _entry("r2", retried=1)])
+    assert history.check(target) == 0
+    out = capsys.readouterr().out
+    assert "最近 2 / 2 轮" in out
+    assert "| r2 |" in out
+    assert "10.0%" in out and "0.0%" in out
+
+
+def test_check_says_it_has_no_judgement_power(tmp_path: Path, capsys) -> None:
+    """0 退出不等于通过：输出必须自己说出「这步没有判定力」。"""
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1")])
+    assert history.check(target) == 0
+    out = capsys.readouterr().out
+    assert "不判趋势好坏" in out
+    assert "1 次重跑 = 10 个百分点" in out
+    assert "退出 0 只表示数据可读" in out
+
+
+def test_check_computes_the_resolution_from_the_latest_total(
+        tmp_path: Path, capsys) -> None:
+    """分辨率是算出来的，不是写死的 10：20 个场景时 1 次重跑 = 5 个百分点。"""
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1", total=20)])
+    assert history.check(target) == 0
+    assert "1 次重跑 = 5 个百分点" in capsys.readouterr().out
+
+
+def test_check_limit_only_affects_display(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1"), _entry("r2")])
+    assert history.main(["check", "--history", str(target),
+                         "--limit", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "最近 1 / 2 轮" in out
+    assert "| r1 |" not in out and "| r2 |" in out
+
+
+def test_check_exits_three_without_a_history_file(
+        tmp_path: Path, capsys) -> None:
+    assert history.check(tmp_path / "absent.json") == 3
+    assert "不存在" in capsys.readouterr().err
+
+
+def test_check_exits_three_for_an_empty_history(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    _write_history(target, [])
+    assert history.check(target) == 3
+    assert "历史为空" in capsys.readouterr().err
+
+
+def test_check_exits_four_on_unparseable_history_not_eight(
+        tmp_path: Path, capsys) -> None:
+    """坏 JSON 是元数据问题（4），不是「判据算术失败」（8）也不是「无样本」（3）。
+
+    ``json.JSONDecodeError`` 是 ``ValueError`` 的子类；若把解析放在一个
+    ``except ValueError`` 的判据外壳里，这一格会变成 8——读的人就去查判据了。
+    """
+    target = tmp_path / "history.json"
+    target.write_text("{not json", encoding="utf-8")
+    code = history.check(target)
+    assert code == 4 and code != 8
+    assert "无法解析" in capsys.readouterr().err
+
+
+def test_check_exits_four_on_contradictory_counts(
+        tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    broken = _entry("r1")
+    broken["passed"] = 9  # 9 + 0 != 10
+    _write_history(target, [broken])
+
+    code = history.check(target)
+    assert code == 4, f"计数矛盾必须是 4（元数据问题），实际 {code}"
+    assert "计数矛盾" in capsys.readouterr().err
+
+
+def test_check_exits_four_on_duplicate_run_ids(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1"), _entry("r1")])
+    assert history.check(target) == 4
+    assert "重复" in capsys.readouterr().err
+
+
+def test_check_exits_four_when_the_history_path_is_a_directory(
+        tmp_path: Path, capsys) -> None:
+    target = tmp_path / "history.json"
+    target.mkdir()
+    assert history.check(target) == 4
+    assert "不是文件" in capsys.readouterr().err
+
+
+def test_check_rejects_bad_json_even_when_one_entry_would_render(
+        tmp_path: Path, capsys) -> None:
+    """跳过坏条目继续渲染是最隐蔽的一种：剩下的好条目会装成完整趋势。"""
+    target = tmp_path / "history.json"
+    payload = {"schema": 1, "history": [_entry("r1"), {"run_id": "r2"}]}
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    assert history.check(target) == 4
+    assert "r2" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- 接线
+def test_ci_checks_the_committed_history_file() -> None:
+    """CI 必须只读校验**入库的**历史；文件本身也要能通过 check。
+
+    没有这条，趋势可以悄悄停在某一轮——CI 全绿，而跨 run 那一层早就断了。
+    """
+    hits = [
+        step for step in _backend_steps()
+        if "e2e_retry_history.py" in str(step.get("run", ""))
+    ]
+    assert len(hits) == 1, (
+        "backend job 必须且只能有一处校验重跑历史"
+        f"（实际 {len(hits)} 处）")
+    run = str(hits[0]["run"])
+    assert "check" in run
+    assert "tests/fixtures/e2e_retry_history/history.json" in run
+    assert "GITHUB_STEP_SUMMARY" in run
+    assert hits[0].get("if") == "always()", (
+        "e2e 失败时更需要看历史是否有效，校验步骤必须 always()")
+    assert "secrets." not in json.dumps(hits[0], ensure_ascii=False)
+
+    assert COMMITTED.is_file(), f"趋势历史没有入库：{COMMITTED}"
+    assert history.load_history(COMMITTED), "入库的历史不能是空的"
