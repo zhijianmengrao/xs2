@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import stat
@@ -94,6 +95,51 @@ def _apply_worktree_changes(source: Path, work: Path) -> None:
               f"（只带已跟踪改动）")
 
 
+def _install_rejection_hook(origin: Path, rejections: int) -> None:
+    """在沙箱 origin 上装 pre-receive：前 ``rejections`` 次 push 被拒（R99）。"""
+    hook = origin / "hooks" / "pre-receive"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(
+        "#!/bin/sh\n"
+        'counter="$GIT_DIR/replay-reject-count"\n'
+        'n=$(cat "$counter" 2>/dev/null || echo 0)\n'
+        f'if [ "$n" -lt {rejections} ]; then\n'
+        '  echo $((n + 1)) > "$counter"\n'
+        '  echo "replay: simulated rejection" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'exit 0\n',
+        encoding="utf-8")
+    hook.chmod(0o755)
+    print(f"replay：已安装拒绝钩子（前 {rejections} 次 push 被拒）")
+
+
+def _create_conflicting_round(work: Path, origin: Path, branch: str,
+                              history_rel: str, sandbox: Path) -> None:
+    """让 origin 先前进一轮 history.json，制造 rebase 冲突（R99）。"""
+    entries = history.load_history(work / history_rel)
+    entries = entries + [{
+        "run_id": "replay-conflict",
+        "exported_at": "2026-11-02T00:00:00+00:00",
+        "source": "local",
+        "total": 1, "passed": 1, "failed": 0, "retried": 0, "attempts": 1,
+        "scenarios": [{"name": "conflict", "passed": True, "attempts": 1,
+                       "first_failure": ""}],
+    }]
+    history.validate_history({"schema": history.SCHEMA, "history": entries})
+    other = sandbox / "other"
+    _git("clone", "-q", str(origin), str(other))
+    (other / history_rel).write_text(
+        json.dumps({"schema": history.SCHEMA, "history": entries},
+                   ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
+    _git("add", "--", history_rel, cwd=other)
+    _git("-c", "user.name=replay", "-c", "user.email=replay@example.com",
+         "commit", "-q", "-m", "replay: conflicting round", cwd=other)
+    _git("push", "-q", "origin", f"HEAD:{branch}", cwd=other)
+    print("replay：已在 origin 上制造一轮冲突（history.json）")
+
+
 def _remove_sandbox(path: Path) -> None:
     """删除沙箱；Windows 上 git 的 pack/object 是只读的。
 
@@ -126,7 +172,9 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
            dry_run: bool = False, from_worktree: bool = False,
            fetch_api_url: str | None = None,
            artifact: str = ARTIFACT_NAME, fetch_repo: str = "",
-           token: str | None = None) -> int:
+           token: str | None = None, reject_pushes: int = 0,
+           conflict: bool = False,
+           result_path: Path | None = None) -> int:
     repo = Path(repo).resolve()
     sandbox = Path(tempfile.mkdtemp(prefix="replay-ci-writeback-"))
     code = 1
@@ -138,6 +186,10 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
         _git("clone", "-q", "-b", branch, str(origin), str(work))
         if from_worktree:
             _apply_worktree_changes(repo, work)
+        if conflict:
+            _create_conflicting_round(work, origin, branch, history_rel, sandbox)
+        if reject_pushes:
+            _install_rejection_hook(origin, reject_pushes)
         target = work / history_rel
         before = _rounds(target)
 
@@ -161,7 +213,8 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
         if can_write and metrics_path is not None:
             code = writeback.writeback(
                 metrics_path, target, run_id, work, branch=branch,
-                summary_path=summary_path, dry_run=dry_run)
+                summary_path=summary_path, dry_run=dry_run,
+                result_path=result_path)
 
         after = _rounds(target)
         head = _git("log", "-1", "--format=%h %s", branch, cwd=origin)
@@ -211,15 +264,25 @@ def build_parser() -> argparse.ArgumentParser:
                         help="保留沙箱目录以便检查")
     parser.add_argument("--from-worktree", action="store_true",
                         help="把源仓库已跟踪文件的未提交改动带进沙箱（R95）")
+    parser.add_argument("--reject-pushes", type=int, default=0,
+                        help="沙箱 origin 拒绝前 N 次 push（R99）")
+    parser.add_argument("--conflict", action="store_true",
+                        help="先让 origin 前进一轮冲突历史（R99）")
+    parser.add_argument("--result-json", type=Path, default=None,
+                        help="写回的机读结果工件（R99）")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.reject_pushes < 0:
+        print("--reject-pushes 不能为负", file=sys.stderr)
+        return 2
     return replay(
         args.repo, args.metrics, args.run_id, args.history, args.branch,
         args.keep, args.summary, args.dry_run, args.from_worktree,
-        args.fetch_api_url, args.artifact, args.fetch_repo, args.token)
+        args.fetch_api_url, args.artifact, args.fetch_repo, args.token,
+        args.reject_pushes, args.conflict, args.result_json)
 
 
 if __name__ == "__main__":

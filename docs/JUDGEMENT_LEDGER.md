@@ -864,6 +864,25 @@ R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact �
 - **边界**：真实 GitHub 网络层的重试从未发生（生产两次 fetch 均首次成功）；
   `attempts` 是列表 + 下载的**总请求数**，不是「重试轮数」。
 
+### 7.25 回放内制造拒绝/冲突：失败路径的本地演练（R99）
+
+- `replay --reject-pushes N`：沙箱 origin 装 `pre-receive`，计数器在
+  `$GIT_DIR/replay-reject-count`，前 N 次 push 真实被拒 → 重试/rebase 分支在
+  fetch → writeback 全链里被走过。
+- `replay --conflict`：先在 origin 推一条**通过 `validate_history`** 的
+  `history.json` 轮次；写回 push 被拒 → `pull --rebase` 冲突 → R90 的
+  reset/recompute 路径真实触发，最终历史同时保留冲突轮和本轮。
+- 顺序：worktree patch → conflict → reject hook → writeback；钩子若先装会把
+  冲突那一推也拒掉。
+- `--result-json` 透传给 writeback，端到端可断言 `push_attempts`
+  （被拒一次 = 2）。
+- 守卫：`tests/test_replay_ci_writeback.py` +5。
+- 变异：M57–M62 **6/6 全咬合**。
+- **边界**：钩子是 `#!/bin/sh`（Git for Windows 自带 sh）；模拟的是沙箱
+  origin 行为，不是 GitHub 服务端/网络层。
+- **测试精度**：`out.count("push 被拒")` 会把钩子安装提示也算进去；断言词
+  必须带边界（`push 被拒（第`）。
+
 ## 8. 环境归因：skip 判据的自变量（R71）
 
 R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。把四行实测矩阵

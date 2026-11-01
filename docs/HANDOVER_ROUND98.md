@@ -30,14 +30,14 @@
 5. CI：fetch 步骤加 `--summary` / `--result-json`；新增 `Upload fetch result`
    （`if: always()`、缺失 warn）。
 
-## 3. 用例（+8）
+## 3. 用例（+9）
 
 | 文件 | 新增 | 断言 |
 |---|---|---|
-| `tests/test_fetch_ci_artifact.py` | +7 | 500 后重试成功（2 次列表 + 1 次下载 = attempts 3）；持续 500 → 3 次、退避 [0.5,1.0]；401 不重试（1 次、无 sleep）；result 与 summary 的 reason/detail 一致；missing/expired 分类；坏 zip → invalid；结果写失败只告警 |
+| `tests/test_fetch_ci_artifact.py` | +8 | 500 后重试成功（2 次列表 + 1 次下载 = attempts 3）；持续 500 → 3 次、退避 [0.5,1.0]；401 不重试（1 次、无 sleep）；result 与 summary 的 reason/detail 一致；missing/expired 分类；坏 zip → invalid；结果写失败只告警；**子进程直跑脚本**（CI 的 `python3 scripts/...` 形态） |
 | `tests/test_ci_history_writeback.py` | +1 | fetch 步骤带 `--summary`/`--result-json`；`Upload fetch result` 是 `always()` 且名称/路径/缺失行为正确 |
 
-**本机全量**：**2618 passed / 28 skipped / 0 failed（2646 条）**，R97 的 2638 + 8。
+**本机全量**：**2619 passed / 28 skipped / 0 failed（2647 条）**（含修复新增的子进程用例）。
 
 ## 4. 变异验证（7/7 全咬合）
 
@@ -69,7 +69,10 @@
     是 `scripts/`，不是仓库根；pytest 会加根目录，所以本机 73 条全绿也漏了。
     已补 `REPO_ROOT` bootstrap，并新增**子进程直跑脚本**的用例
     `test_fetch_runs_as_a_script_not_just_as_an_import`。
-- 修复后的 CI run：（待推送后回填）
+- 修复提交 `4beb0f7`；CI run **41327966717** 六 job 全 `success`：
+  - backend **2582 / 65**、windows **2618 / 29**，均 **2647**（本地 2647）；
+  - 写回 job：历史 **12 → 13 轮**（`ci-41327966717`，`source=ci`），main 头
+    bot 提交 `76bab41`。
 
 ## 7. 本轮教训
 

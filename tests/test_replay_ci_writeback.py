@@ -273,3 +273,119 @@ def test_replay_requires_a_metrics_source(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         replay.main(["--repo", str(repo), "--run-id", "replay-1"])
     assert exc.value.code == 2
+
+
+# ------------------------------------------------- 拒绝/冲突演练（R99）
+def test_replay_simulates_a_rejected_push_once(
+        tmp_path: Path, capsys) -> None:
+    repo = _seed(tmp_path)
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "1",
+        "--result-json", str(result),
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "前 1 次 push 被拒" in out
+    assert "push 被拒（第 1 次）" in out
+    assert "第 2 次尝试" in out
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "written"
+    assert payload["push_attempts"] == 2
+    assert payload["rounds"] == 1
+
+
+def test_replay_simulates_permanent_rejection(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "3",
+        "--result-json", str(result),
+    ]) == 1
+
+    out = capsys.readouterr().out
+    assert out.count("push 被拒（第") == 3
+    assert "失败现场" in out
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "push-rejected"
+    assert payload["push_attempts"] == 3
+    assert payload["rounds"] == 0
+    assert sandbox.exists()
+    replay._remove_sandbox(sandbox)
+
+
+def test_replay_simulates_a_conflicting_history(
+        tmp_path: Path, capsys) -> None:
+    repo = _seed(tmp_path)
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--conflict",
+        "--result-json", str(result),
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已在 origin 上制造一轮冲突" in out
+    assert "rebase 冲突（第 1 次）" in out
+    assert "第 2 次尝试" in out
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "written"
+    assert payload["push_attempts"] == 2
+    # 冲突那一轮（replay-conflict）+ 本轮（replay-1）都在远端历史里。
+    assert payload["rounds"] == 2
+
+
+def test_replay_fetch_and_rejection_work_together(
+        tmp_path: Path, capsys) -> None:
+    repo = _seed(tmp_path)
+    routes: dict = {}
+    result = tmp_path / "result.json"
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"}, _archive(tmp_path))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+            "--reject-pushes", "1",
+            "--result-json", str(result),
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert "第 2 次尝试" in out
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["push_attempts"] == 2
+    assert payload["reason"] == "written"
+
+
+def test_replay_rejects_a_negative_rejection_count(tmp_path: Path) -> None:
+    repo = _seed(tmp_path)
+    code = replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes=-1",
+    ])
+    assert code == 2
