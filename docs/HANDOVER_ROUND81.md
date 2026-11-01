@@ -203,4 +203,23 @@ CI 只读 `check`，`permissions: contents: read`，趋势本身不判红。
 
 ## 10. 提交、推送与 CI 核对
 
-{{CI}}
+两次提交（`fd75b6b` fix + `ec81ef7` docs，显式路径 add）后推送
+`bff1f7d..ec81ef7`（一次成功；本轮 socks5 与直连同时可用，推的是全局
+socks5 配置）。CI run **41271573395**（push，04:03:36 → 04:08:06，约 4m30s）
+五 job 全 `success`：
+
+| 项 | 实证（下载日志解码后逐字比对） |
+|---|---|
+| 五个 job | backend（04:03:39–04:06:13）/ windows-backend（04:03:39–04:08:06）/ frontend（04:03:38–04:04:51）/ container-config（04:03:38–04:03:43）/ container-build（04:03:39–04:04:16）全部 `success` |
+| ubuntu | `2336 passed, 65 skipped, 1 warning in 109.09s` = **2401** |
+| windows | `2372 passed, 29 skipped, 1 warning in 207.11s` = **2401** |
+| 计数与 R80 逐字相同 | 本轮零新增用例（只改 1 条用例的名称与断言），`65` 与 `29` 的 skip 数也没变——文案改动不影响判据行为 |
+| 快照判据 | backend 第 7–14 步（自检 + 真实快照七步：闸门 / 回归 / 逐 workflow 回归 / 提前量 / 样本量 / per-workflow 报告 / 失败率门槛）全 `success`；windows 第 7–11 步同 |
+| e2e / metrics | `[e2e] 10/10 场景通过`；`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| e2e 趋势（R78 步骤） | backend 第 **17** 步 `e2e retry trend (history, read-only)` `success` |
+| 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过: determinflow-core:ci`；`docker compose config -q` 成功 |
+| Desktop Windows / macOS | 未触发（该 SHA 下只有 CI 一个 run） |
+
+`$GITHUB_STEP_SUMMARY` 正文 API 不提供，与 R74 §7-2 / R80 §9 同一条限制；CI 上能核到的
+是「这一批步骤都以 0 退出」。
+
