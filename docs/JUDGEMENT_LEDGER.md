@@ -106,7 +106,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 0 | 通过 | — | 全部 |
 | 1 | 判了，且不合格 | 查数据 / 查供应商 | 默认判定（政策上限、回归）、per-workflow 回归/失败率、e2e 编排行为 |
 | 3 | 无样本 | 重导快照 / 重录历史 | 全部读快照的模式、e2e 重跑历史（缺失或为空） |
-| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效 / 路径读不开 / 顶层不是对象 / **另一块与内容不一致**；路径被占时先清理再重导） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
+| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效 / 路径读不开 / 顶层不是对象 / **任一计数块与内容不一致**，含 `totals.runs`，R83；路径被占时先清理再重导） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
 | 5 | 快照过期 | 重导快照 | 仅 `--check-stale` |
 | 6 | 覆盖度缺口 | 重导快照 | 仅 `--check-coverage` |
 | 7 | 样本太薄 | 攒更多 run 再导 | 仅 `--check-sample-size` |
@@ -152,6 +152,10 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 另一块元数据与内容不一致 → 4（R82） | `tests/test_live_snapshot_gate.py::test_moved_failure_is_drift_for_every_totals_reader`、`test_lying_totals_is_drift_for_every_per_workflow_reader`、`test_contradicting_blocks_exit_four_from_the_cli` |
 | 另一块**缺失**不是矛盾、但必须写明（R82） | `tests/test_live_snapshot_gate.py::test_absent_per_workflow_block_is_reported_not_judged`、`test_sample_size_without_per_workflow_block_says_no_cross_check`、`test_absent_totals_block_is_not_a_contradiction` |
 | 两份内容复算同口径（R82） | `tests/test_live_snapshot_gate.py::test_content_counting_has_one_rule` |
+| `totals.runs` 单独说谎 → 4（六个入口，R83） | `tests/test_live_snapshot_gate.py::test_total_runs_drift_is_drift_for_every_reader`、`test_total_runs_drift_exits_four_from_the_cli` |
+| 旧格式缺 `totals.runs` → 4（不是静默，R83） | `tests/test_live_snapshot_gate.py::test_totals_without_runs_is_incomplete_not_silent` |
+| 漂移文案写全三计数（R83） | `tests/test_live_snapshot_gate.py::test_totals_drift_message_names_all_three_counts` |
+| `totals.runs` 的形状规则（R83） | `tests/test_live_snapshot_gate.py::test_malformed_totals_is_drift_not_a_verdict`（runs 的 `true`/浮点/字符串/负数四格） |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
@@ -469,9 +473,9 @@ R80 §8-5 挂的账是「totals 只与内容复算比、per_workflow 只与内�
 
 **缺失不是矛盾。** 另一块缺失（旧快照、手写 fixture）时跳过、退出码不变，但
 `evaluate` / `check_sample_size` 的说明必须写明「本次未做分组交叉校验」——
-否则读者会以为默认判定校验了两块。`totals.runs` 仍不校验：没有判据消费它，
-而 `live_snapshot_exceeds` 的 `runs` 3 vs 120 是合成的，抬它只会给重导加一个
-没人读的失败点。
+否则读者会以为默认判定校验了两块。**R83 更正**：本段原先写的「`totals.runs`
+仍不校验」已不成立——`runs` 现在与 attempts/failed 共用同一份 `_totals_key`，
+见 §7.10。
 
 | 前提 | 期望 | 用例 |
 |---|---|---|
@@ -490,6 +494,59 @@ M2（删 `check_sample_size` 的）1 红 / 2 中唯一；M3–M6（依次删四�
 不变量用例**不唯一**，它与两条元数据一致性用例一起红；M9（totals 只校验形状）
 **4 红，一个放松、四条判据同时失守**（共享校验器的直接后果）；M10（漂移文案不
 点名块）同样 4 红。`cp` 备份还原后 md5 逐字节相同（`1d3d1834…`）。
+
+### 7.10 `totals.runs`：写了没人看的字段，钉进同一次内容复算（R83）
+
+R82 §8-5 留下的账是口径问题：导出脚本（`export_run_samples.py`）一直写
+`totals.runs = len(exported)`，但六个读计数的入口只信 attempts/failed——把
+`runs` 改成任何数字，六个入口没有一条会说话。这不是「少一个校验」，而是
+**入库工件里有一句没人读的话**：它可以长期与内容不符，直到某天有人拿它做判决。
+
+两份入库 fixture 本身是自洽的（`live_snapshot` 28 run、`live_snapshot_exceeds`
+3 run），所以这条缺口在既有用例上全绿——它只能由「只改 runs」的用例咬住。
+
+**落点：不是新判据，而是把字段并入已有口径。**
+
+- `_TOTALS_COUNT_FIELDS` 由 `("attempts", "failed")` 改为
+  `("runs", "attempts", "failed")`；`_totals_of` 按这份字段表求和并返回
+  `{runs, attempts, failed}`（原先是 2 元组），`recompute_totals` 同步改为返回
+  该字典。
+- 新增 `_totals_key(块) -> tuple[int, ...]`：元数据与内容复算用**同一把尺**
+  比较。`evaluate`、`check_sample_size`、`_totals_block_error`（四条 per-workflow
+  判据共用）三处都改成 `_totals_key(recorded) != _totals_key(actual)`。
+- 漂移文案改为写全三个计数：`元数据 runs/attempts/failed=3/20/2，内容复算
+  2/20/2`。只写 failed/attempts 时，仅 `runs` 说谎会打印出两个一模一样的
+  「2/20」，读者看不出差在哪。
+- **缺失按 0 计**：旧格式 totals 没有 `runs` → 与内容（通常 >0）不等 → 4。
+  处置与漂移相同（重导），导出脚本会补上。这与 `per_workflow` 块内缺失字段
+  的既有口径一致（`int(rec.get("runs") or 0)`）。
+
+`totals.runs` 不单独写一条判据：它和 attempts/failed 是同一个块的三个计数，
+分开写就会出现「这条判据信这个字段、那条信那个字段」的分裂（与 R82 拒绝
+「求和对账」同一条理由）。
+
+| 前提 | 期望 | 用例 |
+|---|---|---|
+| 只改 `totals.runs`（两块内容与 attempts/failed 全真） | 六个入口都 4 | `test_total_runs_drift_is_drift_for_every_reader` |
+| 外部退出码 | 默认 / `--check-sample-size` 都以 4 退出 | `test_total_runs_drift_exits_four_from_the_cli` |
+| 旧格式 totals 缺 `runs` | 4（按 0 比内容），不是静默通过 | `test_totals_without_runs_is_incomplete_not_silent` |
+| 只差 `runs` 时的文案 | 写明 `runs/attempts/failed=` 与内容复算 | `test_totals_drift_message_names_all_three_counts` |
+| `runs` 是 `true` / `20.5` / `"abc"` / `-1` | 4；消息含「totals 元数据形状无效」 | `test_malformed_totals_is_drift_not_a_verdict` |
+| 两份内容复算同口径 | `recompute_totals == _totals_of(...)`，含 `runs` | `test_content_counting_has_one_rule` |
+| 入库快照 | 三计数都与内容一致 | `test_snapshot_metadata_matches_its_content` |
+
+**六次变异如实记录**：M1（`evaluate` 只比 attempts/failed）4 红，其中
+`[evaluate]` 两条参数化用例唯一咬住本入口；M2（`check_sample_size` 同）3 红，
+`[check_sample_size]` 唯一；M3（共享 `_totals_block_error` 只比两项）**8 红，
+四条 per-workflow 判据各两条同时失守**（共享校验器的直接后果）；M4
+（`_TOTALS_COUNT_FIELDS` 退回两项）21 红，是整轮的核心变异；M5（漂移文案不写
+runs）**1 红，唯一咬合**；M6（形状校验漏掉 runs）4 红，恰好是新增的四个
+`runs` 畸形格。全部输出都是 failed、没有 skipped（R71 的教训）。`cp` 快照还原
+后 md5 逐字节相同（`19507a3d…`）。
+
+**未做（如实记录）**：`totals.failure_rate` 仍是导出时写给人看的派生值，没有
+判据读它。把它也做成判据会引入「浮点四舍五入相等」的判据——那是另一个族的
+脆弱算术，不属本轮范围；若它将来被消费，按 R83 的方式并入同一把尺。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
@@ -524,6 +581,15 @@ Low 124.94s）。**R71 复测（同机同码，约 20 小时后）方向反过�
 解释器派生的 shell——本机实测这种派生不会升 IL。**skip 文案自 R81 起恢复处方**
 （High shell + C: 启动器 + `PYTHONPATH`），但仍不把责任钉成「本令牌是 Low」：
 对象侧的 IL 可能高于任何我们能拿到的令牌。
+
+**R82/R83 更正启动器（2026-11-01）**：`C:\Windows\py.exe` 是 Windows launcher，
+本机今天用它跑 pytest 有 **137 个 collection error**（没有项目依赖），照抄会得到
+一个看似环境故障的假象。实测有效的是 C: 上的 CPython 本体
+`C:\Program Files\Python314\python.exe`，并把 venv 的 `site-packages` 连同
+`win32` / `win32\lib` / `pythonwin` / `pywin32_system32` 显式放进 `PYTHONPATH`
+（`.pth` 在 PYTHONPATH 下不执行）。R82 全量 High 2387/28、R83 复跑 2406/28
+都用这条命令；`tests/conftest.py::_msys_skip_reason` 与 PROJECT_INFO 平台注意
+事项 9 已同步。
 
 判据本身（`_msys_skip_applies`）只有两个自变量：
 
