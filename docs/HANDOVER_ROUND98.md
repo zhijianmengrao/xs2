@@ -60,7 +60,16 @@
 
 ## 6. 提交与 CI
 
-（待推送后回填）
+- 首次 run **41327072519**：backend / frontend / 容器 job `success`；
+  - **windows-backend 失败**：`test_fetch_classifies_missing_and_expired` 用
+    `Path.read_text()` 的默认编码读 UTF-8 结果 JSON（中文 `detail`），Windows
+    runner 的 cp1252 抛 `UnicodeDecodeError`；已改为显式 `encoding="utf-8"`。
+  - **写回 job 失败**：`ModuleNotFoundError: No module named 'scripts'`——
+    CI 以 `python3 scripts/fetch_ci_artifact.py` 直接执行，此时 `sys.path[0]`
+    是 `scripts/`，不是仓库根；pytest 会加根目录，所以本机 73 条全绿也漏了。
+    已补 `REPO_ROOT` bootstrap，并新增**子进程直跑脚本**的用例
+    `test_fetch_runs_as_a_script_not_just_as_an_import`。
+- 修复后的 CI run：（待推送后回填）
 
 ## 7. 本轮教训
 

@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from artifact_api_fixture import api_path, listing, server, zip_bytes
@@ -283,7 +285,8 @@ def test_fetch_classifies_missing_and_expired(tmp_path: Path) -> None:
             200, {"Content-Type": "application/json"},
             json.dumps({"total_count": 0, "artifacts": []}).encode())
         assert _run(base, tmp_path, "--result-json", str(result)) == 0
-        assert json.loads(result.read_text())["reason"] == fetch.REASON_MISSING
+        assert json.loads(result.read_text(encoding="utf-8"))[
+            "reason"] == fetch.REASON_MISSING
 
     routes = {}
     with server(routes) as base:
@@ -291,7 +294,8 @@ def test_fetch_classifies_missing_and_expired(tmp_path: Path) -> None:
             200, {"Content-Type": "application/json"},
             listing(f"{base}/archive", expired=True))
         assert _run(base, tmp_path, "--result-json", str(result)) == 0
-        assert json.loads(result.read_text())["reason"] == fetch.REASON_EXPIRED
+        assert json.loads(result.read_text(encoding="utf-8"))[
+            "reason"] == fetch.REASON_EXPIRED
 
 
 def test_fetch_classifies_a_bad_zip_as_invalid(tmp_path: Path) -> None:
@@ -326,3 +330,34 @@ def test_fetch_result_write_failure_only_warns(
                     "--result-json", str(blocker / "result.json")) == 0
 
     assert "结果工件写入失败" in capsys.readouterr().err
+
+
+def test_fetch_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
+    """CI 用 ``python3 scripts/fetch_ci_artifact.py`` 直接执行。
+
+    pytest 会把仓库根目录放进 ``sys.path``，掩盖脚本模式下的 ``scripts``
+    导入问题（R98 生产实测 ModuleNotFoundError）；这里用子进程重走一遍。
+    """
+    script = (Path(__file__).resolve().parents[1]
+              / "scripts" / "fetch_ci_artifact.py")
+    routes: dict = {}
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": b"{}"}))
+
+        result = subprocess.run([
+            sys.executable, "-X", "utf8", str(script),
+            "--run-id", RUN_ID,
+            "--repo", "owner/repo",
+            "--artifact", "e2e-metrics",
+            "--path", str(tmp_path / "e2e"),
+            "--api-url", base,
+            "--token", "test-token",
+        ], capture_output=True)
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+    assert (tmp_path / "e2e" / "e2e-metrics.json").is_file()
