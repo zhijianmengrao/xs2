@@ -159,6 +159,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 展示字段不参与判决（两处 `failure_rate`，R84） | `tests/test_live_snapshot_gate.py::test_failure_rate_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
 | 展示字段不参与判决（顶层 `source_root`，R86） | `tests/test_live_snapshot_gate.py::test_source_root_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
 | n≥29 全失败样本（R87） | `tests/test_live_snapshot_gate.py::test_n29_all_failed_sample_passes_the_margin`、`test_n28_all_failed_sample_is_the_flip_point`、`test_manufactured_all_failed_fixture_is_a_real_export`、`test_manufactured_fixtures_differ_by_exactly_one_run` |
+| CI 回写历史的写权限/执行面分离（R88） | `tests/test_ci_history_writeback.py::test_write_permission_belongs_only_to_the_writeback_job`、`test_writeback_job_runs_no_repository_tests`、`test_writeback_uses_run_id_not_run_attempt` |
 | p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
@@ -633,6 +634,37 @@ R84 §3.3 的结论是「n≥29 的自然全失败样本不存在」，并把它
 **变异验证（两次）**：M1 把全失败闭式改成返回常量 `9.0` → 两条边界用例 **2 red**；M2 从 29 fixture 移走一个 run 文件（不改 meta）→ 真实性用例与 n29 样本量用例 **2 red**，还原后计数 29。
 
 **边界（如实）**：fixture 只有 1 个 workflow，`--check-coverage` 退 6 是设计内；样本是按桩协议诱导的真实失败，不代表真实供应商的失败分布——它验证的是**样本量判据的边界算术**，不是供应商质量。
+
+### 7.14 CI 回写 e2e 重跑历史：写权限与执行面分离（R88）
+
+R78 的存储决策是「历史随被判数据入库（快照式），本机显式 `record` 后提交」；
+R81 §7 评估了 CI 回写的代价表后结论是「不做」。R85 的用户拍定改为「做」。
+R88 的落点是**独立 job**，不是给 backend 加一步，理由：写权限
+（`contents: write`）与仓库测试的执行面不能重叠。
+
+- **backend**：e2e 后上传 `e2e-metrics` artifact（`if: always() && push/main`，
+  `if-no-files-found: warn`）。
+- **`e2e-history-writeback`**：`needs: backend`、
+  `if: always() && push/main && result != cancelled`、
+  `permissions: contents: write`、`concurrency: e2e-history-writeback`
+  （`cancel-in-progress: false`）。
+- **步骤**：checkout（fetch-depth 0）→ download-artifact（`continue-on-error`）→
+  `record --run-id ci-<github.run_id>`（metrics 缺失打印「本轮不入库」退出 0）→
+  有 diff 才 commit（`[skip ci]`）→ push，每次被拒先 `pull --rebase`，最多 3 次。
+- **幂等**：`run_id` 用 `github.run_id` 而非重试次数，重跑覆盖同一轮
+  （R78 的「同 id 覆盖」契约）。
+- **失败轮次也记录**：backend 断言失败时 metrics 仍存在（脚本在返回 1 前写出），
+  写回 job 仍执行；环境起不来（退出码 3）没有 metrics，跳过。
+- **语义变更**：R81 §7 说的「轮按导出轮推进」在这里变成「一次 main push 算一轮」；
+  20 轮窗口在密集提交下会更快滚完。趋势仍不判好坏（R78），所以这个变化只影响
+  「历史覆盖多长时间」，不影响判决。
+
+守卫：`tests/test_ci_history_writeback.py` 的 9 条用例（写权限只在写回 job、
+只 main push、写 job 不跑 pytest/e2e/npm/docker、artifact 同名、run_id 非
+重试次数、重试/串行化/`[skip ci]`、入库历史仍能通过 `validate_history`）。
+
+边界：main 当前无分支保护；若将来加保护，bot 直推会失败——三次重试后以
+`::error::` 显式报错，而不是静默丢历史。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 

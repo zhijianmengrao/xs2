@@ -119,4 +119,8 @@ M1 还原后 gate md5 逐字节相同；M2 还原后 fixture 计数回到 29。
 
 ## 9. 提交、推送与 CI 核对
 
-（待补记）
+- 提交 `5a3f958`（test + 两份 fixture）与 `4413aa2`（docs），推送 `4ca3c31..4413aa2`。
+- CI run **41296193079**（push，10:09:05 → 10:14:23，约 5m18s）五个 job 全 `success`：
+  ubuntu `2495 passed, 65 skipped` = **2560**；windows `2531 passed, 29 skipped`
+  = **2560**（各 +10，与本轮新增用例数一致）；e2e 10/10、前端与容器 job 均
+  `success`。
