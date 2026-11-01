@@ -46,10 +46,14 @@ from pathlib import Path
 
 SCHEMA = 1
 
-# 历史窗口：20 轮。与快照 ``history`` 的 5 轮不是同一个量——那个是「上一轮
-# 基线」的材料，只需要相邻两次；趋势要看得见走向，5 轮在 10 个场景的分辨率
-# 下太短。窗口是常量就必有翻转点用例（R69）。
-MAX_ROUNDS = 20
+# 历史窗口：40 轮。与快照 ``history`` 的 5 轮不是同一个量——那个是「上一轮
+# 基线」的材料，只需要相邻两次；这里是**保留期**，不是判决门槛（趋势仍不判
+# 好坏，R78）。窗口是常量就必有翻转点用例（R69）。
+#
+# R89 从 20 提到 40：R88 把「一轮 = 一次显式导出」改成「一轮 = 一次 main push」，
+# doc-only 提交也占一格。R88 自己就吃掉 3 轮（2 次 CI + 之前本机导出），20 轮
+# 只剩 6~7 个工作轮的量。40 ≈ 13 轮，回到 R88 前的日历跨度。
+MAX_ROUNDS = 40
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -248,6 +252,18 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _same_observation(existing: dict, entry: dict) -> bool:
+    """除 ``run_id`` / ``exported_at`` 外完全一致：重跑没有带来新观测。
+
+    ``record`` 只在这一天成立时保留首次的 ``exported_at``——否则同一 run
+    重跑会把时间戳改写，CI 写回因此产生一次**内容其实没变**的提交（R89）。
+    """
+    return all(
+        existing.get(field) == entry.get(field)
+        for field in ("total", "passed", "failed", "retried", "attempts",
+                      "scenarios"))
+
+
 def record(metrics_path: Path, history_path: Path,
            run_id: str | None = None) -> int:
     if not metrics_path.is_file():
@@ -274,10 +290,16 @@ def record(metrics_path: Path, history_path: Path,
     record_entry = {"run_id": run_id, "exported_at": exported_at, **entry}
 
     replaced = False
+    unchanged = False
     for index, existing in enumerate(history):
         if existing["run_id"] == run_id:
-            history[index] = record_entry
             replaced = True
+            if _same_observation(existing, entry):
+                # 同一 run 重跑且观测一致：保留首次的时间戳，文件逐字节不变。
+                # 否则 CI 写回的「没有变化就不提交」永远不成立（R89 实测）。
+                unchanged = True
+                record_entry = existing
+            history[index] = record_entry
             break
     else:
         history.append(record_entry)
@@ -288,7 +310,10 @@ def record(metrics_path: Path, history_path: Path,
         print(f"历史写入失败（{history_path}）：{exc}", file=sys.stderr)
         return EXIT_META_DRIFT
 
-    action = "覆盖" if replaced else "记录"
+    if unchanged:
+        action = "覆盖（观测无变化，保留首次 exported_at）"
+    else:
+        action = "覆盖" if replaced else "记录"
     print(f"已{action} run_id={run_id}：{entry['retried']}/{entry['total']} "
           f"个场景重跑（总尝试 {entry['attempts']} 次），"
           f"历史 {len(trimmed)}/{MAX_ROUNDS} 轮")

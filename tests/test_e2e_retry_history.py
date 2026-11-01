@@ -105,11 +105,62 @@ def test_record_replaces_the_same_run_id_instead_of_appending(
     assert entries[0]["retried"] == 1
 
 
-def test_record_trims_to_the_window(tmp_path: Path) -> None:
-    """窗口常量是 20：写入第 21 轮时最早一轮必须掉出去。"""
-    assert history.MAX_ROUNDS == 20
+def test_record_keeps_the_first_export_time_when_the_observation_is_identical(
+        tmp_path: Path, monkeypatch) -> None:
+    """同一 run 重跑且观测一致：文件逐字节不变，CI 写回不会多一次提交。
+
+    R89 实测：``record`` 每次都写新的 ``exported_at``，所以 R88 的「内容不变
+    就不提交」在重跑时并不成立——history 多一条时间戳不同的记录，轮数没变
+    但会多一次非空提交。修法是重跑且观测一致时保留首次时间戳。
+    """
+    monkeypatch.setattr(
+        history, "_iso_now", lambda: "2026-11-01T00:00:00+00:00")
     target = tmp_path / "history.json"
-    for index in range(21):
+    source = _metrics_file(tmp_path / "m.json", _metrics(retried=1))
+    assert history.record(source, target, run_id="ci-1") == 0
+    first_bytes = target.read_bytes()
+
+    monkeypatch.setattr(
+        history, "_iso_now", lambda: "2026-11-01T09:00:00+00:00")
+    assert history.record(source, target, run_id="ci-1") == 0
+
+    assert target.read_bytes() == first_bytes, "观测一致的重跑不应改写时间戳"
+    entries = history.load_history(target)
+    assert len(entries) == 1
+    assert entries[0]["exported_at"] == "2026-11-01T00:00:00+00:00"
+
+
+def test_record_updates_the_export_time_when_the_observation_changes(
+        tmp_path: Path, monkeypatch) -> None:
+    """反向边界：重跑真的带来新观测时，时间戳必须更新（不是无条件保留）。"""
+    monkeypatch.setattr(
+        history, "_iso_now", lambda: "2026-11-01T00:00:00+00:00")
+    target = tmp_path / "history.json"
+    assert history.record(
+        _metrics_file(tmp_path / "a.json", _metrics(retried=0)), target,
+        run_id="ci-1") == 0
+
+    monkeypatch.setattr(
+        history, "_iso_now", lambda: "2026-11-01T09:00:00+00:00")
+    assert history.record(
+        _metrics_file(tmp_path / "b.json", _metrics(retried=2)), target,
+        run_id="ci-1") == 0
+
+    entries = history.load_history(target)
+    assert len(entries) == 1
+    assert entries[0]["retried"] == 2
+    assert entries[0]["exported_at"] == "2026-11-01T09:00:00+00:00"
+
+
+def test_record_trims_to_the_window(tmp_path: Path) -> None:
+    """窗口常量是 40：写入第 41 轮时最早一轮必须掉出去。
+
+    两条一起钉：值等于 40（改常量要改这里），以及**边界行为**（多写一轮
+    恰好掉最老的一轮）——R69：「数等于常量」不等于「数是判决的边界」。
+    """
+    assert history.MAX_ROUNDS == 40
+    target = tmp_path / "history.json"
+    for index in range(history.MAX_ROUNDS + 1):
         assert history.record(
             _metrics_file(tmp_path / f"{index}.json", _metrics()),
             target, run_id=f"r{index}") == 0
@@ -117,7 +168,7 @@ def test_record_trims_to_the_window(tmp_path: Path) -> None:
     entries = history.load_history(target)
     assert len(entries) == history.MAX_ROUNDS
     assert entries[0]["run_id"] == "r1"
-    assert entries[-1]["run_id"] == "r20"
+    assert entries[-1]["run_id"] == f"r{history.MAX_ROUNDS}"
 
 
 def test_record_refuses_to_append_onto_a_corrupt_history(

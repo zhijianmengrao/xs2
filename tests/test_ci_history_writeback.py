@@ -67,7 +67,7 @@ def test_writeback_job_runs_no_repository_tests() -> None:
     text = _text(_writeback())
     for forbidden in ("pytest", "e2e_workflow_stub.py", "npm ", "docker "):
         assert forbidden not in text, f"写回 job 执行了 {forbidden!r}"
-    assert "python3 scripts/e2e_retry_history.py record" in text
+    assert "python3 scripts/ci_writeback_history.py" in text
 
 
 def test_backend_uploads_the_metrics_artifact_only_on_main_pushes() -> None:
@@ -89,10 +89,10 @@ def test_writeback_downloads_the_same_artifact_name() -> None:
 
 
 def _record_run() -> str:
-    """定位「跑 record 的那一步」的 run 正文，不拿注释做断言。"""
+    """定位「跑写回脚本的那一步」的 run 正文，不拿注释做断言。"""
     hits = [
         str(step.get("run", "")) for step in _writeback()["steps"]
-        if "e2e_retry_history.py record" in str(step.get("run", ""))
+        if "ci_writeback_history.py" in str(step.get("run", ""))
     ]
     assert len(hits) == 1, hits
     return hits[0]
@@ -105,10 +105,19 @@ def test_writeback_uses_run_id_not_run_attempt() -> None:
     assert "run_attempt" not in run
 
 
-def test_writeback_retries_and_skips_self_trigger() -> None:
+def test_writeback_delegates_retry_to_the_script() -> None:
+    """重试逻辑只有一份：YAML 只调用脚本，不能再内联 git 循环。
+
+    R80 的教训：同一个事实写两处，两处就会分裂。R89 之前重试循环只存在于
+    YAML 里（本地跑不了、只能做子串断言），现在它的行为由
+    ``tests/test_ci_writeback_history.py`` 用真实 git 仓驱动，YAML 只剩委托。
+    """
     text = _text(_writeback())
-    assert "git pull --rebase origin main" in text
-    assert "for attempt in 1 2 3" in text
+    assert "ci_writeback_history.py" in text
+    for inlined in ("git push", "pull --rebase", "for attempt"):
+        assert inlined not in text, f"重试逻辑又写回 YAML 了：{inlined!r}"
+    # [skip ci] 仍在提交信息里：GITHUB_TOKEN 的 push 本不触发 workflow，
+    # 这条是为将来换成 PAT 留的保险。
     assert "[skip ci]" in text
 
 

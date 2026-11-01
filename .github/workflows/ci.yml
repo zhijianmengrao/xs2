@@ -397,41 +397,20 @@ jobs:
         with:
           name: e2e-metrics
           path: ${{ runner.temp }}/e2e
-      - name: Record the e2e round
+      - name: Record and write back the e2e round
+        # R89：提交/推送的重试循环已从 YAML 搬进 scripts/ci_writeback_history.py。
+        # YAML 里的逻辑本地跑不了，测试只能做子串断言——「写了 for attempt in
+        # 1 2 3」不等于「被拒之后真的会 rebase 再推」。这里只保留调用；重试
+        # 语义由 tests/test_ci_writeback_history.py 用真实 git 仓驱动。
+        #
+        # run_id 用 github.run_id（不是重试次数）：同一 run 重跑时覆盖同一轮，
+        # 而不是把一次运行记成两轮（R78 的「同 id 覆盖」契约）。
         run: |
-          metrics="$RUNNER_TEMP/e2e/e2e-metrics.json"
-          if [ ! -f "$metrics" ]; then
-            echo "没有 $metrics（e2e 环境未启动），本轮不入库"
-            exit 0
-          fi
-          # run_id 用 github.run_id（不是重试次数）：同一 run 重跑时覆盖
-          # 同一轮，而不是把一次运行记成两轮（R78 的「同 id 覆盖」契约）。
-          python3 scripts/e2e_retry_history.py record \
-            "$metrics" \
+          python3 scripts/ci_writeback_history.py \
+            --metrics "$RUNNER_TEMP/e2e/e2e-metrics.json" \
             --history tests/fixtures/e2e_retry_history/history.json \
-            --run-id "ci-${{ github.run_id }}"
-      - name: Commit and push (retry on non-fast-forward)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- tests/fixtures/e2e_retry_history/history.json; then
-            echo "history 没有变化（同一 run 重跑），不提交"
-            exit 0
-          fi
-          git add tests/fixtures/e2e_retry_history/history.json
-          # [skip ci]：GITHUB_TOKEN 的 push 本来就不会触发 workflow；写进
-          # message 是为了将来换成 PAT/其它触发器时仍然不产生自触发循环。
-          git commit -m "chore(e2e): record CI run ${{ github.run_id }} [skip ci]"
-          for attempt in 1 2 3; do
-            if git push origin HEAD:main; then
-              echo "已写回 main（第 $attempt 次尝试）"
-              exit 0
-            fi
-            echo "push 被拒（第 $attempt 次），rebase 到最新 main 后重试"
-            git pull --rebase origin main || { git rebase --abort || true; exit 1; }
-          done
-          echo "::error::三次 push 均失败（并发写回），本轮历史未入库"
-          exit 1
+            --run-id "ci-${{ github.run_id }}" \
+            --commit-message "chore(e2e): record CI run ${{ github.run_id }} [skip ci]"
 
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
