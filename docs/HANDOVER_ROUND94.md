@@ -53,6 +53,11 @@ R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩**artifact 
 
 ## 6. 提交与 CI
 
-- 提交 `4786abf`（原 `1ba6915`，推送前 rebase 到 bot 提交 `905bd58`）。
-- CI run **（待回填）**。
+- 提交 `4786abf`（原 `1ba6915`，推送前 rebase 到 bot 提交 `905bd58`），与五轮
+  文档 `b74811e` 一起推送。
+- CI run **41304352755**（checkout `b74811e`，11:59:56 → 12:05:20）六 job 全 `success`：
+  - backend **2541 passed / 65 skipped**（88.31s）= **2606**；
+  - windows-backend **2577 / 29**（255.93s）= **2606**；
+  - 写回 job：`已记录 run_id=ci-41304352755 … 历史 9/40 轮`、`已写回 main（第 1 次尝试）`；
+    日志可见 `--summary "$GITHUB_STEP_SUMMARY"`（R91 的接线在生产路径被走过）。
 - 本机全量 **2578 passed / 28 skipped / 0 failed**（R93 2571/28，+7）。
