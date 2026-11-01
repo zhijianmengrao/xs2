@@ -146,6 +146,11 @@ skill 条目）**保持未提交**，提交用显式路径 add。
 | 前端 / 容器 | 前端 8 块 TAP `# pass` 求和 **490 / fail 0**；`容器镜像冒烟全部通过`；`docker compose config -q` 成功 |
 | Desktop Windows / macOS | 未触发（`head_sha=92c2f64…` 下两者 `total_count=0`；本轮只改 tests/docs，paths 过滤不命中） |
 
+补记提交 `82f90fb`（纯文档）的 run **41261536532**（01:32:59 → 01:37:19，约
+4m10s）同样五 job 全 `success`：ubuntu **2267/65**、windows **2303/29**、
+前端 490/0 与上一个 run 逐项相同。文档提交本身仍会触发 CI，回填链到此为止
+（与 R66 同）。
+
 工作树里另有他人的 `config/skills_config.json`（+146 / −2）未提交，与本轮无关；
 两次提交均用显式路径 add，未带上它。两个辅助脚本已移出仓库到
 `F:\DeterminFlow x2\`（`_r77_mutate.py` md5 `10c26ce6…`、`_r77_gate_backup.py`
