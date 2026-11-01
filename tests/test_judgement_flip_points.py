@@ -295,7 +295,8 @@ def _write_rate_snapshot(root: Path, spec: dict[str, tuple[int, int]],
                                  "failed": failed}
         total_attempts += attempts
         total_failed += failed
-    meta: dict = {"totals": {"attempts": total_attempts, "failed": total_failed},
+    meta: dict = {"totals": {"runs": len(spec), "attempts": total_attempts,
+                             "failed": total_failed},
                   "exported_at": "2026-02-01T00:00:00+00:00"}
     if declare_meta:
         meta["per_workflow"] = per_workflow

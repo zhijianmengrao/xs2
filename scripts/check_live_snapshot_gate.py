@@ -281,24 +281,48 @@ def _load_snapshot_meta(data_dir: Path, purpose: str = "") -> tuple[
     return meta, None
 
 
-def _totals_of(buckets: dict[str, dict]) -> tuple[int, int]:
-    """分组计数 → 全局合计 ``(attempts, failed)``（R82）。
+# ``totals`` 的计数字段（R83 起含 ``runs``）。顺序就是漂移文案里的字段顺序，
+# 也是 ``_totals_key`` 的比较顺序——三处各写一份字段表，迟早出现「形状校验查
+# runs、漂移比较忘了 runs」的分裂。``runs`` 加入的理由：导出脚本一直写它，而
+# 六处读计数的判据此前只信 attempts/failed——一个写了没人看的字段可以长期与
+# 内容不符，直到某天有人拿它做判决。R83 把它钉进同一次内容复算：缺失按 0 计，
+# 于是旧格式的 totals 会被判漂移（4）——处置正是重导，导出脚本会补上它。
+_TOTALS_COUNT_FIELDS = ("runs", "attempts", "failed")
+
+
+def _totals_of(buckets: dict[str, dict]) -> dict[str, int]:
+    """分组计数 → 全局合计 ``{runs, attempts, failed}``（R82 / R83）。
 
     内容计数的**唯一**求和口径：``recompute_totals`` 与六处读计数的判据都从这里
     取全局数。两处各写一份求和，迟早出现「这边合计与那边分组合不上」的分裂——
     而分裂之后两块元数据各自都能与自己对得上，没人看得出它们说的不是同一份数据。
+
+    字段顺序由 ``_TOTALS_COUNT_FIELDS`` 唯一决定：求和、形状校验、漂移比较共用
+    同一份字段表，``runs`` 不会再出现「导出写了、判据忘了」的漏项。
     """
-    return (sum(int(bucket.get("attempts") or 0) for bucket in buckets.values()),
-            sum(int(bucket.get("failed") or 0) for bucket in buckets.values()))
+    return {
+        field: sum(int(bucket.get(field) or 0) for bucket in buckets.values())
+        for field in _TOTALS_COUNT_FIELDS
+    }
 
 
-def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
-    """从快照内容复算 ``(attempts, failed)``——``recompute_per_workflow`` 的合计。
+def _totals_key(counts: dict) -> tuple[int, ...]:
+    """计数块（元数据或内容复算）→ 可比较的整数元组。
+
+    元数据里的 ``"1"`` 与内容复算的 ``1`` 必须能比；``bool`` 由形状校验先拒
+    （``_totals_shape_error``），这里不再重复分流——两处各判一次，早晚出现
+    「这边拒了、那边放过」的分裂。
+    """
+    return tuple(int(counts.get(field) or 0) for field in _TOTALS_COUNT_FIELDS)
+
+
+def recompute_totals(workflows_dir: Path) -> dict[str, int]:
+    """从快照内容复算 ``{runs, attempts, failed}``——分组结果的合计。
 
     R82 起不再单独走一遍内容：全局合计由分组复算求和而来。``totals`` 与
     ``per_workflow`` 两块于是被钉到**同一次**内容复算上，「两块互相一致」是构造
     保证，而不是一条每次都要重新求和的判据（求和对账永远只能后手确认，且在两块
-    都被钉到内容之后不会唯一决定任何事）。
+    都被钉到内容之后不会唯一决定任何事）。R83 把 ``runs`` 也收进同一份字段表。
     """
     return _totals_of(recompute_per_workflow(workflows_dir))
 
@@ -337,10 +361,9 @@ def evaluate(data_dir: Path, ceiling: float | None = None,
     # 一次内容遍历供三处共用：全局漂移、分组交叉校验、回归基线（R82）。三项各
     # 走一遍，迟早出现「这边判的总数与那边分组复算不是同一份内容」。
     current = recompute_per_workflow(data_dir / "workflows")
-    actual_attempts, actual_failed = _totals_of(current)
-    if actual_attempts != rec_attempts or actual_failed != rec_failed:
-        return EXIT_META_DRIFT, _totals_drift_message(
-            recorded, (actual_attempts, actual_failed))
+    actual = _totals_of(current)
+    if _totals_key(recorded) != _totals_key(actual):
+        return EXIT_META_DRIFT, _totals_drift_message(recorded, actual)
 
     # R82：另一块也不能说谎。默认判定此前只比 totals：把一次失败从 A 工作流挪到
     # B，全局合计分毫不动，它照样退出 0——而 CI 的默认判定就是这一步。另一块
@@ -764,10 +787,9 @@ def check_sample_size(data_dir: Path, margin: float) -> tuple[int, str]:
 
     # 与 ``evaluate`` 同一条纪律：内容必须与元数据复算一致，否则判的是别的数字。
     current = recompute_per_workflow(data_dir / "workflows")
-    actual_attempts, actual_failed = _totals_of(current)
-    if (actual_attempts, actual_failed) != (attempts, failed):
-        return EXIT_META_DRIFT, _totals_drift_message(
-            recorded, (actual_attempts, actual_failed))
+    actual = _totals_of(current)
+    if _totals_key(recorded) != _totals_key(actual):
+        return EXIT_META_DRIFT, _totals_drift_message(recorded, actual)
 
     # R82：另一块也不能说谎——本步的判决只用 totals，但工件是一份：per_workflow
     # 坏了说明这份快照不该被任何判据当真。缺失时跳过并写明（旧快照合法）。
@@ -794,10 +816,10 @@ def recompute_per_workflow(workflows_dir: Path) -> dict[str, dict]:
     ``recompute_totals`` 与全局合计都从这份分组结果求和（R82），所以
     ``totals`` 与 ``per_workflow`` 两块元数据永远被钉在同一份内容上。
 
-    为什么需要分组复算而不是只信全局合计：``recompute_totals`` 只比总数。
-    一次「把 A 工作流的一次失败改成 B 工作流的」改动不会改变全局 attempts/failed，
-    于是全局漂移校验通过，而 ``snapshot-meta.json`` 的 ``per_workflow`` 块已经
-    在说谎。R54 补的正是这一层（见 ``check_per_workflow``）。
+    为什么需要分组复算而不是只信全局合计：``recompute_totals`` 只看合计。
+    一次「把 A 工作流的一次失败改成 B 工作流的」改动不会改变全局 runs/attempts/
+    failed，于是全局漂移校验通过，而 ``snapshot-meta.json`` 的 ``per_workflow``
+    块已经在说谎。R54 补的正是这一层（见 ``check_per_workflow``）。
 
     坏 JSON 与读失败一律跳过，与 ``recompute_totals`` 同一取舍。
     """
@@ -864,10 +886,6 @@ def _drift_message(drifts: list[str]) -> str:
 
 
 _PER_WORKFLOW_COUNT_FIELDS = ("runs", "attempts", "failed")
-# ``totals`` 的计数字段。``runs`` 不在其中：导出脚本写它，但两条读 totals 的
-# 判据（``evaluate`` / ``check_sample_size``）只信 attempts/failed——多校验一个
-# 没人用的字段，等于给重导加一个不必要的失败点。
-_TOTALS_COUNT_FIELDS = ("attempts", "failed")
 
 
 def _count_value_error(label: str, value: object) -> str | None:
@@ -927,8 +945,8 @@ def _totals_shape_error(recorded: dict) -> str | None:
     """``totals`` 块的形状校验；返回第一条问题，合法时 ``None``（R80）。
 
     为什么需要：``evaluate`` 与 ``check_sample_size`` 都用
-    ``int(recorded.get("attempts") or 0)`` 读这两个数。手改坏的快照会让它们
-    以两种方式冒充结论：
+    ``int(recorded.get(field) or 0)`` 读这些数（R83 起含 ``runs``）。手改坏的
+    快照会让它们以两种方式冒充结论：
 
     - ``{"attempts": "abc"}`` → ``int()`` 抛 ``ValueError``，被 ``_run_judgement``
       归成 **8**（判据算术失败），处置被指向「修判据」；
@@ -982,27 +1000,34 @@ def _metadata_shape_message(error: str, section: str = "per-workflow") -> str:
         "--dest tests/fixtures/live_snapshot --limit 2")
 
 
-def _totals_drift_message(recorded: dict, actual: tuple[int, int]) -> str:
-    """``totals`` 与内容复算不一致 → 退出码 4 的统一说明（R82）。
+def _totals_drift_message(recorded: dict, actual: dict) -> str:
+    """``totals`` 与内容复算不一致 → 退出码 4 的统一说明（R82 / R83）。
 
     与 ``_drift_message`` 同一处置（重导），但必须点名是**哪一块**在说谎：四条
     per-workflow 判据本来看不到 totals，日志里只写「内容与元数据不一致」会让读的人
     去查 per_workflow。块名写在这里，六个入口共用同一句。
+
+    R83 起三个计数都写进文案（``runs/attempts/failed``）：只写 failed/attempts 时，
+    仅 ``runs`` 说谎的那一份会打印出两个「一模一样」的数字，读者看不出差在哪。
     """
     return (
-        f"totals 元数据与内容不一致：元数据 "
-        f"{int(recorded.get('failed') or 0)}/{int(recorded.get('attempts') or 0)}，"
-        f"内容复算 {actual[1]}/{actual[0]}。"
-        "改过快照就要重导：python scripts/export_run_samples.py "
+        "totals 元数据与内容不一致：元数据 runs/attempts/failed="
+        + "/".join(str(int(recorded.get(field) or 0))
+                   for field in _TOTALS_COUNT_FIELDS)
+        + "，内容复算 "
+        + "/".join(str(int(actual.get(field) or 0))
+                   for field in _TOTALS_COUNT_FIELDS)
+        + "。改过快照就要重导：python scripts/export_run_samples.py "
         "--dest tests/fixtures/live_snapshot --limit 2")
 
 
-def _totals_block_error(meta: dict, actual: tuple[int, int]) -> str | None:
+def _totals_block_error(meta: dict, actual: dict) -> str | None:
     """``totals`` 块的形状与内容一致性；合法或缺失时 ``None``（R82）。
 
     只给四条**读 per_workflow** 的判据用：它们本来根本不看 totals，一份说谎的
     totals 在它们眼里不存在。缺失不是错误——旧快照可以没有这一块，而这类判据的
-    判决不依赖它（``None`` 表示「没有可校验的另一块」）。
+    判决不依赖它（``None`` 表示「没有可校验的另一块」）。R83 起 ``runs`` 也在
+    比较范围内：三个计数共用 ``_totals_key`` 这一把尺。
     """
     recorded, block_error = _count_block(meta, "totals")
     if block_error:
@@ -1012,8 +1037,7 @@ def _totals_block_error(meta: dict, actual: tuple[int, int]) -> str | None:
     shape_error = _totals_shape_error(recorded)
     if shape_error:
         return _metadata_shape_message(shape_error, "totals")
-    if (int(recorded.get("attempts") or 0),
-            int(recorded.get("failed") or 0)) != actual:
+    if _totals_key(recorded) != _totals_key(actual):
         return _totals_drift_message(recorded, actual)
     return None
 

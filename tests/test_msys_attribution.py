@@ -79,8 +79,10 @@ def test_skip_reason_names_the_mechanism_and_the_actionable_fix() -> None:
         assert "msys" in lowered
         assert "attach" in lowered, reason
         assert "shared" in lowered, reason
-        # 处方必须可执行：复制过去的命令能照做。
-        assert "py.exe" in lowered, reason
+        # 处方必须可执行：复制过去的命令能照做。R82 实测 ``py.exe`` 缺依赖
+        # （137 个 collection error），处方改用 C: 上的 CPython 本体。
+        assert "python.exe" in lowered, reason
+        assert "py.exe" not in lowered, reason
         assert "pythonpath" in lowered, reason
         # 但不许把责任钉成「本令牌是 Low」，也不许写 SID 字面量。
         assert "low-integrity token" not in lowered, reason

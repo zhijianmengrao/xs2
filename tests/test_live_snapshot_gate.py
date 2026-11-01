@@ -255,19 +255,20 @@ def test_snapshot_metadata_matches_its_content() -> None:
     assert meta_path.is_file(), "快照缺少 snapshot-meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     recorded = meta["totals"]
-    attempts, failed = live_gate.recompute_totals(SNAPSHOT_ROOT / "workflows")
-    assert attempts == recorded["attempts"], (
-        f"元数据 attempts={recorded['attempts']} 与内容复算 {attempts} 不一致；"
-        "改过快照就要重导"
-    )
-    assert failed == recorded["failed"]
+    actual = live_gate.recompute_totals(SNAPSHOT_ROOT / "workflows")
+    for field in ("runs", "attempts", "failed"):
+        assert actual[field] == recorded[field], (
+            f"元数据 {field}={recorded[field]} 与内容复算 {actual[field]} 不一致；"
+            "改过快照就要重导"
+        )
 
 
 def test_snapshot_holds_real_failures_and_retries() -> None:
     """空快照或零失败会让闸门恒通过——与 R46 §1 的「静默失效」同类。"""
-    attempts, failed = live_gate.recompute_totals(SNAPSHOT_ROOT / "workflows")
-    assert attempts >= 100, f"快照只有 {attempts} 次尝试，样本太小判不出东西"
-    assert failed > 0, "快照零失败，闸门失去可判性"
+    actual = live_gate.recompute_totals(SNAPSHOT_ROOT / "workflows")
+    assert actual["attempts"] >= 100, (
+        f"快照只有 {actual['attempts']} 次尝试，样本太小判不出东西")
+    assert actual["failed"] > 0, "快照零失败，闸门失去可判性"
 
 
 # ------------------------------------------ 阈值来自外部，不是快照自身（R57）
@@ -365,7 +366,8 @@ def test_gate_detects_metadata_drift(tmp_path: Path) -> None:
         }), encoding="utf-8")
     # 元数据声称 5 次尝试，内容只有 1 次
     (tmp_path / "snapshot-meta.json").write_text(
-        json.dumps({"totals": {"attempts": 5, "failed": 1}}), encoding="utf-8")
+        json.dumps({"totals": {"runs": 1, "attempts": 5, "failed": 1}}),
+        encoding="utf-8")
 
     code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
     assert code == live_gate.EXIT_META_DRIFT, message
@@ -655,7 +657,7 @@ def _write_snapshot_with_totals(root: Path, attempts: int, failed: int) -> None:
         json.dumps({"run_id": "run-x", "status": "completed",
                     "node_executions": nodes}), encoding="utf-8")
     (root / "snapshot-meta.json").write_text(
-        json.dumps({"totals": {"attempts": attempts, "failed": failed},
+        json.dumps({"totals": {"runs": 1, "attempts": attempts, "failed": failed},
                     "exported_at": "2026-02-01T00:00:00+00:00"}),
         encoding="utf-8")
 
@@ -1284,7 +1286,8 @@ def _write_per_workflow_snapshot(root: Path, spec: dict[str, tuple[int, int]],
                                  "failed": failed}
         total_attempts += attempts
         total_failed += failed
-    meta: dict = {"totals": {"attempts": total_attempts, "failed": total_failed},
+    meta: dict = {"totals": {"runs": len(spec), "attempts": total_attempts,
+                             "failed": total_failed},
                   "exported_at": "2026-02-01T00:00:00+00:00"}
     if declare_meta:
         meta["per_workflow"] = per_workflow
@@ -1337,8 +1340,19 @@ def _lie_about_totals(root: Path) -> None:
     """只改 totals（内容与 per_workflow 都保持真实）。"""
     meta_path = root / "snapshot-meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["totals"] = {"attempts": meta["totals"]["attempts"] + 1,
-                      "failed": meta["totals"]["failed"]}
+    meta["totals"] = dict(meta["totals"], attempts=meta["totals"]["attempts"] + 1)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _lie_about_total_runs(root: Path) -> None:
+    """只改 ``totals.runs``：attempts/failed 与两块内容都保持真实。
+
+    R83 的动机场景：导出脚本一直写这个字段，而判据此前只信 attempts/failed，
+    所以「把一次失败从 A 挪到 B」以外的另一种元数据谎话完全看不出来。
+    """
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["totals"] = dict(meta["totals"], runs=meta["totals"]["runs"] + 1)
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
 
@@ -1469,7 +1483,81 @@ def test_content_counting_has_one_rule(tmp_path: Path) -> None:
     broken.write_text("{not json", encoding="utf-8")
     buckets = live_gate.recompute_per_workflow(tmp_path / "workflows")
     assert (live_gate.recompute_totals(tmp_path / "workflows")
-            == live_gate._totals_of(buckets) == (20, 1))
+            == live_gate._totals_of(buckets)
+            == {"runs": 2, "attempts": 20, "failed": 1})
+
+
+# R83：``totals.runs`` 是导出脚本一直在写、而判据此前从不读的字段。把它并进
+# 内容复算之后，六个读计数的入口都必须在它说谎时退 4，也必须能报出它缺失。
+_ALL_COUNT_READERS = _MOVED_FAILURE_JUDGES + _LYING_TOTALS_JUDGES
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _ALL_COUNT_READERS],
+                         ids=[n for n, _ in _ALL_COUNT_READERS])
+def test_total_runs_drift_is_drift_for_every_reader(
+        tmp_path: Path, judge) -> None:
+    """``totals.runs`` 单独说谎：六个入口都必须退 4（R83）。
+
+    attempts/failed 与 ``per_workflow`` 全部保持真实——旧代码没有一条会看
+    ``runs``，这正是「写了没人看」的直接回归钉子。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    assert judge(tmp_path)[0] != live_gate.EXIT_META_DRIFT
+
+    _lie_about_total_runs(tmp_path)
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    # 点名字段由 ``test_totals_drift_message_names_all_three_counts`` 单独钉住；
+    # 这里只管「退 4 且点的是 totals 这块」，好让消息变异有唯一的咬合者。
+    assert "totals" in message
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _ALL_COUNT_READERS],
+                         ids=[n for n, _ in _ALL_COUNT_READERS])
+def test_totals_without_runs_is_incomplete_not_silent(
+        tmp_path: Path, judge) -> None:
+    """旧格式 totals 缺 ``runs``：按 0 与内容比 → 4（处置是重导补上）。
+
+    R83 的字段加入改变了旧快照的待遇：字段可以缺失，但缺失不能等于「没人看」。
+    导出脚本写多少 run 就有多少；缺了说明这份元数据不是当前导出器写的，重导
+    一次即修复——这与「元数据与内容不一致」是同一处置，所以同归 4。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    del meta["totals"]["runs"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "totals" in message
+
+
+def test_totals_drift_message_names_all_three_counts(tmp_path: Path) -> None:
+    """只差 ``runs`` 时，文案必须让读者看出差在哪（R83）。
+
+    旧文案只写 failed/attempts：``runs`` 单独说谎会打印出两个一模一样的
+    「2/20」，读日志的人无从判断该查什么。
+    """
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    _lie_about_total_runs(tmp_path)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "runs/attempts/failed=3/20/2" in message, message
+    assert "内容复算 2/20/2" in message, message
+
+
+@pytest.mark.parametrize("flags", [[], ["--check-sample-size"]])
+def test_total_runs_drift_exits_four_from_the_cli(
+        monkeypatch, tmp_path: Path, flags: list) -> None:
+    """外部退出码：``runs`` 单独说谎同样以 4 退出（不是 0/1/8）。"""
+    import sys
+
+    _write_per_workflow_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 1)})
+    _lie_about_total_runs(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", *flags, "--data-dir", str(tmp_path)])
+    assert live_gate.main() == live_gate.EXIT_META_DRIFT
 
 
 def test_every_count_reader_passes_the_committed_snapshot() -> None:
@@ -3140,6 +3228,11 @@ def _write_totals_snapshot(root: Path, totals) -> None:
     {"attempts": 20, "failed": -1},
     {"attempts": 20.5, "failed": 0},
     {"attempts": 20, "failed": None},
+    # R83：``runs`` 现在也被判据消费，同样的形状规则必须覆盖它。
+    {"runs": True, "attempts": 20, "failed": 2},
+    {"runs": 20.5, "attempts": 20, "failed": 2},
+    {"runs": "abc", "attempts": 20, "failed": 2},
+    {"runs": -1, "attempts": 20, "failed": 2},
 ])
 def test_malformed_totals_is_drift_not_a_verdict(
         tmp_path: Path, totals) -> None:

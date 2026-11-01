@@ -194,14 +194,21 @@ def _msys_skip_reason(signature_hit: bool) -> str:
     对象隐式带创建者 IL，Low 打开者连 DACL 里写着允许的 ``DIRECTORY_CREATE_*``
     都会被拒。因此文案写回处方，但仍然**不把责任钉在「本令牌是 Low」**（对象侧
     可能比任何我们能拿到的令牌都高），也不写具体 SID。
+
+    R82 更正启动器：``C:\\Windows\\py.exe`` 是 Windows launcher，本机今天没有
+    项目依赖（137 个 collection error）；实测有效的是 C: 上的 CPython 本体
+    ``C:\\Program Files\\Python314\\python.exe``，并把 venv 的 site-packages
+    与 ``win32`` / ``pythonwin`` / ``pywin32_system32`` 一起放进 ``PYTHONPATH``
+    （``.pth`` 不生效，必须显式列出）。
     """
     return (
         "msys git transport cannot attach this session's shared msys-2.0 object "
         + ("(matched NtCreateDirectoryObject boot signature)" if signature_hit
            else "(unattributable inside a git-transport module)")
         + "; this launcher runs below the integrity level that created the object, "
-          "so re-run from a High-IL shell with a C: launcher, e.g. "
-          "C:\\Windows\\py.exe -m pytest with the venv site-packages on PYTHONPATH "
+          "so re-run from a High-IL shell with a C: interpreter, e.g. "
+          "C:\\Program Files\\Python314\\python.exe -m pytest with the venv "
+          "site-packages on PYTHONPATH "
           "(see PROJECT_INFO.md platform note 9)"
     )
 
