@@ -400,6 +400,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # R95：写回 job 改用 API 拉 artifact（scripts/fetch_ci_artifact.py）。
+      # 一旦显式声明 permissions，未列出的 scope 就是 none。
+      actions: read
     # 串行化：两个并发 push 的写回不能同时改同一个 history.json。
     concurrency:
       group: e2e-history-writeback
@@ -408,13 +411,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        # 没有 artifact（e2e 环境未启动）不是写回 job 的失败：下一步会打印
-        # 「本轮不入库」并正常结束。
-        continue-on-error: true
-        with:
-          name: e2e-metrics
-          path: ${{ runner.temp }}/e2e
+      - name: Fetch e2e metrics artifact
+        # R95：R94 的边界只剩 actions/download-artifact 的传输本身不能本地
+        # 复现。这里改为调用脚本（列表 → 下载 zip → 解压），语义由
+        # tests/test_fetch_ci_artifact.py 用假 HTTP 服务驱动。
+        #
+        # 没有 artifact（e2e 环境未启动）→ 脚本退出 0，下一步打印「本轮不入库」；
+        # 真实传输错误（401/403/5xx/坏 zip）→ 退出 1。旧接线的
+        # continue-on-error 会把这些错误吞成「没有 metrics」，静默丢掉一轮。
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/fetch_ci_artifact.py \
+            --repo "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --artifact e2e-metrics \
+            --path "$RUNNER_TEMP/e2e"
       - name: Record and write back the e2e round
         # R89：提交/推送的重试循环已从 YAML 搬进 scripts/ci_writeback_history.py。
         # YAML 里的逻辑本地跑不了，测试只能做子串断言——「写了 for attempt in

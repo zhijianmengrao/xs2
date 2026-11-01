@@ -82,10 +82,43 @@ def test_backend_uploads_the_metrics_artifact_only_on_main_pushes() -> None:
     assert "github.ref == 'refs/heads/main'" in condition
 
 
-def test_writeback_downloads_the_same_artifact_name() -> None:
+def test_writeback_fetches_the_same_artifact_name() -> None:
+    """R95：下载侧也只剩委托——YAML 不再内联 ``download-artifact``。
+
+    传输语义（命名过滤、缺 artifact 退出 0、传输错误退出 1、跳转去认证头）
+    由 ``tests/test_fetch_ci_artifact.py`` 用假 HTTP 服务驱动。
+    """
     text = _text(_writeback())
-    assert "download-artifact" in text
-    assert "e2e-metrics" in text
+    assert "fetch_ci_artifact.py" in text
+    assert "--artifact e2e-metrics" in text
+    assert "download-artifact" not in text
+
+
+def test_writeback_can_read_the_actions_api() -> None:
+    """显式声明 permissions 后，未列出的 scope 就是 none。"""
+    permissions = _writeback().get("permissions") or {}
+    assert permissions.get("contents") == "write"
+    assert permissions.get("actions") == "read"
+
+
+def test_fetch_step_is_loud_on_transport_errors() -> None:
+    """缺 artifact 不是失败，传输错误必须响亮——不能再有 continue-on-error。"""
+    steps = [
+        step for step in _writeback()["steps"]
+        if "fetch_ci_artifact.py" in str(step.get("run", ""))
+    ]
+    assert len(steps) == 1, steps
+    step = steps[0]
+    assert "continue-on-error" not in step
+    run = str(step.get("run", ""))
+    for required in (
+        '--repo "${{ github.repository }}"',
+        '--run-id "${{ github.run_id }}"',
+        "--artifact e2e-metrics",
+        '--path "$RUNNER_TEMP/e2e"',
+    ):
+        assert required in run, required
+    assert "GITHUB_TOKEN" in (step.get("env") or {})
 
 
 def _record_run() -> str:

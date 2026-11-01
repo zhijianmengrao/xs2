@@ -788,6 +788,27 @@ R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact �
 - 变异：M28–M30 **3/3 全咬合**。
 - **边界**：`actions/download-artifact` 的传输仍不能本地复现；replay 只回放已提交状态。
 
+### 7.21 artifact 传输与回放未提交态：把「传输」也变成代码（R95）
+
+- 下载侧从 `actions/download-artifact` 换成 `scripts/fetch_ci_artifact.py`：
+  列表（`name` 精确匹配）→ 下载 zip → 安全解压；认证头用
+  `add_unredirected_header`，302 到 blob 主机时不带 token（R71 实测 401）；
+  zip 的绝对路径与 `..` 被拒。
+- **旧接线的 `continue-on-error: true` 会把 401/403/5xx 吞成「没有 metrics」**：
+  写回 job 以 0 退出、静默丢掉一轮。R95 改为缺 artifact/过期 → 0，真实传输
+  错误 → `::error::` + 1——与 R64「同一退出码不同来源」同源。
+- replay `--from-worktree`：`git diff HEAD --binary`（暂存 + 未暂存）apply 到
+  沙箱；未跟踪文件不进入（只打印数量）。
+- 失败自动保留沙箱：成功删除、失败/`--keep` 保留。`_remove_sandbox()` 先清
+  只读位——`shutil.rmtree(ignore_errors=True)` 在 Windows 上删不掉 git 的只读
+  pack/object，**R94 的「默认删除」在 Windows 上一直没删掉**（R95 用例发现；
+  本机 temp 实测积了 12 个旧沙箱）。
+- 守卫：`tests/test_fetch_ci_artifact.py` 9 条、`tests/test_replay_ci_writeback.py`
+  +4、`tests/test_ci_history_writeback.py` +2（替换 1 条）。
+- 变异：M31–M39 **9/9 全咬合**。
+- **边界**：假服务器只证明脚本的 API 契约；真实 token 权限、artifact zip 布局
+  与上传侧 `upload-artifact` 仍由下一次 CI 生产运行验证。
+
 ## 8. 环境归因：skip 判据的自变量（R71）
 
 R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。把四行实测矩阵

@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -44,6 +46,64 @@ def _git(*args: str, cwd: Path | None = None) -> str:
     return (result.stdout or b"").decode("utf-8", "replace").strip()
 
 
+def _decode(raw: bytes | None) -> str:
+    return (raw or b"").decode("utf-8", "replace").strip()
+
+
+def _apply_worktree_changes(source: Path, work: Path) -> None:
+    """把源仓库**已跟踪文件**的未提交改动带进沙箱（R95）。
+
+    用 ``git diff HEAD --binary``：暂存与未暂存都包含，二进制也不丢。未跟踪
+    文件不进入——工作区里的杂物（日志、临时脚本）不该被误当成被测状态。
+    """
+    diff = subprocess.run(
+        ["git", "diff", "HEAD", "--binary"], cwd=str(source),
+        capture_output=True)
+    if diff.returncode != 0:
+        raise RuntimeError(f"git diff HEAD 失败：{_decode(diff.stderr)}")
+    if diff.stdout:
+        applied = subprocess.run(
+            ["git", "apply", "--binary", "--whitespace=nowarn", "-"],
+            cwd=str(work), input=diff.stdout, capture_output=True)
+        if applied.returncode != 0:
+            raise RuntimeError(
+                f"工作树补丁无法应用到沙箱：{_decode(applied.stderr)}")
+        print(f"replay：已把工作树未提交改动带入沙箱"
+              f"（{len(diff.stdout)} 字节补丁）")
+    else:
+        print("replay：工作树没有已跟踪文件的未提交改动")
+
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=str(source), capture_output=True)
+    if untracked.returncode != 0:
+        raise RuntimeError(f"git ls-files 失败：{_decode(untracked.stderr)}")
+    names = [line for line in
+             untracked.stdout.decode("utf-8", "replace").splitlines() if line]
+    if names:
+        print(f"replay：提醒：{len(names)} 个未跟踪文件不进入回放"
+              f"（只带已跟踪改动）")
+
+
+def _remove_sandbox(path: Path) -> None:
+    """删除沙箱；Windows 上 git 的 pack/object 是只读的。
+
+    ``shutil.rmtree(ignore_errors=True)`` 遇到只读文件会**静默失败**，R94 的
+    「默认删除沙箱」因此在 Windows 上一直没真的删掉（R95 的用例发现）。先清
+    只读位再删。
+    """
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            target = Path(root) / name
+            try:
+                # 只补写位、保留其余权限：POSIX 上 chmod(S_IWRITE) 会把
+                # 文件/目录改成只写，目录还会丢执行位。
+                os.chmod(target, os.stat(target).st_mode | stat.S_IWRITE)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
 def _rounds(path: Path) -> int:
     try:
         return len(history.load_history(path))
@@ -54,7 +114,7 @@ def _rounds(path: Path) -> int:
 def replay(repo: Path, metrics: Path, run_id: str,
            history_rel: str = DEFAULT_HISTORY, branch: str = "main",
            keep: bool = False, summary_path: Path | None = None,
-           dry_run: bool = False) -> int:
+           dry_run: bool = False, from_worktree: bool = False) -> int:
     repo = Path(repo).resolve()
     sandbox = Path(tempfile.mkdtemp(prefix="replay-ci-writeback-"))
     code = 1
@@ -64,6 +124,8 @@ def replay(repo: Path, metrics: Path, run_id: str,
         _git("clone", "--bare", "-q", str(repo), str(origin))
         work = sandbox / "work"
         _git("clone", "-q", "-b", branch, str(origin), str(work))
+        if from_worktree:
+            _apply_worktree_changes(repo, work)
         target = work / history_rel
         before = _rounds(target)
 
@@ -83,10 +145,12 @@ def replay(repo: Path, metrics: Path, run_id: str,
         print(f"replay 失败：{exc}", file=sys.stderr)
         code = 1
     finally:
-        if keep:
-            print(f"replay：沙箱保留在 {sandbox}")
+        # R95：失败时自动保留现场（成功仍删除；--keep 总是保留）。
+        if keep or code != 0:
+            suffix = "（失败现场）" if code != 0 and not keep else ""
+            print(f"replay：沙箱保留在 {sandbox}{suffix}")
         else:
-            shutil.rmtree(sandbox, ignore_errors=True)
+            _remove_sandbox(sandbox)
     return code
 
 
@@ -106,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="只算不写（沙箱里也不提交）")
     parser.add_argument("--keep", action="store_true",
                         help="保留沙箱目录以便检查")
+    parser.add_argument("--from-worktree", action="store_true",
+                        help="把源仓库已跟踪文件的未提交改动带进沙箱（R95）")
     return parser
 
 
@@ -113,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return replay(
         args.repo, args.metrics, args.run_id, args.history, args.branch,
-        args.keep, args.summary, args.dry_run)
+        args.keep, args.summary, args.dry_run, args.from_worktree)
 
 
 if __name__ == "__main__":
