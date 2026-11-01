@@ -441,7 +441,17 @@ jobs:
             --history tests/fixtures/e2e_retry_history/history.json \
             --run-id "ci-${{ github.run_id }}" \
             --commit-message "chore(e2e): record CI run ${{ github.run_id }} [skip ci]" \
-            --summary "$GITHUB_STEP_SUMMARY"
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --result-json "$RUNNER_TEMP/writeback-result.json"
+      - name: Upload writeback result
+        # R97：机读结果与 summary 共用同一组 reason/detail；失败也上传。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: writeback-result
+          path: ${{ runner.temp }}/writeback-result.json
+          if-no-files-found: warn
+          retention-days: 1
 
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作

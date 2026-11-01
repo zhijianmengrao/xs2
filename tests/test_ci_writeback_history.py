@@ -503,6 +503,182 @@ def test_result_categories_are_distinct_literals() -> None:
     assert len(set(values)) == len(values)
 
 
+# ------------------------------------------------------ 机读结果工件（R97）
+def _result(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_result_json_reports_a_written_round(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, result_path=result) == 0
+
+    payload = _result(result)
+    assert payload["schema"] == writeback.RESULT_SCHEMA
+    assert payload["run_id"] == "ci-1"
+    assert payload["source"] == "ci"
+    assert payload["reason"] == writeback.REASON_WRITTEN
+    assert payload["exit_code"] == 0
+    assert payload["rounds"] == 1
+    assert payload["push_attempts"] == 1
+    assert payload["dry_run"] is False
+    assert "第 1 次尝试" in payload["detail"]
+
+
+def test_result_json_counts_the_rebase_retry(tmp_path: Path) -> None:
+    """被拒一次 → rebase → 第 2 次成功：机读结果必须说 2，不是 1。"""
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    other = _clone(tmp_path, origin, "other")
+    (other / "README.md").write_text("advance\n", encoding="utf-8")
+    _git("add", "-A", cwd=other)
+    _git("commit", "-q", "-m", "advance main", cwd=other)
+    _git("push", "-q", "origin", "main", cwd=other)
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, result_path=result) == 0
+
+    payload = _result(result)
+    assert payload["push_attempts"] == 2
+    assert payload["reason"] == writeback.REASON_WRITTEN
+
+
+def test_result_json_reports_missing_metrics_and_record_invalid(
+        tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        tmp_path / "missing.json", _history_path(work), "ci-1", work,
+        result_path=result) == 0
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_METRICS_MISSING
+    assert payload["exit_code"] == 0
+    assert payload["push_attempts"] == 0
+    assert payload["rounds"] == 0
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert writeback.writeback(
+        broken, _history_path(work), "ci-2", work, result_path=result) == 4
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_RECORD_INVALID
+    assert payload["exit_code"] == 4
+    assert payload["push_attempts"] == 0
+
+
+def test_result_json_reports_push_rejected_after_the_cap(
+        tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, result_path=result) == 1
+
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_PUSH_REJECTED
+    assert payload["exit_code"] == 1
+    assert payload["push_attempts"] == writeback.DEFAULT_ATTEMPTS
+    assert payload["rounds"] == 0
+
+
+def test_result_json_reports_no_change_on_a_rerun(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    metrics = _write_metrics(tmp_path / "metrics.json")
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        metrics, _history_path(work), "ci-1", work, result_path=result) == 0
+    assert writeback.writeback(
+        metrics, _history_path(work), "ci-1", work, result_path=result) == 0
+
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_NO_CHANGE
+    assert payload["exit_code"] == 0
+    assert payload["push_attempts"] == 0
+    assert payload["rounds"] == 1
+
+
+def test_result_json_reports_dry_run_without_a_push(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work,
+        dry_run=True, result_path=result) == 0
+
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_DRY_RUN
+    assert payload["dry_run"] is True
+    assert payload["push_attempts"] == 0
+    # dry-run 不落盘：rounds 是磁盘上的当前值，不是「将写入」的值。
+    assert payload["rounds"] == 0
+
+
+def test_result_json_reports_git_errors_as_git_error(tmp_path: Path) -> None:
+    repo = tmp_path / "plain"
+    repo.mkdir()
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        repo / HISTORY_REL, "ci-1", repo, result_path=result) == 1
+
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_GIT_ERROR
+    assert payload["exit_code"] == 1
+    assert payload["rounds"] is None
+
+
+def test_result_write_failure_does_not_change_the_verdict(
+        tmp_path: Path, capsys) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work,
+        result_path=blocker / "result.json") == 0
+
+    assert "结果工件写入失败" in capsys.readouterr().err
+    assert _origin_history(origin)["history"][-1]["run_id"] == "ci-1"
+
+
+def test_result_and_summary_agree_on_reason_and_detail(tmp_path: Path) -> None:
+    """同一份事实写两处：reason/detail 必须逐字一致（R80）。"""
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    summary = tmp_path / "summary.md"
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work,
+        summary_path=summary, result_path=result) == 0
+
+    payload = _result(result)
+    text = summary.read_text(encoding="utf-8")
+    assert payload["reason"] in text
+    assert payload["detail"] in text
+
+
 # ------------------------------------------------------------------ CLI
 def test_cli_has_the_same_semantics_as_the_function(tmp_path: Path) -> None:
     origin = _seed(tmp_path)
@@ -523,3 +699,20 @@ def test_cli_has_the_same_semantics_as_the_function(tmp_path: Path) -> None:
     assert subjects[0] == "chore(e2e): record CI run 9 [skip ci]"
     assert writeback.REASON_WRITTEN in (
         tmp_path / "summary.md").read_text(encoding="utf-8")
+
+
+def test_cli_wires_result_json(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+
+    code = writeback.main([
+        "--metrics", str(_write_metrics(tmp_path / "metrics.json")),
+        "--history", str(_history_path(work)),
+        "--run-id", "ci-9",
+        "--repo", str(work),
+        "--result-json", str(result),
+    ])
+
+    assert code == 0
+    assert _result(result)["reason"] == writeback.REASON_WRITTEN

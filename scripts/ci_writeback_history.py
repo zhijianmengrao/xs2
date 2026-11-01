@@ -30,6 +30,7 @@ R88 把写回做成独立 job，但「提交 → push → 被拒 → rebase 重�
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -98,6 +99,9 @@ REASON_GIT_ERROR = "git-error"
 REASON_USAGE = "usage"
 REASON_DRY_RUN = "dry-run"
 
+# 机读结果工件的 schema（R97）。类别字面值与 summary 共用同一份常量。
+RESULT_SCHEMA = 1
+
 
 def _default_summary_path() -> Path | None:
     raw = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -124,6 +128,44 @@ def _rounds(history_path: Path) -> str:
         return "?"
 
 
+def _remote_rounds(repo: Path, branch: str, history_path: Path) -> int | None:
+    """机读工件的轮数：读 ``origin/<branch>`` 的**已入库**历史。
+
+    push 被拒时本地文件可能已经写上这一轮；直接读本地会把「本轮未入库」
+    报成比远端多一。git 不可用/路径不在仓库内时给 null，不猜。
+    """
+    try:
+        relative = history_path.resolve().relative_to(Path(repo).resolve())
+    except (OSError, ValueError):
+        relative = history_path
+    result = _git(repo, "show", f"origin/{branch}:{relative.as_posix()}")
+    if result.returncode != 0:
+        return None
+    try:
+        return len(history.validate_history(json.loads(result.stdout)))
+    except (ValueError, history.HistoryError):
+        return None
+
+
+def _emit_result(result_path: Path | None, payload: dict) -> None:
+    """把本轮结果写成机读 JSON；写不进去只告警，**不改判决**（R97）。"""
+    if result_path is None:
+        return
+    tmp = result_path.with_name(result_path.name + ".tmp")
+    try:
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        os.replace(tmp, result_path)
+    except OSError as exc:
+        print(f"结果工件写入失败（{result_path}）：{exc}", file=sys.stderr)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def _has_staged_change(repo: Path, history_path: Path) -> bool:
     result = _git(repo, "diff", "--cached", "--quiet", "--", str(history_path))
     return result.returncode != 0
@@ -131,14 +173,20 @@ def _has_staged_change(repo: Path, history_path: Path) -> bool:
 
 def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
                      repo: Path, branch: str, attempts: int,
-                     commit_message: str | None) -> tuple[int, str, str]:
-    """执行写回，返回 ``(退出码, 类别, 说明)``；类别用于 summary 与报错。"""
+                     commit_message: str | None) -> tuple[int, str, str, int]:
+    """执行写回，返回 ``(退出码, 类别, 说明, push 尝试次数)``。
+
+    类别用于 summary、报错与机读结果工件（R97）；``push_attempts`` 只统计
+    真正发起的 push（缺 metrics / 无变化 / 用法错误都是 0）。
+    """
+    attempts_made = 0
     if attempts < 1:
         print("--attempts 必须 >= 1", file=sys.stderr)
-        return EXIT_USAGE, REASON_USAGE, "--attempts 必须 >= 1"
+        return EXIT_USAGE, REASON_USAGE, "--attempts 必须 >= 1", attempts_made
     if not metrics_path.is_file():
         print(f"没有 {metrics_path}（e2e 环境未启动），本轮不入库")
-        return EXIT_OK, REASON_METRICS_MISSING, "e2e 环境未启动，本轮不入库"
+        return (EXIT_OK, REASON_METRICS_MISSING,
+                "e2e 环境未启动，本轮不入库", attempts_made)
 
     message = commit_message or f"chore(e2e): record CI run {run_id} [skip ci]"
     prepared = False
@@ -149,24 +197,25 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
                                   source="ci")
             if code != history.EXIT_OK:
                 return (code, REASON_RECORD_INVALID,
-                        f"record 退出 {code}，本轮不入库")
+                        f"record 退出 {code}，本轮不入库", attempts_made)
             _git_checked(repo, "add", "--", str(history_path))
             if not _has_staged_change(repo, history_path):
                 print("history 没有变化（同一 run 重跑），不提交")
                 return (EXIT_OK, REASON_NO_CHANGE,
                         f"历史已含这一轮（{_rounds(history_path)}/"
-                        f"{history.MAX_ROUNDS} 轮），不提交")
+                        f"{history.MAX_ROUNDS} 轮），不提交", attempts_made)
             # 只提交这个文件：即使工作树里还有别的改动（checkout 残留），也不带进去。
             _git_checked(
                 repo, "commit", "-m", message, "--", str(history_path))
             prepared = True
 
+        attempts_made = attempt
         push = _git(repo, "push", "origin", f"HEAD:{branch}")
         if push.returncode == 0:
             print(f"已写回 {branch}（第 {attempt} 次尝试）")
             return (EXIT_OK, REASON_WRITTEN,
                     f"第 {attempt} 次尝试，历史 {_rounds(history_path)}/"
-                    f"{history.MAX_ROUNDS} 轮")
+                    f"{history.MAX_ROUNDS} 轮", attempts_made)
         detail = _decode(push.stderr)
         if detail:
             print(detail, file=sys.stderr)
@@ -189,21 +238,26 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
     print(f"::error::连续 {attempts} 次写回均失败"
           f"（最后一次：{last_failure}），本轮历史未入库")
     return (EXIT_FAILED, last_failure,
-            f"连续 {attempts} 次写回均失败（最后一次：{last_failure}）")
+            f"连续 {attempts} 次写回均失败（最后一次：{last_failure}）",
+            attempts_made)
 
 
 def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
-              source: str) -> tuple[int, str, str]:
-    """dry-run：在历史**副本**上真算一遍，不碰仓库、不落盘（R94）。"""
+              source: str) -> tuple[int, str, str, int]:
+    """dry-run：在历史**副本**上真算一遍，不碰仓库、不落盘（R94）。
+
+    dry-run 不发起 push，所以尝试次数固定是 0。
+    """
     if not metrics_path.is_file():
         print(f"没有 {metrics_path}（e2e 环境未启动），本轮不入库（dry-run）")
-        return EXIT_OK, REASON_METRICS_MISSING, "e2e 环境未启动，本轮不入库"
+        return (EXIT_OK, REASON_METRICS_MISSING,
+                "e2e 环境未启动，本轮不入库", 0)
     before = history_path.read_bytes() if history_path.is_file() else b""
     try:
         previous = len(history.load_history(history_path)) if before else 0
     except history.HistoryError as exc:
         print(str(exc), file=sys.stderr)
-        return history.EXIT_META_DRIFT, REASON_RECORD_INVALID, str(exc)
+        return history.EXIT_META_DRIFT, REASON_RECORD_INVALID, str(exc), 0
 
     with tempfile.TemporaryDirectory(prefix="ci-writeback-dry-run-") as tmp:
         copy = Path(tmp) / history_path.name
@@ -211,20 +265,21 @@ def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
             copy.write_bytes(before)
         code = history.record(metrics_path, copy, run_id=run_id, source=source)
         if code != history.EXIT_OK:
-            return code, REASON_RECORD_INVALID, f"record 退出 {code}，本轮不入库"
+            return (code, REASON_RECORD_INVALID,
+                    f"record 退出 {code}，本轮不入库", 0)
         after = copy.read_bytes()
         rounds = len(history.load_history(copy))
 
     if after == before:
         print(f"dry-run：history 没有变化（run_id={run_id} 已在历史里）")
         return (EXIT_OK, REASON_NO_CHANGE,
-                f"历史已含这一轮（{rounds}/{history.MAX_ROUNDS} 轮），未提交")
+                f"历史已含这一轮（{rounds}/{history.MAX_ROUNDS} 轮），未提交", 0)
     print(f"dry-run：将记录 run_id={run_id}（来源 {source}），"
           f"历史 {rounds}/{history.MAX_ROUNDS} 轮"
           f"（+{rounds - previous}，未写入）")
     return (EXIT_OK, REASON_DRY_RUN,
             f"将写入历史 {rounds}/{history.MAX_ROUNDS} 轮"
-            f"（+{rounds - previous}，未提交）")
+            f"（+{rounds - previous}，未提交）", 0)
 
 
 def writeback(metrics_path: Path, history_path: Path, run_id: str,
@@ -232,25 +287,42 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
               attempts: int = DEFAULT_ATTEMPTS,
               commit_message: str | None = None,
               summary_path: Path | None = None,
-              dry_run: bool = False) -> int:
+              dry_run: bool = False,
+              result_path: Path | None = None) -> int:
     """CI 写回的完整链路：metrics → record → commit → push（带重试与重算）。
 
     每一轮 ``record`` 都在**当前历史**上重算：push 被拒后 rebase 成功时提交
     已经在最新分支上，只需重推；rebase 冲突时本地提交是在旧历史上算的，丢弃
     它、回到最新分支后重算（R90）——否则一轮历史会因为一次并发编辑而丢失。
+
+    ``result_path``（R97）写机读 JSON：与 summary 共用同一组 ``reason`` /
+    ``detail``，含 ``exit_code`` / ``rounds`` / ``push_attempts`` / ``dry_run``。
+    写失败只告警，不改变退出码。
     """
+    push_attempts = 0
     if dry_run:
-        code, reason, detail = _rehearse(
+        code, reason, detail, push_attempts = _rehearse(
             metrics_path, history_path, run_id, source="ci")
     else:
         try:
-            code, reason, detail = _writeback_steps(
+            code, reason, detail, push_attempts = _writeback_steps(
                 metrics_path, history_path, run_id, repo, branch, attempts,
                 commit_message)
         except WritebackError as exc:
             print(f"::error::{exc}", file=sys.stderr)
             code, reason, detail = EXIT_FAILED, REASON_GIT_ERROR, str(exc)
     _emit_summary(summary_path, run_id, reason, detail)
+    _emit_result(result_path, {
+        "schema": RESULT_SCHEMA,
+        "run_id": run_id,
+        "source": "ci",
+        "reason": reason,
+        "detail": detail,
+        "exit_code": code,
+        "rounds": _remote_rounds(repo, branch, history_path),
+        "push_attempts": push_attempts,
+        "dry_run": dry_run,
+    })
     return code
 
 
@@ -273,6 +345,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="step summary 文件；缺省读 GITHUB_STEP_SUMMARY")
     parser.add_argument("--dry-run", action="store_true",
                         help="只在历史副本上算一遍并报告，不写文件、不提交（R94）")
+    parser.add_argument("--result-json", type=Path, default=None,
+                        help="机读结果工件（R97）；写失败只告警")
     return parser
 
 
@@ -283,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
         branch=args.branch, attempts=args.attempts,
         commit_message=args.commit_message,
         summary_path=args.summary or _default_summary_path(),
-        dry_run=args.dry_run)
+        dry_run=args.dry_run, result_path=args.result_json)
 
 
 if __name__ == "__main__":

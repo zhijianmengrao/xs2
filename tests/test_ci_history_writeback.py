@@ -121,6 +121,55 @@ def test_fetch_step_is_loud_on_transport_errors() -> None:
     assert "GITHUB_TOKEN" in (step.get("env") or {})
 
 
+def test_upload_fetch_and_writeback_agree_on_the_metrics_filename() -> None:
+    """上传的 basename、fetch 的 artifact 名、写回读的文件名必须是同一份事实。
+
+    三个字符串分布在 backend / fetch / writeback 三步；任何一处改名都会让
+    写回在「没有 metrics」上静默跳过一轮（R80：同一事实两处会分裂）。
+    """
+    uploads = [
+        step for step in _job("backend")["steps"]
+        if "upload-artifact" in str(step.get("uses", ""))
+        and "e2e-metrics" in json.dumps(step, ensure_ascii=False)
+    ]
+    assert len(uploads) == 1, uploads
+    assert uploads[0]["with"]["name"] == "e2e-metrics"
+    upload_path = str(uploads[0]["with"]["path"])
+    filename = upload_path.rsplit("/", 1)[-1]
+    assert filename == "e2e-metrics.json"
+
+    fetches = [
+        step for step in _writeback()["steps"]
+        if "fetch_ci_artifact.py" in str(step.get("run", ""))
+    ]
+    assert len(fetches) == 1, fetches
+    fetch_run = str(fetches[0]["run"])
+    assert "--artifact e2e-metrics" in fetch_run
+    assert '--path "$RUNNER_TEMP/e2e"' in fetch_run
+
+    assert f'"$RUNNER_TEMP/e2e/{filename}"' in _record_run()
+
+
+def test_writeback_emits_a_machine_readable_result() -> None:
+    """R97：summary 之外还有机读工件，失败或成功都要写。"""
+    assert '--result-json "$RUNNER_TEMP/writeback-result.json"' in _record_run()
+
+
+def test_result_artifact_is_uploaded_even_on_failure() -> None:
+    steps = [
+        step for step in _writeback()["steps"]
+        if step.get("name") == "Upload writeback result"
+    ]
+    assert len(steps) == 1, steps
+    step = steps[0]
+    assert step.get("if") == "always()"
+    assert "upload-artifact" in str(step.get("uses", ""))
+    assert step["with"]["name"] == "writeback-result"
+    assert step["with"]["path"] == (
+        "${{ runner.temp }}/writeback-result.json")
+    assert step["with"]["if-no-files-found"] == "warn"
+
+
 def _record_run() -> str:
     """定位「跑写回脚本的那一步」的 run 正文，不拿注释做断言。"""
     hits = [

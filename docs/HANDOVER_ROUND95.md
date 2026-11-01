@@ -107,7 +107,13 @@ R94 §5 的三条边界全部收口：
     静默丢掉这一轮；现在 fetch 步骤直接红，job 失败。
 - 修复：下载请求改回 `application/vnd.github+json`；本机用真实 GitHub API 对
   run 41323628155 重跑 fetch，成功解出 1 个文件（`e2e-metrics.json`，1365 B）。
-- 修复后的 CI run：（待推送后回填）
+- 修复提交 `a91fb42`；CI run **41324392700** 六 job 全 `success`：
+  - backend **2556 passed / 65 skipped** = **2621**；
+  - windows-backend **2592 / 29** = **2621**；
+  - 写回 job：fetch 成功、写回成功，历史 **10 → 11 轮**（新增
+    `ci-41324392700`，`source=ci`），main 头 bot 提交 `6314310`。
+  - 首次失败的 run 41323628155 没有写回（那一轮不计入历史）——失败轮次
+    不入库是既有契约；修复只影响后续 run。
 
 ## 7. 本轮教训
 

@@ -6,6 +6,9 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from artifact_api_fixture import api_path, listing, server, zip_bytes
 from scripts import replay_ci_writeback as replay
 
 HISTORY_REL = "tests/fixtures/e2e_retry_history/history.json"
@@ -186,3 +189,87 @@ def test_failed_replay_keeps_the_sandbox(
     assert "失败现场" in out
     assert sandbox.exists()
     replay._remove_sandbox(sandbox)
+
+
+def _archive(tmp_path: Path) -> bytes:
+    metrics = _metrics(tmp_path / "metrics.json")
+    return zip_bytes({"e2e-metrics.json": metrics.read_bytes()})
+
+
+def test_replay_fetches_the_artifact_before_writeback(
+        tmp_path: Path, capsys) -> None:
+    repo = _seed(tmp_path)
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"}, _archive(tmp_path))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert "0 → 1" in out
+    assert "chore(e2e): record CI run replay-fetch" in out
+
+
+def test_replay_missing_artifact_does_not_write(
+        tmp_path: Path, capsys) -> None:
+    repo = _seed(tmp_path)
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            json.dumps({"total_count": 0, "artifacts": []}).encode())
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "没有 artifact e2e-metrics" in out
+    assert "0 → 0" in out
+
+
+def test_replay_fetch_failure_stops_before_writeback(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            500, {"Content-Type": "application/json"},
+            b'{"message": "boom"}')
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+        ]) == 1
+
+    captured = capsys.readouterr()
+    assert "artifact 拉取失败，未进入写回" in captured.err
+    assert sandbox.exists()
+    assert "失败现场" in captured.out
+    replay._remove_sandbox(sandbox)
+
+
+def test_replay_requires_a_metrics_source(tmp_path: Path) -> None:
+    repo = _seed(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        replay.main(["--repo", str(repo), "--run-id", "replay-1"])
+    assert exc.value.code == 2

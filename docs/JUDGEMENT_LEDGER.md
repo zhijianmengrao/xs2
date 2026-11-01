@@ -806,8 +806,45 @@ R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact �
 - 守卫：`tests/test_fetch_ci_artifact.py` 9 条、`tests/test_replay_ci_writeback.py`
   +4、`tests/test_ci_history_writeback.py` +2（替换 1 条）。
 - 变异：M31–M39 **9/9 全咬合**。
+- **生产首跑 415**：artifact 下载端点拒绝 `application/octet-stream`，必须
+  `application/vnd.github+json`；假服务器不校验 Accept，9 条用例全绿也漏了它。
+  修复后本机真实 API 探针成功，run **41324392700** 六 job 全绿（写回 10→11）。
 - **边界**：假服务器只证明脚本的 API 契约；真实 token 权限、artifact zip 布局
   与上传侧 `upload-artifact` 仍由下一次 CI 生产运行验证。
+
+### 7.22 下载 → 写回：整链本地回放（R96）
+
+- `replay --fetch-api-url`：先走真实的 `fetch_ci_artifact.fetch()`（列表 →
+  下载 zip → 解压），再把解出来的 `e2e-metrics.json` 交给真实 `writeback()`；
+  fetch 非 0 → 不进入写回、沙箱按失败保留；缺 artifact → fetch 0、写回按
+  「没有 metrics」0。
+- 假 artifact API 抽成 `tests/artifact_api_fixture.py`，fetch 与 replay 共用。
+- **三处文件名的同一条契约**：backend 上传路径的 basename、fetch 的
+  `--artifact`、写回读取的 metrics 路径；任何一处改名都只会表现为「本轮不入库」
+  （退出 0），所以必须由一条接线用例串起来（R80 的「同一事实两处会分裂」在
+  这里是三处）。
+- 守卫：`tests/test_replay_ci_writeback.py` +4、
+  `tests/test_ci_history_writeback.py` +1。
+- 变异：M40–M43 **4/4 全咬合**。
+- **边界**：上传侧 `actions/upload-artifact` 仍无法本地执行；R96 只钉文件名
+  契约，zip 的实际布局由 CI 生产运行验证。
+
+### 7.23 机读结果工件：rounds 读远端、attempts 数 push（R97）
+
+- `--result-json` 每个出口都写：`reason` / `detail` / `exit_code` / `rounds` /
+  `push_attempts` / `dry_run`，与 step summary 共用同一组 `reason` / `detail`。
+  写失败只告警，不改变退出码。
+- **`rounds` 必须读 `origin/<branch>` 的已入库历史**：push 被拒时 record 已经
+  把 `history.json` 写进工作树，读本地会把「未入库」报成 1（M49 咬住）。
+- **`push_attempts` 的计数点放在 push 紧前面**：原在循环顶部，record 失败也会
+  记成一次 push；移到 record / no-change 之后，两类都归 0（M46 咬住）。
+- CI 新增 `Upload writeback result`（`if: always()`、缺失 warn）。
+- 守卫：`tests/test_ci_writeback_history.py` +10（含 CLI）、
+  `tests/test_ci_history_writeback.py` +2。
+- 变异：M44–M49 **6/6 全咬合**。
+- **边界**：`upload-artifact` 使用运行时 token，是否需要 `actions: write` 由
+  CI 首次上传实证；`git-error` 的 `push_attempts` 固定 0（异常时无法可靠知道
+  已发起的次数）。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 

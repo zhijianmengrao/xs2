@@ -1,17 +1,23 @@
-"""本地回放一次 CI 写回（R94）。
+"""本地回放一次 CI 写回（R94/R95/R96）。
 
-把「checkout → record → commit → push（含 rebase 重试）」在**临时沙箱**里
-走一遍：从 ``--repo`` 克隆一个裸仓作为 origin，再克隆工作区，调用真实的
-``ci_writeback_history.writeback()``。源仓库一个字节都不动。
+把「checkout → (fetch artifact) → record → commit → push（含 rebase 重试）」
+在**临时沙箱**里走一遍：从 ``--repo`` 克隆一个裸仓作为 origin，再克隆工作区，
+调用真实的 ``ci_writeback_history.writeback()``。源仓库一个字节都不动。
 
-仍然无法本地复现的只剩 ``actions/download-artifact`` 的传输本身——本工具用
-``--metrics`` 直接喂文件，覆盖的是它的下游。
+- R94：``--metrics`` 直接喂文件，覆盖 download-artifact 的下游；
+- R95：``--from-worktree`` 把已跟踪未提交改动带进沙箱；
+- R96：``--fetch-api-url`` 先走真实的 ``fetch_ci_artifact.fetch()``（列表 →
+  下载 zip → 解压），再跑 writeback——下载→写回整链本地一次走完。
+
+仍然无法本地复现的只剩上传侧的 ``actions/upload-artifact``。
 
 用法::
 
     python scripts/replay_ci_writeback.py --metrics m.json --run-id replay-1
     python scripts/replay_ci_writeback.py --repo . --metrics m.json \\
         --run-id replay-1 --dry-run --keep
+    python scripts/replay_ci_writeback.py --repo . --run-id replay-1 \\
+        --fetch-api-url http://127.0.0.1:9000 --fetch-repo owner/repo
 """
 
 from __future__ import annotations
@@ -31,8 +37,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts import ci_writeback_history as writeback
 from scripts import e2e_retry_history as history
+from scripts import fetch_ci_artifact as artifact_fetch
 
 DEFAULT_HISTORY = "tests/fixtures/e2e_retry_history/history.json"
+ARTIFACT_NAME = "e2e-metrics"
+METRICS_FILENAME = "e2e-metrics.json"
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
@@ -111,10 +120,13 @@ def _rounds(path: Path) -> int:
         return 0
 
 
-def replay(repo: Path, metrics: Path, run_id: str,
+def replay(repo: Path, metrics: Path | None, run_id: str,
            history_rel: str = DEFAULT_HISTORY, branch: str = "main",
            keep: bool = False, summary_path: Path | None = None,
-           dry_run: bool = False, from_worktree: bool = False) -> int:
+           dry_run: bool = False, from_worktree: bool = False,
+           fetch_api_url: str | None = None,
+           artifact: str = ARTIFACT_NAME, fetch_repo: str = "",
+           token: str | None = None) -> int:
     repo = Path(repo).resolve()
     sandbox = Path(tempfile.mkdtemp(prefix="replay-ci-writeback-"))
     code = 1
@@ -129,9 +141,27 @@ def replay(repo: Path, metrics: Path, run_id: str,
         target = work / history_rel
         before = _rounds(target)
 
-        code = writeback.writeback(
-            Path(metrics).resolve(), target, run_id, work, branch=branch,
-            summary_path=summary_path, dry_run=dry_run)
+        metrics_path = Path(metrics).resolve() if metrics is not None else None
+        can_write = True
+        if fetch_api_url:
+            fetched_dir = sandbox / "e2e"
+            fetched = artifact_fetch.fetch(
+                run_id, fetch_repo, artifact, fetched_dir,
+                token=token, api_url=fetch_api_url)
+            if fetched != 0:
+                code = fetched
+                can_write = False
+                print("replay：artifact 拉取失败，未进入写回", file=sys.stderr)
+            else:
+                metrics_path = fetched_dir / METRICS_FILENAME
+                if not metrics_path.is_file():
+                    print(f"replay：artifact 里没有 {METRICS_FILENAME}，"
+                          f"写回会按「没有 metrics」处理", file=sys.stderr)
+
+        if can_write and metrics_path is not None:
+            code = writeback.writeback(
+                metrics_path, target, run_id, work, branch=branch,
+                summary_path=summary_path, dry_run=dry_run)
 
         after = _rounds(target)
         head = _git("log", "-1", "--format=%h %s", branch, cwd=origin)
@@ -158,8 +188,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."),
                         help="源仓库（只读，克隆到沙箱）")
-    parser.add_argument("--metrics", type=Path, required=True,
-                        help="e2e 写出的 metrics JSON")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--metrics", type=Path, default=None,
+                        help="e2e 写出的 metrics JSON（直接喂文件）")
+    source.add_argument("--fetch-api-url", default=None,
+                        help="先走 fetch_ci_artifact.py 从该 API 拉 artifact（R96）")
+    parser.add_argument("--artifact", default=ARTIFACT_NAME,
+                        help="--fetch-api-url 的 artifact 名称")
+    parser.add_argument("--fetch-repo", default=os.environ.get(
+        "GITHUB_REPOSITORY", ""), help="--fetch-api-url 的 owner/name")
+    parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"),
+                        help="--fetch-api-url 的 token")
     parser.add_argument("--run-id", required=True, help="回放轮次的 run_id")
     parser.add_argument("--history", default=DEFAULT_HISTORY,
                         help="仓库内的历史文件相对路径")
@@ -179,7 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return replay(
         args.repo, args.metrics, args.run_id, args.history, args.branch,
-        args.keep, args.summary, args.dry_run, args.from_worktree)
+        args.keep, args.summary, args.dry_run, args.from_worktree,
+        args.fetch_api_url, args.artifact, args.fetch_repo, args.token)
 
 
 if __name__ == "__main__":
