@@ -127,4 +127,19 @@ Medium 写进文档当作 High 的替代——要真正的 High 仍走
 
 ## 9. 提交、推送与 CI 核对
 
-（待补记）
+- 提交 `56a432b`（docs：`PROJECT_INFO.md` + `JUDGEMENT_LEDGER.md` + 本文，显式路径 add），
+  推送 `0114521..56a432b`。
+- CI run **41294209657**（push，09:41:26 → 09:45:14，约 3m48s）五个 job 全 `success`：
+
+| 项 | 实证 |
+|---|---|
+| 五个 job | backend（09:41:28–09:44:04）/ windows-backend（09:41:28–09:45:14）/ frontend（09:41:28–09:43:10）/ container-config / container-build 全部 `success` |
+| ubuntu | `2449 passed, 65 skipped, 1 warning in 114.78s` = **2514** |
+| windows | `2485 passed, 29 skipped, 1 warning in 167.37s` = **2514** |
+| 与 R84 相比 | 逐项相同（R84：ubuntu 2449/65、windows 2485/29）——本轮零代码、零用例改动，预期不变 |
+| e2e | `[e2e] 10/10 场景通过`、`[e2e-metrics] total=10 passed=10 failed=0 retried=0` |
+| 快照判据 | backend 的七个 fixture 判据步骤全 `success` |
+| 前端 / 容器 | frontend job `success`、container-config / container-build `success` |
+
+**推送通道**：本轮直连可用（`curl https://github.com` → 200），
+`git -c http.proxy= -c https.proxy= push` 一次成功；socks5 10808 探测也返回 200，但未使用。
