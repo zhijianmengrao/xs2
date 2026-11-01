@@ -157,6 +157,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 漂移文案写全三计数（R83） | `tests/test_live_snapshot_gate.py::test_totals_drift_message_names_all_three_counts` |
 | `totals.runs` 的形状规则（R83） | `tests/test_live_snapshot_gate.py::test_malformed_totals_is_drift_not_a_verdict`（runs 的 `true`/浮点/字符串/负数四格） |
 | 展示字段不参与判决（两处 `failure_rate`，R84） | `tests/test_live_snapshot_gate.py::test_failure_rate_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
+| 展示字段不参与判决（顶层 `source_root`，R86） | `tests/test_live_snapshot_gate.py::test_source_root_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
 | p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
@@ -596,6 +597,20 @@ R84 查清了真实数据的形状：`data/workflows` 40 个 run 里有 **6 个
 
 其余边界：fixture 只含 2 个 workflow，`--check-coverage` 对它退 6 属设计内
 （它是分支钉子，不是覆盖率样本）；CI 不新增步骤，pytest 在 CI 里就会跑这条。
+
+### 7.12 顶层 `source_root`：最后一个「写了没人看」字段（R86）
+
+R84 §9-1 发现：导出脚本在顶层 meta 写 `source_root = workflows_dir.name`（`export_run_samples.py:278`），全仓库没有任何判据读它——与 `totals.runs`（R83）、`failure_rate`（R84）同族。
+
+**处置：登记为只读展示字段**。`_DISPLAY_ONLY_FIELDS` 从 `("failure_rate",)` 扩成 `("failure_rate", "source_root")`。
+
+- **不并入计数表**：它的值是目录名（`workflows` / 任意 `--dest` 的父目录名），`_count_value_error` 只接受整数/整数字符串。
+- **不做成判据**：原 R84 §9-1 的另一选项是「合成快照不得进 CI 默认」。要判它必须先定义哪些 fixture 是 synthetic、哪条 CI 路径算「默认」；而 `source_root` 恰好只是「导出时源目录的名字」，换一个目录导出就会变，拿它当判据会把合法重导误判成合成快照。
+- **不删除**：它是读者要的信息（快照来源），删掉只是把「没人读」变成「不存在」，与 R83/R84 的处置理由相同。
+
+**守卫按位置分开写**：它只有一个副本、在顶层 meta，不是 `totals` / `per_workflow` 的副本。`test_source_root_is_display_only` 参数化六个读计数入口 × 六种值（`"abc"` / `true` / `3.7` / `0.99` / `null` / 整个删掉），断言 `(退出码, 文案)` 逐字不变——只比退出码抓不到「读了但只用在文案里」的入口。`test_display_only_registry_is_structurally_excluded` 的期望集合同步为两项，并继续钉住登记清单与两张计数表无交集。
+
+**变异验证（两次）**：M1 从登记清单删掉 `source_root` → 结构用例 **1 red**；M2 让 `check_sample_size` 在 detail 里带上 `meta["source_root"]` → 六入口守卫 **6 red**（该入口 × 六种值），其余 30 条通过。`cp` 还原后 gate md5 逐字节相同（`5e0a070e…`）。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 

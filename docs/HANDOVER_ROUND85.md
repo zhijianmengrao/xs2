@@ -143,3 +143,9 @@ Medium 写进文档当作 High 的替代——要真正的 High 仍走
 
 **推送通道**：本轮直连可用（`curl https://github.com` → 200），
 `git -c http.proxy= -c https.proxy= push` 一次成功；socks5 10808 探测也返回 200，但未使用。
+
+**补记（2026-11-01）**：回填提交 `f7939a6` 的 run **41294735490**
+（09:48:48→09:53:41，约 4m53s）五个 job 同样全部 `success`；同一轮内直连在第一次
+push 后失效（`Could not connect to server`），补记改用
+`git -c http.proxy=socks5h://127.0.0.1:10808` 一次成功——与 R58/R60/R61/R84 的
+「每轮先探路、同轮也可能变」同一条纪律。回填链到此为止。
