@@ -1677,6 +1677,123 @@ def test_unparseable_metadata_exits_four_from_the_cli(
     assert live_gate.main() == live_gate.EXIT_META_DRIFT
 
 
+# ------------------------------- 元数据路径不是可读文件（R79）
+# R77 §7-1 把「meta 写成目录」当成 ``except (OSError, ValueError)`` 的另一种注入
+# 方式；实测不成立：旧写法先 ``meta_path.is_file()``，目录在那一步就是 False，
+# 八处判据一起以 **3**（无样本）退出——处置被指向「先导出一份快照」，而对着一个
+# 占住该路径的目录去重导只会再失败一次。R79 按异常类型分流：缺失 3、读不开 4。
+_META_JUDGES = [
+    ("evaluate", lambda root: live_gate.evaluate(root, ceiling=8.0)),
+    ("check_stale",
+     lambda root: live_gate.check_stale(root, root / "no-real-data", 7.0)),
+    ("check_coverage",
+     lambda root: live_gate.check_coverage(root, root / "no-real-data")),
+    ("check_sample_size", lambda root: live_gate.check_sample_size(root, 10.0)),
+    ("check_per_workflow", lambda root: live_gate.check_per_workflow(root, 10.0)),
+    ("check_per_workflow_rate",
+     lambda root: live_gate.check_per_workflow_rate(root, 10.0)),
+    ("check_per_workflow_regression",
+     lambda root: live_gate.check_per_workflow_regression(root, 10.0)),
+    ("check_lead_time", lambda root: live_gate.check_lead_time(root, 10.0, 10.0, 3.0)),
+]
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _META_JUDGES],
+                         ids=[n for n, _ in _META_JUDGES])
+def test_meta_path_that_is_a_directory_is_drift_not_no_sample(
+        tmp_path: Path, judge) -> None:
+    """八处判据同一道门：meta 路径是目录 → 4，不是 3。
+
+    「没有样本」的处置是导出一份；「路径被目录占着」的处置是先修路径。两者挤在
+    3 里，日志会让人对着一个已经存在的路径反复重导，而重导只会再失败一次。
+    """
+    (tmp_path / "snapshot-meta.json").mkdir()
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "无法读取" in message, message
+    assert "不是「没有样本」" in message, message
+    assert "先清理该路径" in message, message
+    assert "快照元数据缺失" not in message, message
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _META_JUDGES],
+                         ids=[n for n, _ in _META_JUDGES])
+def test_missing_meta_is_still_no_sample_for_every_judge(
+        tmp_path: Path, judge) -> None:
+    """反方向也要钉住：文件不存在仍是 3。
+
+    把「缺失」也抬成 4 是向错方向的假红——本机没导过快照是预期状态，处置是导出一份。
+    """
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+    assert "快照元数据缺失" in message, message
+    assert "无法读取" not in message, message
+
+
+def test_unreadable_meta_file_is_drift_not_missing(
+        monkeypatch, tmp_path: Path) -> None:
+    """文件在、但打不开（权限拒绝）→ 4，不是 3。
+
+    用注入而不是 ``chmod``：Windows 的 ``os.chmod`` 只切只读位，读操作照样成功，
+    本机造不出「权限拒绝」。这条钉的是 ``read_text`` 直接抛 ``OSError`` 的那一格。
+    """
+    (tmp_path / "snapshot-meta.json").write_text("{}", encoding="utf-8")
+    original = Path.read_text
+
+    def deny(self, *args, **kwargs):
+        if self.name == "snapshot-meta.json":
+            raise PermissionError(13, "Permission denied", str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", deny)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "PermissionError" in message, message
+    assert "快照元数据缺失" not in message, message
+
+
+@pytest.mark.parametrize("payload", ["[]", '"x"', "null", "42"])
+def test_meta_that_is_not_a_json_object_is_drift(
+        tmp_path: Path, payload: str) -> None:
+    """合法 JSON 但顶层不是对象 → 4。
+
+    旧写法会在调用方的 ``meta.get(...)`` 抛 ``AttributeError``，进程以 **1** 退出
+    ——与「判了且不合格」同码，读日志的人会去查供应商。与 R75 的 ``"junk"`` 同族。
+    """
+    (tmp_path / "snapshot-meta.json").write_text(payload, encoding="utf-8")
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "顶层不是对象" in message, message
+
+
+@pytest.mark.parametrize("flags", [[], ["--check-per-workflow-rate"]])
+def test_directory_meta_exits_four_from_the_cli(
+        monkeypatch, tmp_path: Path, flags: list) -> None:
+    """外部退出码：默认判定模式与一条 ``--check-*`` 都必须以 4 退出（不是 1/3/8）。"""
+    import sys
+
+    (tmp_path / "snapshot-meta.json").mkdir()
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", *flags, "--data-dir", str(tmp_path)])
+    assert live_gate.main() == live_gate.EXIT_META_DRIFT
+
+
+def test_every_judge_reads_the_metadata_through_one_door() -> None:
+    """以后新增的判据不许自己拼 meta 路径再 ``is_file()``。
+
+    八处各写一份读取就是 R79 修掉的那种分裂：目录在某一处被吞成 3、另一处是 4。
+    文件名只允许出现在 ``_load_snapshot_meta`` 里。
+    """
+    import inspect
+
+    source = Path(live_gate.__file__).read_text(encoding="utf-8")
+    assert source.count('"snapshot-meta.json"') == 1, (
+        "只有 _load_snapshot_meta 能拼这个文件名，判据里再拼一份就是第二道门")
+    for name, _ in _META_JUDGES:
+        assert "_load_snapshot_meta(" in inspect.getsource(getattr(live_gate, name)), (
+            f"{name} 没有走统一的元数据读取")
+
+
 def test_numeric_string_counts_are_still_accepted(tmp_path: Path) -> None:
     """数值字符串仍可解释（导出写整数，手改的 ``"1"`` 不因此拒整份快照）。"""
     _write_malformed_per_workflow(

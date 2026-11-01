@@ -106,7 +106,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 0 | 通过 | — | 全部 |
 | 1 | 判了，且不合格 | 查数据 / 查供应商 | 默认判定（政策上限、回归）、per-workflow 回归/失败率、e2e 编排行为 |
 | 3 | 无样本 | 重导快照 / 重录历史 | 全部读快照的模式、e2e 重跑历史（缺失或为空） |
-| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
+| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效 / 路径读不开 / 顶层不是对象；路径被占时先清理再重导） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
 | 5 | 快照过期 | 重导快照 | 仅 `--check-stale` |
 | 6 | 覆盖度缺口 | 重导快照 | 仅 `--check-coverage` |
 | 7 | 样本太薄 | 攒更多 run 再导 | 仅 `--check-sample-size` |
@@ -140,6 +140,10 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 样本量诊断的 3/4 两条退出路径先于报告（R76） | `tests/test_judgement_flip_points.py::test_metadata_drift_preempts_the_per_workflow_sample_report`、`test_no_sample_preempts_the_per_workflow_sample_report` |
 | 畸形 `per_workflow` → 4（不是 1/8，R75） | `tests/test_live_snapshot_gate.py::test_malformed_per_workflow_metadata_is_drift_not_a_verdict`、`test_malformed_metadata_exits_four_from_the_cli` |
 | 坏 JSON 的处置：4（不是 1/3/8，R77） | `tests/test_judgement_flip_points.py::test_unparseable_metadata_is_not_a_verdict_for_the_leave_one_out_rate`、`test_unparseable_metadata_is_not_a_verdict_for_the_per_workflow_regression`、`tests/test_live_snapshot_gate.py::test_unparseable_metadata_exits_four_from_the_cli` |
+| 元数据路径读不开（目录 / 权限）→ 4（不是 3，R79） | `tests/test_live_snapshot_gate.py::test_meta_path_that_is_a_directory_is_drift_not_no_sample`、`test_unreadable_meta_file_is_drift_not_missing`、`test_directory_meta_exits_four_from_the_cli` |
+| 元数据缺失仍是 3（反方向，R79） | `tests/test_live_snapshot_gate.py::test_missing_meta_is_still_no_sample_for_every_judge` |
+| 元数据顶层不是对象 → 4（不是 1，R79） | `tests/test_live_snapshot_gate.py::test_meta_that_is_not_a_json_object_is_drift` |
+| 八处判据只走一道元数据门（R79） | `tests/test_live_snapshot_gate.py::test_every_judge_reads_the_metadata_through_one_door` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
@@ -338,6 +342,46 @@ R74 让单次 run 的重跑频率可机读，跨 run 那一层缺存储与判据
 **如实记录这一层的覆盖范围**：CI 每次 push 都跑 e2e，但**不入库**——入库是
 本机显式动作。所以趋势的轮次密度取决于「本机跑 e2e 并提交」的频率，不是
 push 频率；CI 的职责只有「入库的那份历史仍然可读」。
+
+### 7.7 元数据路径读不开：4 不是 3（R79）
+
+§7.2–§7.5 造的元数据**全都读得开**（合法 JSON，坏也只坏形状）；§7.5 钉的是
+「读得开但读不懂」。剩下的一格是**打不开**。R77 §7-1 把「把 `snapshot-meta.json`
+写成目录」当成同一条 `except (OSError, ValueError)` 的另一种注入方式，**实测
+不成立**：旧写法先 `meta_path.is_file()`，目录在那一步就是 `False`，八处判据
+一起以 **3**（无样本）退出。
+
+| 状况 | 修复前 | 冒充的东西 | 修复后 |
+|---|---|---|---|
+| `snapshot-meta.json` 是目录 | 八处判据全部 **3**（`is_file()` 返回 False） | 「快照还没导出」→ 对着一个**已被占用的路径**反复重导，而重导只会再失败一次 | **4**（先清理该路径再重导） |
+| 文件在、`read_text` 抛 `OSError`（权限拒绝） | 旧代码在 `except` 里会归 4，但 `is_file()` 在父目录 ACL 被拒时也返回 False → 3 | 同上 | **4** |
+| 顶层是合法 JSON 但不是对象（`[]` / `"x"` / `null` / `42`） | 调用方 `meta.get(...)` 抛 `AttributeError` → CLI 退出 **1** | 「判了且不合格」→ 查供应商 | **4**（重导） |
+
+修法是把八处判据的读取收进 `_load_snapshot_meta()`，**按异常类型分流**：
+`FileNotFoundError` → 3（没有快照）；其它 `OSError` → 4（读不开）；`ValueError`
+（`UnicodeDecodeError` 与 `json.JSONDecodeError` 都是它的子类）→ 4（读不懂）。
+
+**为什么不 `is_dir()` 预检**：目录在 POSIX 上是 `IsADirectoryError`、在 Windows
+上是 `PermissionError`（本机实测），预检等于把同一条判据写成两份平台相关代码，
+而且它仍然看不见权限拒绝。`open()` 抛出的异常类型本来就是「为什么读不了」的
+答案，也是唯一能区分「没有」与「坏了」的信息。
+
+| 前提 | 期望 | 用例 |
+|---|---|---|
+| meta 路径是目录 | 八处判据全部 4；消息含「无法读取」「不是「没有样本」」「先清理该路径」，不含「缺失」 | `test_meta_path_that_is_a_directory_is_drift_not_no_sample` |
+| meta 文件不存在 | 八处判据全部 3；消息含「缺失」、不含「无法读取」 | `test_missing_meta_is_still_no_sample_for_every_judge` |
+| 文件在但 `read_text` 抛 `PermissionError` | 4（注入而非 `chmod`：Windows 的 `os.chmod` 只切只读位，读操作照样成功） | `test_unreadable_meta_file_is_drift_not_missing` |
+| 顶层不是对象 | 4（不是 1/8） | `test_meta_that_is_not_a_json_object_is_drift` |
+| 外部退出码 | 默认判定模式与 `--check-per-workflow-rate` 都以 4 退出 | `test_directory_meta_exits_four_from_the_cli` |
+| 以后新增的判据 | 文件名只允许出现在 `_load_snapshot_meta`，不许自己拼路径再 `is_file()` | `test_every_judge_reads_the_metadata_through_one_door` |
+
+**如实记录覆盖关系**：M1（`OSError`→3）、M2（缺失→4）、M8（退回 `is_file()`
+预检）、M6（文案退回「缺失」口径）各自同时咬红 **8** 条参数化用例（八处判据
+一起响），**没有唯一咬合者**；M4（去掉顶层对象校验）咬红 4 条；M5（只让
+`check_lead_time` 绕过统一入口）咬红 2 条——该判据的目录参数 + 统一入口守卫，
+**后者是唯一能守住「将来新增判据」的那条用例**。
+
+
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 

@@ -224,6 +224,63 @@ DEFAULT_MARGIN = 10.0          # --margin：精度余量 / 逐 workflow 变化�
 DEFAULT_MAX_LAG_DAYS = 7.0     # --max-lag-days：快照允许滞后的天数
 
 
+def _load_snapshot_meta(data_dir: Path, purpose: str = "") -> tuple[
+        dict | None, tuple[int, str] | None]:
+    """读并解析 ``snapshot-meta.json``：成功 ``(meta, None)``，失败 ``(None, (码, 说明))``。
+
+    为什么直接打开、而不是先 ``meta_path.is_file()``（R79）：``Path.is_file()``
+    会把三种完全不同的状况折叠成同一个 ``False``——文件不存在、路径是目录、
+    权限不够（含 Windows 下父目录 ACL 拒绝）。旧写法于是把「快照还没导出」
+    （处置：导出一份）与「元数据路径坏了」（处置：先修路径再重导）挤进同一个
+    退出码 3，而 3 的文案会让人对着一份**已经存在但读不了**的路径去重导——
+    重导只会再失败一次。R77 §7-1 把「meta 写成目录」当成同一条 ``except`` 的
+    另一种注入方式，实测不成立：它在 ``is_file()`` 那一步就被吞成 3。
+
+    分流按**异常类型**而不是 ``is_dir()`` 预检：目录在 POSIX 上是
+    ``IsADirectoryError``、在 Windows 上是 ``PermissionError``（本机实测），
+    预检等于把同一条判据写成两份平台相关的代码；而 ``open()`` 抛出的异常
+    本来就是「为什么读不了」的答案，也是唯一能区分「没有」与「坏了」的信息。
+
+    - ``FileNotFoundError`` → 3（没有快照，与「没导出过」同一处置）；
+    - 其它 ``OSError``（权限拒绝 / 目录 / 其它 I/O 失败）→ 4（元数据不可用，
+      先修路径再重导）；
+    - ``ValueError``（``UnicodeDecodeError`` 与 ``json.JSONDecodeError`` 都是
+      它的子类）→ 4（读得开但读不懂，与漂移同一处置）。
+
+    ``purpose`` 只改「缺失」那一句的措辞（例如「无法判样本量」），不改变判决。
+
+    顶层不是 JSON 对象时同样归 4：``[]`` / ``"x"`` / ``null`` 会让每个调用方的
+    ``meta.get(...)`` 抛 ``AttributeError``，进程以 **1** 退出——与「判了且
+    不合格」同码，正是 R75 批评的那种冒充。
+    """
+    meta_path = data_dir / "snapshot-meta.json"
+    try:
+        raw = meta_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        suffix = f"，{purpose}" if purpose else ""
+        return None, (EXIT_NO_SAMPLE, f"快照元数据缺失{suffix}：{meta_path}")
+    except OSError as exc:
+        return None, (EXIT_META_DRIFT, (
+            f"快照元数据无法读取（{type(exc).__name__}: {exc}）。路径 {meta_path} "
+            "不可读（不是普通文件、权限拒绝或路径本身不可用）——这不是「没有"
+            "样本」，是元数据本身坏了：先清理该路径，再重导："
+            "python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2"))
+    except ValueError as exc:
+        return None, (EXIT_META_DRIFT, f"快照元数据无法解码：{exc}")
+    try:
+        meta = json.loads(raw)
+    except ValueError as exc:
+        return None, (EXIT_META_DRIFT, f"快照元数据无法解析：{exc}")
+    if not isinstance(meta, dict):
+        return None, (EXIT_META_DRIFT, (
+            "快照元数据顶层不是对象：期望 JSON object，实际是 "
+            f"{type(meta).__name__}。这不是判据算术失败，也不是不合格——"
+            "重导一次即可修复：python scripts/export_run_samples.py "
+            "--dest tests/fixtures/live_snapshot --limit 2"))
+    return meta, None
+
+
 def recompute_totals(workflows_dir: Path) -> tuple[int, int]:
     """从快照内容复算 (attempts, failed)——与闸门脚本同一口径。"""
     attempts = failed = 0
@@ -264,13 +321,9 @@ def evaluate(data_dir: Path, ceiling: float | None = None,
     且 95% 区间下界仍在阈值之上，才判回归。``None`` 表示不判回归，说明里同样
     写明这一层没有判定——「没给开关」与「判了通过」是两件事。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir)
+    if error is not None:
+        return error
 
     recorded = meta.get("totals") or {}
     rec_attempts = int(recorded.get("attempts") or 0)
@@ -387,13 +440,9 @@ def check_stale(data_dir: Path, source_dir: Path,
     真实数据全无可用时间戳（3）。过期是 5，与超阈（1）分开——「判了且不合格」
     与「样本过期了」需要不同处置。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判新鲜度：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir, "无法判新鲜度")
+    if error is not None:
+        return error
 
     exported = _parse_ts(meta.get("exported_at"))
     if exported is None:
@@ -450,9 +499,11 @@ def check_coverage(data_dir: Path, source_dir: Path) -> tuple[int, str]:
     只判「真实有、快照没有」。反方向（快照里有、真实已删）不报：删掉的工作流
     留在快照里只是冗余样本，不影响判据的代表性。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判覆盖度：{meta_path}"
+    # 覆盖度不读元数据的内容，但**读不开的元数据**同样意味着快照坏了：与其余
+    # 七处同一个门，不因为「这里只需要一个存在信号」就退回 is_file() 的 3。
+    _meta, error = _load_snapshot_meta(data_dir, "无法判覆盖度")
+    if error is not None:
+        return error
 
     snapshot_names = _workflow_names_with_runs(data_dir / "workflows")
     if not snapshot_names:
@@ -680,13 +731,9 @@ def check_sample_size(data_dir: Path, margin: float) -> tuple[int, str]:
     - 7 是「样本进来了但太薄，失败率估计不可靠」，处置是调 ``--limit`` 重导
      更多 run。三者混在一起会让人对着一个只差精度的快照去查供应商。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判样本量：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir, "无法判样本量")
+    if error is not None:
+        return error
 
     recorded = meta.get("totals") or {}
     attempts = int(recorded.get("attempts") or 0)
@@ -852,13 +899,9 @@ def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     真要按 workflow 判失败率，得先让闸门本身改成 per-workflow 基线，那是另一
     次改动（HANDOVER_ROUND53 §12-3 明确列为候选而非本轮范围）。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判 per-workflow 样本量：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir, "无法判 per-workflow 样本量")
+    if error is not None:
+        return error
 
     recorded = meta.get("per_workflow") or {}
     if not isinstance(recorded, dict) or not recorded:
@@ -1291,13 +1334,9 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
     2. 无样本 → 3；
     3. 有 workflow 判 ``exceeds`` 且给了 ``--fail-on-exceeds`` → 1。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判 per-workflow 失败率：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir, "无法判 per-workflow 失败率")
+    if error is not None:
+        return error
 
     recorded = meta.get("per_workflow") or {}
     if not isinstance(recorded, dict) or not recorded:
@@ -1475,13 +1514,9 @@ def check_per_workflow_regression(data_dir: Path,
     能红的路径只有一条：某个 ``eligible`` 的 workflow 判 ``exceeds`` → 1。
     其余（无样本 3 / 元数据漂移 4）与其它判据同一套退出码。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法判逐 workflow 回归：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir, "无法判逐 workflow 回归")
+    if error is not None:
+        return error
 
     recorded = meta.get("per_workflow") or {}
     if not isinstance(recorded, dict) or not recorded:
@@ -1720,13 +1755,9 @@ def check_lead_time(data_dir: Path, precision_margin: float,
     不表示提前量够大、也不表示判据健康。无样本（3）与元数据漂移（4）沿用闸门
     自己的码——它们描述「算不了」，与「算出来是不合格」是两件事。
     """
-    meta_path = data_dir / "snapshot-meta.json"
-    if not meta_path.is_file():
-        return EXIT_NO_SAMPLE, f"快照元数据缺失，无法复算提前量：{meta_path}"
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return EXIT_META_DRIFT, f"快照元数据无法解析：{exc}"
+    meta, error = _load_snapshot_meta(data_dir, "无法复算提前量")
+    if error is not None:
+        return error
 
     actual = recompute_per_workflow(data_dir / "workflows")
     if not actual:
