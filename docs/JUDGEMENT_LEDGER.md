@@ -158,6 +158,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | `totals.runs` 的形状规则（R83） | `tests/test_live_snapshot_gate.py::test_malformed_totals_is_drift_not_a_verdict`（runs 的 `true`/浮点/字符串/负数四格） |
 | 展示字段不参与判决（两处 `failure_rate`，R84） | `tests/test_live_snapshot_gate.py::test_failure_rate_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
 | 展示字段不参与判决（顶层 `source_root`，R86） | `tests/test_live_snapshot_gate.py::test_source_root_is_display_only`、`test_display_only_registry_is_structurally_excluded` |
+| n≥29 全失败样本（R87） | `tests/test_live_snapshot_gate.py::test_n29_all_failed_sample_passes_the_margin`、`test_n28_all_failed_sample_is_the_flip_point`、`test_manufactured_all_failed_fixture_is_a_real_export`、`test_manufactured_fixtures_differ_by_exactly_one_run` |
 | p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
@@ -611,6 +612,27 @@ R84 §9-1 发现：导出脚本在顶层 meta 写 `source_root = workflows_dir.n
 **守卫按位置分开写**：它只有一个副本、在顶层 meta，不是 `totals` / `per_workflow` 的副本。`test_source_root_is_display_only` 参数化六个读计数入口 × 六种值（`"abc"` / `true` / `3.7` / `0.99` / `null` / 整个删掉），断言 `(退出码, 文案)` 逐字不变——只比退出码抓不到「读了但只用在文案里」的入口。`test_display_only_registry_is_structurally_excluded` 的期望集合同步为两项，并继续钉住登记清单与两张计数表无交集。
 
 **变异验证（两次）**：M1 从登记清单删掉 `source_root` → 结构用例 **1 red**；M2 让 `check_sample_size` 在 detail 里带上 `meta["source_root"]` → 六入口守卫 **6 red**（该入口 × 六种值），其余 30 条通过。`cp` 还原后 gate md5 逐字节相同（`5e0a070e…`）。
+
+### 7.13 n≥29 全失败样本：主动制造（R87）
+
+R84 §3.3 的结论是「n≥29 的自然全失败样本不存在」，并把它记为数据事实。用户在 R85 拍定改判为「主动制造」。本条记录制造方式、边界与两份 fixture。
+
+**制造方式（真实执行，不是手写 JSON）**：复用 `scripts/e2e_workflow_stub.py` 的桩 provider + `Runtime` 装配，把 `DETERMINFLOW_DATA_DIR` 指到隔离目录（`F:\DeterminFlow x2\_r87_sample_data`，仓库 `data/` 只读），建一个首节点带 `[stub:fail]` 的工作流，真跑 **29 次**。每次 run 都由真实编排落一份 `run-*.json`：`status=failed`、节点 `error=stub induced failure`、`attempt_count=1`、无自动重试。桩 provider 是 e2e 已在用的那个（协议真实、不依赖供应商凭据）。
+
+**为什么 n=29 是关键**：全失败时 Clopper-Pearson 单侧界到 100% 的距离是闭式 `1 - 0.05**(1/n)`。n=29 → **9.81pp < 10**（margin 10 下合格）；n=28 → **10.15pp > 10**（太薄）。所以 29 是这条判据在这个 margin 下的**最小合格样本量**，28 与 29 之间就是翻转点。
+
+**两份 fixture**（同一批真实 run，只差一个）：
+
+| fixture | 计数 | `--check-sample-size`（margin 10） | `evaluate --fail-if-above 8` | `--check-coverage` |
+|---|---|---|---|---|
+| `live_snapshot_all_failed_29` | 29 / 29 / 100% | **0**（9.81pp ≤ 10） | **1**（区间 [90.19%, 100.00%]） | 6（单 workflow，设计内） |
+| `live_snapshot_all_failed_28` | 28 / 28 / 100% | **7**（10.15pp > 10，「约 29 次尝试」） | **1**（区间 [89.85%, 100.00%]） | 6（同上） |
+
+**守卫**：`test_manufactured_all_failed_fixture_is_a_real_export` 两份都查「每个 run `status=failed`、计数与 meta 自洽」；`test_n29_all_failed_sample_passes_the_margin` 与 `test_n28_all_failed_sample_is_the_flip_point` 钉住翻转；`test_manufactured_fixtures_differ_by_exactly_one_run` 钉住「差异只能是一个 run」——否则翻转就不是样本量造成的；`test_n29_all_failed_snapshot_still_exceeds_the_policy_ceiling` 钉住「样本量合格 ≠ 政策合格」。两条既有 fixture 扫描（载荷 / 裁剪恒等）按目录自动发现，各多 2 个参数，无需改扫描逻辑。
+
+**变异验证（两次）**：M1 把全失败闭式改成返回常量 `9.0` → 两条边界用例 **2 red**；M2 从 29 fixture 移走一个 run 文件（不改 meta）→ 真实性用例与 n29 样本量用例 **2 red**，还原后计数 29。
+
+**边界（如实）**：fixture 只有 1 个 workflow，`--check-coverage` 退 6 是设计内；样本是按桩协议诱导的真实失败，不代表真实供应商的失败分布——它验证的是**样本量判据的边界算术**，不是供应商质量。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
