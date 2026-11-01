@@ -106,4 +106,18 @@
 
 ## 9. 提交、推送与 CI 核对
 
-（待补记）
+- 提交 `aebc5aa`（feat：登记清单 + 36 条用例）与 `bc6d26c`（docs：台账 §7.12 +
+  PROJECT_INFO 条目 + 本文 + R85 补记），推送 `f7939a6..bc6d26c`。
+- CI run **41295140183**（push，09:54:41 → 09:59:45，约 5m4s）五个 job 全 `success`：
+
+| 项 | 实证 |
+|---|---|
+| 五个 job | backend（09:54:44–09:57:07）/ windows-backend（09:54:44–09:59:45）/ frontend（09:54:44–09:55:52）/ container-config / container-build 全部 `success` |
+| ubuntu | `2485 passed, 65 skipped, 1 warning in 100.08s` = **2550** |
+| windows | `2521 passed, 29 skipped, 1 warning in 239.34s` = **2550** |
+| 与 R84 相比 | ubuntu 2449/65 → **2485/65**、windows 2485/29 → **2521/29**（各 **+36**，与本轮新增用例数一致） |
+| 新行为在 CI 真跑 | 第 6 步 pytest 覆盖了 R86 的 36 条新用例（六入口 × 六值） |
+| e2e / 前端 / 容器 | `[e2e] 10/10 场景通过`、`[e2e-metrics] total=10 passed=10 failed=0 retried=0`；frontend / container-config / container-build 均 `success` |
+
+**推送通道**：本轮第一次 push（R85 补记 `f7939a6`）直连失败、改 socks5h 成功；
+R86 两次提交的 push 直连一次成功——再次印证「同轮内通道会变，每轮先探路」。
