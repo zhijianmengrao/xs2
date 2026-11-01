@@ -249,6 +249,16 @@ CI run **41291789133**（push，09:08:26 → 09:12:40，约 4m14s）五 job 全 
 （`updated_at` 冻结在 09:08:27，五个 job 都已 `success`），与 R83 观察到的聚合滞后同一
 现象——本报告以 job 结论为准。
 
+补记提交 `f967b0b`（纯文档）的 run **41292388208**（09:16:13 启动）五个 job 全部
+`completed / success`：ubuntu **2449/65**（109.88s）、windows **2485/29**（241.33s）、
+前端 TAP 求和 490 / 0，与上一个 run 逐项相同。
+
+**推送通道变化（如实记录）**：本轮第一次 push（`5dc011a`）直连一次成功；补记提交时
+直连两次失败（`Recv failure: Connection was reset` / `Could not connect to server`，
+`github.com` 解析到 `20.205.243.166`），`curl --socks5 127.0.0.1:10808` 探测返回 200，
+改用 `git -c http.proxy=socks5h://127.0.0.1:10808` 一次成功——与 R58/R60/R61 的
+「每轮先探路、不照抄上一轮通道」同一条纪律。
+
 ## 11. 本轮的三条教训
 
 1. **「登记」只有做成可执行的清单才不是又一句没人读的话**：`_DISPLAY_ONLY_FIELDS`
