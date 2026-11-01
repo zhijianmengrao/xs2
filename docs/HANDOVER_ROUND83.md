@@ -183,3 +183,11 @@ CI run **41286127641**（push，07:46:39 → 07:52:01，约 5m22s）五 job 全 
 
 `$GITHUB_STEP_SUMMARY` 正文 API 不提供（与 R74 §7-2 / R80 §9 同一条限制）；CI 上能
 核到的是「这一批步骤都以 0 退出」。
+
+补记提交 `50d2e09`（纯文档）的 run **41286776250**（07:56:40 启动）五个 job 全部
+`completed / success`：ubuntu **2369/65**（75.72s）、windows **2405/29**
+（218.81s）、前端 TAP 求和 490 / 0，与上一个 run 逐项相同。**如实记录一个平台
+异常**：run 级 `status` 在 API 上一直停在 `in_progress`（`updated_at` 冻结在
+07:56:51，windows job 09:01:31 完成后仍未翻转），但五个 job 的 `conclusion`
+全部是 `success`——本报告以 job 结论为准；这是 GitHub 的聚合状态滞后，不是本轮
+代码问题。
