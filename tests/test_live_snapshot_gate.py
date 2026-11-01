@@ -1843,25 +1843,32 @@ def test_snapshot_rounds_append_the_current_round_only_once(tmp_path: Path) -> N
     meta = {"history": [{"per_workflow": {"a": {"attempts": 10, "failed": 0}}}]}
     rounds, invalid = live_gate.snapshot_rounds(meta, current)
     assert len(rounds) == 1, "当前这一轮被数了两次"
-    assert invalid == 0
+    assert invalid == []
 
     meta["history"][0]["per_workflow"]["a"]["failed"] = 1
     rounds, invalid = live_gate.snapshot_rounds(meta, current)
     assert rounds[-1] == {"a": (10, 0)}, "当前内容没有补成新的一轮"
     assert len(rounds) == 2
-    assert invalid == 0
+    assert invalid == []
 
     rounds, invalid = live_gate.snapshot_rounds({"history": []}, current)
-    assert rounds == [{"a": (10, 0)}] and invalid == 0
+    assert rounds == [{"a": (10, 0)}] and invalid == []
 
 
 def test_malformed_history_entries_are_skipped_not_guessed() -> None:
-    """形状无效的历史条目跳过并计数，不猜一个 0 也不炸掉整条判据。"""
+    """形状无效的历史条目跳过并**逐条**记录原因（R80：只报告，不进退出码）。
+
+    计数已不够用：读日志的人需要知道该修哪一条。``第 N 条`` 用的是 1 起的
+    下标，与 ``history`` 数组的位置一一对应。
+    """
     current = {"a": {"attempts": 10, "failed": 0}}
     meta = {"history": [{"per_workflow": "not-a-dict"}, {}, "junk"]}
     rounds, invalid = live_gate.snapshot_rounds(meta, current)
     assert rounds == [{"a": (10, 0)}]
-    assert invalid == 3
+    assert len(invalid) == 3
+    assert invalid[0] == "第 1 条：per_workflow 期望对象，实际是 str"
+    assert invalid[1] == "第 2 条：缺 per_workflow 块"
+    assert invalid[2] == "第 3 条：期望对象，实际是 str"
 
 
 def test_undetermined_streak_counts_the_current_round_and_stops_at_a_verdict() -> None:
@@ -2799,7 +2806,7 @@ def _committed_two_rounds():
         (SNAPSHOT_ROOT / "snapshot-meta.json").read_text(encoding="utf-8"))
     current = live_gate.recompute_per_workflow(SNAPSHOT_ROOT / "workflows")
     rounds, invalid = live_gate.snapshot_rounds(meta, current)
-    assert invalid == 0, "入库快照的 history 形状失效，提前量无法复算"
+    assert invalid == [], "入库快照的 history 形状失效，提前量无法复算"
     assert len(rounds) == 2, f"期望两轮历史，实际 {len(rounds)} 轮"
     return rounds[-2], rounds[-1]
 
@@ -2938,3 +2945,217 @@ def test_ci_calibration_step_uses_the_same_margins_as_the_judged_gates() -> None
     assert "--regression-margin 3" in run, "合并层的增量必须与判据同为 3"
     # 与两个真判据的对应关系：合并层回归步骤用的是同一个 3。
     assert "--regression-margin 3" in str(_regression_step("backend")["run"])
+
+
+# ------------------------- 畸形 totals 与逐条历史报告（R80）
+# totals 与 history 是同一条纪律的两块：读得开、形状不对要分开处置（R75 的
+# per_workflow 是前一块）。R80 把 totality 收进同一个计数校验器，并让 history
+# 的跳过从「一个计数」变成「逐条原因」——**仍然只报告，不进退出码**。
+def _write_totals_snapshot(root: Path, totals) -> None:
+    """造一份内容正常、只有 ``totals`` 块形状坏掉的快照。"""
+    _write_snapshot_with_totals(root, attempts=20, failed=2)
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["totals"] = totals
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+@pytest.mark.parametrize("totals", [
+    "junk",
+    [1, 2],
+    {"attempts": "abc", "failed": 0},
+    {"attempts": 20, "failed": True},
+    {"attempts": 20, "failed": -1},
+    {"attempts": 20.5, "failed": 0},
+    {"attempts": 20, "failed": None},
+])
+def test_malformed_totals_is_drift_not_a_verdict(
+        tmp_path: Path, totals) -> None:
+    """``totals`` 形状无效 → 4：旧写法在三种冒充之间摇摆。
+
+    - ``{"attempts": "abc"}`` → ``int()`` 抛 ``ValueError`` → 归成 **8**（判据
+      算术失败），处置被指向「修判据」；
+    - truthy 非对象（``"junk"``）→ ``AttributeError`` → 进程以 **1** 退出，
+      与「判了且不合格」同码；
+    - ``{"failed": true}`` → ``int(True)`` 是 1，**没有异常**，坏数据被静默当成
+      一次真实失败；``20.5`` 同样被静默截断成 20。
+
+    三种的真正处置都是重导快照，所以统一归 4。两条读 totals 的判据必须同时改。
+    """
+    _write_totals_snapshot(tmp_path, totals)
+    for judge in (lambda root: live_gate.evaluate(root, ceiling=8.0),
+                  lambda root: live_gate.check_sample_size(root, 10.0)):
+        code, message = judge(tmp_path)
+        assert code == live_gate.EXIT_META_DRIFT, message
+        assert "totals 元数据形状无效" in message, message
+        assert "期望" in message, message
+
+
+@pytest.mark.parametrize("totals", [None, {}, []])
+def test_empty_totals_is_still_no_sample_not_drift(
+        tmp_path: Path, totals) -> None:
+    """空值（``null`` / ``{}`` / ``[]``）仍是 3：没有可被冒充的计数。
+
+    与 ``per_workflow`` 的缺失口径一致，也保住本机「还没导过快照」的正常状态
+    ——把它抬成 4 是向错方向的假红。
+    """
+    _write_totals_snapshot(tmp_path, totals)
+    code, message = live_gate.evaluate(tmp_path, ceiling=8.0)
+    assert code == live_gate.EXIT_NO_SAMPLE, message
+
+
+@pytest.mark.parametrize("flags", [[], ["--check-sample-size"]])
+def test_malformed_totals_exits_four_from_the_cli(
+        monkeypatch, tmp_path: Path, flags: list) -> None:
+    """外部退出码：默认判定与 ``--check-sample-size`` 都必须以 4 退出（不是 1/8）。"""
+    import sys
+
+    _write_totals_snapshot(tmp_path, {"attempts": "abc", "failed": 0})
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", *flags, "--data-dir", str(tmp_path)])
+    assert live_gate.main() == live_gate.EXIT_META_DRIFT
+
+
+_PER_WORKFLOW_JUDGES = [
+    ("check_per_workflow",
+     lambda root: live_gate.check_per_workflow(root, 10.0)),
+    ("check_per_workflow_rate",
+     lambda root: live_gate.check_per_workflow_rate(root, 10.0)),
+    ("check_per_workflow_regression",
+     lambda root: live_gate.check_per_workflow_regression(root, 10.0)),
+    ("check_lead_time",
+     lambda root: live_gate.check_lead_time(root, 10.0, 10.0, 3.0)),
+]
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _PER_WORKFLOW_JUDGES],
+                         ids=[n for n, _ in _PER_WORKFLOW_JUDGES])
+def test_non_object_per_workflow_block_is_drift_not_no_sample(
+        tmp_path: Path, judge) -> None:
+    """``per_workflow: "junk"`` → 4（旧写法：三条判据 3、校准处 1）。
+
+    R80 顺带的统一：容器形状与字段形状走同一个 ``_count_block``。三条判据的
+    「缺块 → 3」只在**空值**上成立——非空非对象没有资格冒充「没有样本」。
+    """
+    _rate_snapshot(tmp_path, {"wf-a": (10, 1)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["per_workflow"] = "junk"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_META_DRIFT, message
+    assert "per-workflow 元数据形状无效" in message, message
+    assert "期望对象，实际是 str" in message, message
+
+
+@pytest.mark.parametrize("entry", [
+    {"per_workflow": {"a": {"attempts": 10, "failed": True}}},
+    {"per_workflow": {"a": {"attempts": 10, "failed": "abc"}}},
+    {"per_workflow": {"a": {"attempts": -1, "failed": 0}}},
+    {"per_workflow": {"a": {"attempts": 1.5, "failed": 0}}},
+])
+def test_history_entry_counts_use_the_same_shape_rules(entry) -> None:
+    """history 与 per_workflow/totals 共用计数规则：``true`` 不是 1，``1.5`` 不截断。"""
+    rounds, invalid = live_gate.snapshot_rounds(
+        {"history": [entry]}, {"a": {"attempts": 10, "failed": 0}})
+    assert rounds == [{"a": (10, 0)}]
+    assert len(invalid) == 1
+    assert invalid[0].startswith("第 1 条：")
+    assert "期望非负整数" in invalid[0]
+
+
+def _history_snapshot_with_malformed_entries(root: Path) -> None:
+    """两轮健康历史，中间插两条形状无效的条目。
+
+    ``history`` 的最后一轮与当前内容相同，所以当前轮不会被再补一次；坏条目
+    只影响「连续轮数」与「基线是否紧邻」这两句说明。
+    """
+    spec = {"good-a": (40, 0), "good-b": (40, 0)}
+    _write_per_workflow_snapshot(root, spec)
+    meta_path = root / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    healthy = {"per_workflow": {name: {"attempts": attempts, "failed": failed}
+                                for name, (attempts, failed) in spec.items()}}
+    meta["history"] = [healthy, "junk", {"per_workflow": {}}, healthy]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+_HISTORY_JUDGES = [
+    ("evaluate", lambda root: live_gate.evaluate(
+        root, ceiling=8.0, regression_margin=live_gate.REGRESSION_MARGIN)),
+    ("check_per_workflow_rate",
+     lambda root: live_gate.check_per_workflow_rate(root, 10.0)),
+    ("check_per_workflow_regression",
+     lambda root: live_gate.check_per_workflow_regression(root, 10.0)),
+    ("check_lead_time",
+     lambda root: live_gate.check_lead_time(root, 10.0, 10.0, 3.0)),
+]
+
+_MALFORMED_HISTORY_NOTE = (
+    "另有 2 条历史形状无效已跳过"
+    "（第 2 条：期望对象，实际是 str；第 3 条：per_workflow 为空）")
+
+
+@pytest.mark.parametrize("judge", [j for _, j in _HISTORY_JUDGES],
+                         ids=[n for n, _ in _HISTORY_JUDGES])
+def test_four_history_readers_report_the_same_note(
+        tmp_path: Path, judge) -> None:
+    """四处读 history 的判据必须逐字给出同一句，且退出码不受影响。
+
+    「只报告」的前提是可读：跳过几条、为什么跳过，必须在输出里。四处各写一份
+    文案就是 R79 修掉的那种分裂（同一个事实两种说法），所以共用
+    ``_invalid_history_note``——这条用例钉的是「共用的结果」而不是实现方式。
+    """
+    _history_snapshot_with_malformed_entries(tmp_path)
+    code, message = judge(tmp_path)
+    assert code == live_gate.EXIT_OK, message
+    assert _MALFORMED_HISTORY_NOTE in message, message
+
+
+def test_malformed_history_does_not_change_the_regression_verdict(
+        tmp_path: Path) -> None:
+    """坏历史只改说明，不改判决：同一份「判回归」快照加两条坏条目仍退出 1。"""
+    _rate_snapshot(tmp_path, {"a": (40, 40)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    healthy = {"per_workflow": {"a": {"attempts": 40, "failed": 0}}}
+    meta["history"] = [healthy]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    baseline_code, _ = live_gate.check_per_workflow_regression(
+        tmp_path, margin=10.0)
+    meta["history"] = [healthy, "junk"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow_regression(
+        tmp_path, margin=10.0)
+    assert code == baseline_code == live_gate.EXIT_GATE_TRIGGERED, message
+    assert "1 条历史形状无效已跳过" in message, message
+
+
+def test_non_list_history_block_is_reported_not_silently_ignored(
+        tmp_path: Path) -> None:
+    """``history: "junk"`` 只报告：旧写法静默当作「没有历史」，读日志看不出来。"""
+    _rate_snapshot(tmp_path, {"a": (40, 0), "b": (40, 0)})
+    meta_path = tmp_path / "snapshot-meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["history"] = "junk"
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    code, message = live_gate.check_per_workflow_rate(tmp_path, margin=10.0)
+    assert code == live_gate.EXIT_OK, message
+    assert "history 期望数组，实际是 str" in message, message
+
+
+def test_count_shape_rules_are_written_once() -> None:
+    """计数规则只有一份（``_count_value_error``）：将来新增的第四处不许手抄。
+
+    三处各写一遍「能转成非负整数」迟早分裂——R75 的 per_workflow、R80 的
+    totals 与 history 已经用同一个校验器；这条守住下一次复制粘贴。
+    """
+    import inspect
+
+    source = Path(live_gate.__file__).read_text(encoding="utf-8")
+    assert source.count("def _count_value_error(") == 1
+    for name in ("_per_workflow_shape_error", "_totals_shape_error",
+                 "_history_entry_error"):
+        assert "_count_value_error(" in inspect.getsource(
+            getattr(live_gate, name)), f"{name} 没有走共用计数校验器"
+

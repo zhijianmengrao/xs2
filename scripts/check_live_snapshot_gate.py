@@ -325,7 +325,15 @@ def evaluate(data_dir: Path, ceiling: float | None = None,
     if error is not None:
         return error
 
-    recorded = meta.get("totals") or {}
+    # R80：先校验形状再读数字。``{"attempts": "abc"}`` 旧写法在 ``int()`` 处抛
+    # ``ValueError``、被归成 8（判据算术失败）；``{"failed": true}`` 更糟——静默
+    # 当成一次失败。两者都不是判决，处置是重导。
+    recorded, block_error = _count_block(meta, "totals")
+    if block_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(block_error, "totals")
+    totals_error = _totals_shape_error(recorded)
+    if totals_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(totals_error, "totals")
     rec_attempts = int(recorded.get("attempts") or 0)
     rec_failed = int(recorded.get("failed") or 0)
     if rec_attempts <= 0:
@@ -368,8 +376,8 @@ def evaluate(data_dir: Path, ceiling: float | None = None,
                     "回归判据不会先于政策上限触发")
         if invalid_history:
             reg_detail += (
-                f"（另有 {invalid_history} 条历史形状无效已跳过，"
-                "基线可能不是紧邻的一轮）")
+                f"。{_invalid_history_note(invalid_history)}"
+                "，基线可能不是紧邻的一轮")
         parts.append(f"[历史基线回归] {reg_detail}")
     else:
         parts.append(
@@ -735,7 +743,14 @@ def check_sample_size(data_dir: Path, margin: float) -> tuple[int, str]:
     if error is not None:
         return error
 
-    recorded = meta.get("totals") or {}
+    # 与 ``evaluate`` 同一个块校验（R80）：坏的 totals 不许冒充 8 或静默当成
+    # 一次失败，统一归 4（重导）。
+    recorded, block_error = _count_block(meta, "totals")
+    if block_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(block_error, "totals")
+    totals_error = _totals_shape_error(recorded)
+    if totals_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(totals_error, "totals")
     attempts = int(recorded.get("attempts") or 0)
     failed = int(recorded.get("failed") or 0)
     if attempts <= 0:
@@ -830,6 +845,36 @@ def _drift_message(drifts: list[str]) -> str:
 
 
 _PER_WORKFLOW_COUNT_FIELDS = ("runs", "attempts", "failed")
+# ``totals`` 的计数字段。``runs`` 不在其中：导出脚本写它，但两条读 totals 的
+# 判据（``evaluate`` / ``check_sample_size``）只信 attempts/failed——多校验一个
+# 没人用的字段，等于给重导加一个不必要的失败点。
+_TOTALS_COUNT_FIELDS = ("attempts", "failed")
+
+
+def _count_value_error(label: str, value: object) -> str | None:
+    """单个计数字段的形状校验；合法时 ``None``（R75 / R80 共用）。
+
+    ``label`` 只用于文案（``"wf-a.failed"`` / ``"totals.attempts"``），规则本身
+    不认识字段名。三条规则：
+
+    - 接受非负整数与可转成整数的字符串（导出脚本写整数，手改的 ``"1"`` 仍可
+      解释）；
+    - 不接受布尔值——``int(True)`` 是 1，但 ``true`` 不是计数；
+    - 不接受浮点与其它类型——``int(1.5)`` 会静默截断成 1，那是猜一个数。
+
+    为什么抽成一份（R80）：per_workflow、totals、history 三处各写一遍「能转成
+    非负整数」，迟早出现「元数据里 ``true`` 不算数、历史里算 1」的分裂，而
+    分裂的判据比坏数据更难发现。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return f"{label}: 期望非负整数，实际是 {value!r}"
+    try:
+        number = int(value)
+    except ValueError:
+        return f"{label}: 期望非负整数，实际是 {value!r}"
+    if number < 0:
+        return f"{label}: 期望非负整数，实际是 {value!r}"
+    return None
 
 
 def _per_workflow_shape_error(recorded: dict) -> str | None:
@@ -852,22 +897,68 @@ def _per_workflow_shape_error(recorded: dict) -> str | None:
         if not isinstance(bucket, dict):
             return f"{name}: 期望对象，实际是 {type(bucket).__name__}"
         for field in _PER_WORKFLOW_COUNT_FIELDS:
-            value = bucket.get(field, 0)
-            if isinstance(value, bool) or not isinstance(value, (int, str)):
-                return f"{name}.{field}: 期望非负整数，实际是 {value!r}"
-            try:
-                number = int(value)
-            except ValueError:
-                return f"{name}.{field}: 期望非负整数，实际是 {value!r}"
-            if number < 0:
-                return f"{name}.{field}: 期望非负整数，实际是 {value!r}"
+            error = _count_value_error(
+                f"{name}.{field}", bucket.get(field, 0))
+            if error:
+                return error
     return None
 
 
-def _metadata_shape_message(error: str) -> str:
-    """形状错误 → 退出码 4 的统一说明（与漂移同一处置：重导）。"""
+def _totals_shape_error(recorded: dict) -> str | None:
+    """``totals`` 块的形状校验；返回第一条问题，合法时 ``None``（R80）。
+
+    为什么需要：``evaluate`` 与 ``check_sample_size`` 都用
+    ``int(recorded.get("attempts") or 0)`` 读这两个数。手改坏的快照会让它们
+    以两种方式冒充结论：
+
+    - ``{"attempts": "abc"}`` → ``int()`` 抛 ``ValueError``，被 ``_run_judgement``
+      归成 **8**（判据算术失败），处置被指向「修判据」；
+    - ``{"failed": true}`` → ``int(True)`` 是 1，坏数据被**静默**当成一次失败，
+      判决照常给出，日志里没有任何异常。
+
+    两者的真正处置都是重导快照，所以与 ``per_workflow`` 同族、同样分流到 4。
+    浮点同罪：``int(10.5)`` 静默截断成 10。
+    """
+    for field in _TOTALS_COUNT_FIELDS:
+        # 字段名不带 ``totals.`` 前缀：块名由 ``_metadata_shape_message`` 的
+        # ``section`` 给出，两处都写会得到「totals … totals.failed」的叠词。
+        error = _count_value_error(field, recorded.get(field, 0))
+        if error:
+            return error
+    return None
+
+
+def _count_block(meta: dict, key: str) -> tuple[dict | None, str | None]:
+    """取一个计数块（``totals`` / ``per_workflow``）：``(块, 形状错误)``。
+
+    「没有这一块」与「这一块形状不对」是两件事（R80）：
+
+    - 缺失 / ``null`` / 空对象 / 空数组 → ``({}, None)``。调用方照旧给退出码 3
+      （没有样本，处置是导出一份或用 ``--limit`` 重导）。空数组与空对象一样
+      当作「没有」：它们不含任何计数，没有一句可被冒充的话。
+    - 非空但不是对象 → ``(None, 原因)``。旧写法用 ``meta.get(key) or {}`` 把
+      truthy 的 ``"junk"`` 原样传给调用方：``per_workflow`` 三处走到
+      ``not isinstance(...)`` 归成 3（「缺块」），``totals`` 两处则在 ``.get``
+      上抛 ``AttributeError``、进程以 **1** 退出。两者都是「读得开、形状不对」
+      冒充「没有样本」或「判了不合格」。
+    """
+    raw = meta.get(key)
+    if not raw:
+        return {}, None
+    if not isinstance(raw, dict):
+        # 块名同样交给调用方的 ``section``，不在这里写第二遍。
+        return None, f"期望对象，实际是 {type(raw).__name__}"
+    return raw, None
+
+
+def _metadata_shape_message(error: str, section: str = "per-workflow") -> str:
+    """形状错误 → 退出码 4 的统一说明（与漂移同一处置：重导）。
+
+    ``section`` 默认 ``"per-workflow"``：既有三处判据的文案逐字不变（R75 起的
+    用例钉着它）；``totals`` 走同一句话，只换块名——两块的处置都是重导。
+    """
     return (
-        f"per-workflow 元数据形状无效：{error}。这不是判据算术失败，也不是"
+        f"{section} 元数据形状无效：{error}。这不是判据算术失败，也不是"
         "不合格——重导一次即可修复：python scripts/export_run_samples.py "
         "--dest tests/fixtures/live_snapshot --limit 2")
 
@@ -903,8 +994,10 @@ def check_per_workflow(data_dir: Path, margin: float) -> tuple[int, str]:
     if error is not None:
         return error
 
-    recorded = meta.get("per_workflow") or {}
-    if not isinstance(recorded, dict) or not recorded:
+    recorded, block_error = _count_block(meta, "per_workflow")
+    if block_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+    if not recorded:
         return EXIT_NO_SAMPLE, (
             "快照元数据缺 per_workflow 块，无法判 per-workflow 样本量。"
             "重导一次即可补上：python scripts/export_run_samples.py "
@@ -1122,57 +1215,103 @@ def _counts_of(buckets: dict[str, dict]) -> dict[str, tuple[int, int]]:
             for name, bucket in buckets.items()}
 
 
+def _history_entry_error(entry: object) -> str | None:
+    """一条历史记录的形状问题；合法时 ``None``（R80）。
+
+    为什么逐条给原因、而不是只数个数：``history`` 是入库文件，跳过一条会让
+    「连续几轮判不了」与「基线取自上一轮」两个结论都悄悄变松。只说「跳过了
+    1 条」，读日志的人无法判断该修哪一条；「第 N 条 + 原因」才是可行动的。
+
+    与 ``_per_workflow_shape_error`` 共用 ``_count_value_error``：同一个计数
+    口径在两处各写一份，迟早出现「元数据里 ``true`` 不算数、历史里算 1」的
+    分裂，而分裂的判据比坏数据更难发现。
+    """
+    if not isinstance(entry, dict):
+        return f"期望对象，实际是 {type(entry).__name__}"
+    per_workflow = entry.get("per_workflow")
+    if per_workflow is None:
+        return "缺 per_workflow 块"
+    if not isinstance(per_workflow, dict):
+        return f"per_workflow 期望对象，实际是 {type(per_workflow).__name__}"
+    if not per_workflow:
+        return "per_workflow 为空"
+    for name in sorted(per_workflow):
+        bucket = per_workflow[name]
+        if not isinstance(bucket, dict):
+            return f"{name}: 期望对象，实际是 {type(bucket).__name__}"
+        for field in ("attempts", "failed"):
+            error = _count_value_error(
+                f"{name}.{field}", bucket.get(field, 0))
+            if error:
+                return error
+    return None
+
+
 def _history_entry_counts(entry: object) -> dict[str, tuple[int, int]] | None:
     """一条历史记录 → ``{workflow: (attempts, failed)}``；形状无效给 ``None``。
 
     历史块是导出脚本写的，但它是入库文件、可能被人手改。形状不对时返回 ``None``
-    而不是抛异常或猜一个 0：连续轮数会被低估，报告里会写明跳过了几条——低估
-    比编造一个「看起来连续」的序列诚实。
+    而不是抛异常或猜一个 0：连续轮数会被低估，报告里会写明跳过了哪几条——低估
+    比编造一个「看起来连续」的序列诚实。判定规则只有一份，在
+    ``_history_entry_error`` 里。
     """
-    if not isinstance(entry, dict):
+    if _history_entry_error(entry) is not None:
         return None
-    per_workflow = entry.get("per_workflow")
-    if not isinstance(per_workflow, dict) or not per_workflow:
-        return None
-    counts: dict[str, tuple[int, int]] = {}
-    for name, bucket in per_workflow.items():
-        if not isinstance(bucket, dict):
-            return None
-        try:
-            counts[str(name)] = (int(bucket.get("attempts") or 0),
-                                 int(bucket.get("failed") or 0))
-        except (TypeError, ValueError):
-            return None
-    return counts
+    per_workflow = entry["per_workflow"]
+    return {str(name): (int(bucket.get("attempts") or 0),
+                        int(bucket.get("failed") or 0))
+            for name, bucket in per_workflow.items()}
+
+
+def _invalid_history_note(details: list[str]) -> str:
+    """畸形历史条目 → 四处判据共用的那一句（R80）。
+
+    **只报告，不进退出码**（用户拍定）：被跳过的是**过去**的轮次，当前判决
+    不因此改变；但没有这句话，「跳过」本身就是一次无人知道的改判——连续轮数
+    被低估、基线可能不是紧邻的一轮。
+
+    四处（``evaluate`` 的回归层、``check_per_workflow_rate``、
+    ``check_per_workflow_regression``、``check_lead_time``）共用这一个格式器，
+    文案一致由构造保证，而不是靠四处手抄。
+    """
+    return (f"另有 {len(details)} 条历史形状无效已跳过"
+            f"（{'；'.join(details)}）")
 
 
 def snapshot_rounds(meta: dict, current: dict[str, dict]
-                    ) -> tuple[list[dict[str, tuple[int, int]]], int]:
+                    ) -> tuple[list[dict[str, tuple[int, int]]], list[str]]:
     """把快照历史整理成「轮」序列（旧→新），并保证当前这一轮在最后。
 
-    返回 ``(rounds, invalid_entries)``。三种情形：
+    返回 ``(rounds, invalid_details)``——第二项是**逐条**原因（``"第 N 条：…"``），
+    不是计数；计数由 ``len()`` 得到，两处各存一份迟早对不上。三种情形：
 
     - 历史以当前这份快照收尾（导出脚本的写法：每次导出把本轮追加进去）：
       直接用它，当前轮就是最后一条，不会重复计数。
     - 历史缺失、为空、或最后一条与当前内容不一致（旧快照、手改过内容）：
       把当前内容补成新的一轮。**不能因为「历史里没有当前这轮」就少算一轮**，
       那会让提示晚一轮出现，而且让「当前是不是判不了」取决于历史是否完整。
-    - 形状无效的条目跳过并计数，由报告说明。
+    - 形状无效的条目跳过并记录原因，由报告说明（**不改变退出码**）。
 
     为什么要跟当前内容做一次相等比较，而不是无条件追加：导出脚本写历史时
     已经把本轮写进去了，无条件追加会把同一轮数两次。
     """
     current_counts = _counts_of(current)
     rounds: list[dict[str, tuple[int, int]]] = []
-    invalid = 0
+    invalid: list[str] = []
     history = meta.get("history")
     if isinstance(history, list):
-        for entry in history:
-            counts = _history_entry_counts(entry)
-            if counts is None:
-                invalid += 1
+        for index, entry in enumerate(history):
+            error = _history_entry_error(entry)
+            if error is not None:
+                invalid.append(f"第 {index + 1} 条：{error}")
                 continue
-            rounds.append(counts)
+            counts = _history_entry_counts(entry)
+            if counts is not None:
+                rounds.append(counts)
+    elif history:
+        # ``null`` / 缺失是旧快照的常态（那时还没有 history 块），不算畸形；
+        # 非空但不是数组才是「有一块说不清形状的东西」——同样只报告。
+        invalid.append(f"history 期望数组，实际是 {type(history).__name__}")
     if not rounds or rounds[-1] != current_counts:
         rounds.append(current_counts)
     return rounds, invalid
@@ -1225,10 +1364,12 @@ def undetermined_streaks(rounds: list[dict[str, tuple[int, int]]],
 
 
 def historical_baseline(meta: dict, current: dict[str, dict]
-                        ) -> tuple[dict | None, int, str]:
+                        ) -> tuple[dict | None, list[str], str]:
     """当前这一轮之前的最近一轮合计，用作回归判据的基线（R59）。
 
-    返回 ``(baseline, invalid_entries, note)``；``baseline`` 形如
+    返回 ``(baseline, invalid_details, note)``；``invalid_details`` 是逐条的
+    形状原因（``"第 N 条：…"``，R80 起由 ``snapshot_rounds`` 直接给出）；
+    ``baseline`` 形如
     ``{"attempts": n, "failed": k, "workflows": m}``，没有可用基线时给 ``None``，
     ``note`` 说明原因。三种「没有基线」都显式成文字，不拿 0 或当前轮顶替：
 
@@ -1237,8 +1378,8 @@ def historical_baseline(meta: dict, current: dict[str, dict]
       自己的失败率进来，旧的又可能因为窗口滚动而消失），此时判「回归」等于
       把一次覆盖面变化说成「东西在变坏」。与 ``undetermined_streaks`` 的
       「缺席即中断」同一条纪律。
-    - 形状无效的历史条目被跳过并计数，由调用方在报告里写明——跳过之后基线
-      可能不是紧邻的一轮。
+    - 形状无效的历史条目被跳过并逐条记下原因，由调用方在报告里写明——跳过
+      之后基线可能不是紧邻的一轮。
 
     **只取上一轮，不合并多轮**：相邻两次导出常常包含同一批 run，把重叠样本
     当独立样本会伪造精度（区间假性收窄），从而把噪声判成回归。单轮比较在
@@ -1338,8 +1479,10 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
     if error is not None:
         return error
 
-    recorded = meta.get("per_workflow") or {}
-    if not isinstance(recorded, dict) or not recorded:
+    recorded, block_error = _count_block(meta, "per_workflow")
+    if block_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+    if not recorded:
         return EXIT_NO_SAMPLE, (
             "快照元数据缺 per_workflow 块，无法判 per-workflow 失败率。"
             "重导一次即可补上：python scripts/export_run_samples.py "
@@ -1389,8 +1532,8 @@ def check_per_workflow_rate(data_dir: Path, margin: float,
                      if streak >= UNDETERMINED_ROUND_STREAK)
     summary += f"。快照历史 {len(rounds)} 轮（含当前）"
     if invalid_history:
-        summary += (f"，另有 {invalid_history} 条历史形状无效已跳过"
-                    "（连续轮数可能被低估，重导会在最新一条上重新积累）")
+        summary += (f"。{_invalid_history_note(invalid_history)}"
+                    "。连续轮数可能被低估，重导会在最新一条上重新积累")
     if chronic:
         summary += (
             f"。连续 {UNDETERMINED_ROUND_STREAK} 轮以上样本不足："
@@ -1518,8 +1661,10 @@ def check_per_workflow_regression(data_dir: Path,
     if error is not None:
         return error
 
-    recorded = meta.get("per_workflow") or {}
-    if not isinstance(recorded, dict) or not recorded:
+    recorded, block_error = _count_block(meta, "per_workflow")
+    if block_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+    if not recorded:
         return EXIT_NO_SAMPLE, (
             "快照元数据缺 per_workflow 块，无法判逐 workflow 回归。"
             "重导一次即可补上：python scripts/export_run_samples.py "
@@ -1590,8 +1735,8 @@ def check_per_workflow_regression(data_dir: Path,
             "。**本步没有判定力**：没有任何 workflow 的上一轮基线精度达到 "
             f"margin={margin:g}，退出 0 不代表没有回归")
     if invalid_history:
-        summary += (f"（另有 {invalid_history} 条历史形状无效已跳过，"
-                    "基线可能不是紧邻的一轮）")
+        summary += (f"。{_invalid_history_note(invalid_history)}"
+                    "，基线可能不是紧邻的一轮")
 
     # R67：两个阈值增量不是同一个量，必须写进输出。逐 workflow 的增量等于
     # 基线精度余量，才保证「计数不变 ⇒ normal」可达；合并层的 3 是另一件事
@@ -1763,7 +1908,17 @@ def check_lead_time(data_dir: Path, precision_margin: float,
     if not actual:
         return EXIT_NO_SAMPLE, (
             f"快照里没有任何带 run 记录的工作流（{data_dir / 'workflows'}）")
-    drifts = _per_workflow_drift(meta.get("per_workflow") or {}, actual)
+    # R80 顺带的统一：校准模式也走与三条 per-workflow 判据同一套形状校验。
+    # 旧写法把 truthy 的 ``"junk"`` 直接交给 ``_per_workflow_drift``，在
+    # ``set(recorded)`` / ``.get`` 上抛 ``AttributeError`` → CLI 以 **1** 退出；
+    # ``"failed": "abc"`` 则被归成 **8**。两种都在冒充结论，处置都是重导。
+    recorded, block_error = _count_block(meta, "per_workflow")
+    if block_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(block_error)
+    shape_error = _per_workflow_shape_error(recorded)
+    if shape_error:
+        return EXIT_META_DRIFT, _metadata_shape_message(shape_error)
+    drifts = _per_workflow_drift(recorded, actual)
     if drifts:
         return EXIT_META_DRIFT, _drift_message(drifts)
 
@@ -1863,7 +2018,7 @@ def check_lead_time(data_dir: Path, precision_margin: float,
                      "判据只有在阈值 ≥ 基线精度时才能说 normal，所以默认不压")
 
     if invalid_history:
-        lines.append(f"（另有 {invalid_history} 条历史形状无效已跳过）")
+        lines.append(f"（{_invalid_history_note(invalid_history)}）")
     return EXIT_OK, "\n".join(lines)
 
 
