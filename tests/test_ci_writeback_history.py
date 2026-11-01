@@ -10,7 +10,8 @@ origin / work / other 三个真实仓库，让拒绝**真的发生**：
 - pre-receive 永久拒绝：恰好尝试 ``DEFAULT_ATTEMPTS`` 次后 ``::error::`` + 退出 1；
 - 同一 run 重跑：历史逐字节不变，不产生第二次提交；
 - 没有 metrics：退出 0、不入库；
-- 远端也改了 history.json：rebase 冲突**响亮失败**，不静默丢轮次；
+- 远端也改了 history.json：rebase 冲突**重算**（人工轮与 CI 轮都要在）；
+  ``attempts=1`` 时冲突消耗唯一一次尝试，仍以 ``::error::`` 失败退出；
 - 只提交历史文件，不卷走工作树里的其它改动。
 """
 
@@ -236,13 +237,9 @@ def test_missing_metrics_is_not_a_failure(
     assert _git("rev-parse", "HEAD", cwd=work) == head
 
 
-def test_rebase_conflict_fails_loudly_instead_of_losing_the_round(
-        tmp_path: Path, capsys) -> None:
-    """远端也改了 history.json：rebase 冲突必须响亮失败（::error:: + 退出 1）。"""
-    origin = _seed(tmp_path)
-    work = _clone(tmp_path, origin, "work")
+def _conflicting_manual_round(tmp_path: Path, origin: Path) -> None:
+    """在 origin 上模拟「有人手工写入了另一轮」，让 rebase 必然冲突。"""
     other = _clone(tmp_path, origin, "other")
-    # 模拟「有人在 main 上手工写入了另一轮」。
     other_history = _history_path(other)
     payload = json.loads(other_history.read_text(encoding="utf-8"))
     payload["history"].append({
@@ -253,17 +250,56 @@ def test_rebase_conflict_fails_loudly_instead_of_losing_the_round(
     _git("commit", "-q", "-m", "manual round", cwd=other)
     _git("push", "-q", "origin", "main", cwd=other)
 
-    code = writeback.main([
-        "--metrics", str(_write_metrics(tmp_path / "metrics.json")),
-        "--history", str(_history_path(work)),
-        "--run-id", "ci-1",
-        "--repo", str(work),
-    ])
+
+def test_rebase_conflict_recomputes_instead_of_losing_the_round(
+        tmp_path: Path, capsys) -> None:
+    """远端也改了 history.json：丢弃本地提交、按最新历史重算，两轮都要在。
+
+    R89 的处置是「冲突 → ``::error::`` + 退出 1」：轮次没丢在磁盘上，但这一轮
+    写回失败了。R90 改成重算——``record`` 是幂等的，在 rebase 后的历史上再跑
+    一遍就能同时保住人工轮与 CI 轮。
+    """
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    _conflicting_manual_round(tmp_path, origin)
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "rebase 冲突" in out
+    assert "重算" in out
+    assert "第 2 次尝试" in out
+
+    payload = _origin_history(origin)
+    assert [item["run_id"] for item in payload["history"]] == [
+        "manual-1", "ci-1"], payload["history"]
+    # 重算而不是硬推：远端仍然没有 merge 提交，写回提交在顶端。
+    assert _origin_log(origin, "rev-list", "--merges", "main").strip() == ""
+    subjects = _origin_log(origin, "log", "--format=%s", "main").splitlines()
+    assert len(subjects) == 3, subjects          # seed + manual + writeback
+    assert subjects[0].startswith("chore(e2e)"), subjects
+
+
+def test_conflict_stops_after_the_attempt_cap(
+        tmp_path: Path, capsys) -> None:
+    """冲突消耗一次尝试：attempts=1 必须失败退出，而不是无限重算。"""
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    _conflicting_manual_round(tmp_path, origin)
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, attempts=1)
 
     assert code == 1
-    captured = capsys.readouterr()
-    assert "::error::" in captured.err
-    assert "历史未入库" in captured.err
+    out = capsys.readouterr().out
+    assert out.count("push 被拒") == 1
+    assert "rebase 冲突" in out
+    assert "::error::" in out
+    assert "历史未入库" in out
 
 
 # ------------------------------------------------------------------ CLI

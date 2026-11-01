@@ -13,7 +13,8 @@ R88 把写回做成独立 job，但「提交 → push → 被拒 → rebase 重�
 3. 历史无变化 → 不提交、退出 0；
 4. 有变化 → 提交（信息带 ``[skip ci]``，防止将来换 PAT 后自触发）；
 5. push 被拒 → ``pull --rebase`` 后重试，最多 ``DEFAULT_ATTEMPTS`` 次；
-   全失败 → ``::error::`` + 退出 1。
+   rebase 成功只需重推，**rebase 冲突则丢弃本地提交、按最新分支重算**
+   （R90：否则一次并发编辑就让这一轮永久丢失）；全失败 → ``::error::`` + 退出 1。
 
 **写权限与执行面分离不变**：这个脚本只被 ``e2e-history-writeback`` job 调用，
 仍然不跑 pytest / e2e / npm / docker（``tests/test_ci_history_writeback.py``
@@ -77,21 +78,45 @@ def _git_checked(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return result
 
 
-def commit_and_push(repo: Path, history_path: Path, message: str,
-                    branch: str = "main",
-                    attempts: int = DEFAULT_ATTEMPTS) -> int:
-    """提交历史文件并推送；返回 0 或 1。没有变化时什么都不做。"""
-    _git_checked(repo, "add", "--", str(history_path))
-    staged = _git(repo, "diff", "--cached", "--quiet", "--", str(history_path))
-    if staged.returncode == 0:
-        print("history 没有变化（同一 run 重跑），不提交")
+def _has_staged_change(repo: Path, history_path: Path) -> bool:
+    result = _git(repo, "diff", "--cached", "--quiet", "--", str(history_path))
+    return result.returncode != 0
+
+
+def writeback(metrics_path: Path, history_path: Path, run_id: str,
+              repo: Path, branch: str = "main",
+              attempts: int = DEFAULT_ATTEMPTS,
+              commit_message: str | None = None) -> int:
+    """CI 写回的完整链路：metrics → record → commit → push（带重试与重算）。
+
+    每一轮 ``record`` 都在**当前历史**上重算：push 被拒后 rebase 成功时提交
+    已经在最新分支上，只需重推；rebase 冲突时本地提交是在旧历史上算的，丢弃
+    它、回到最新分支后重算（R90）——否则一轮历史会因为一次并发编辑而丢失。
+    """
+    if attempts < 1:
+        print("--attempts 必须 >= 1", file=sys.stderr)
+        return EXIT_USAGE
+    if not metrics_path.is_file():
+        print(f"没有 {metrics_path}（e2e 环境未启动），本轮不入库")
         return EXIT_OK
 
-    # 只提交这个文件：即使工作树里还有别的改动（checkout 残留），也不带进去。
-    _git_checked(
-        repo, "commit", "-m", message, "--", str(history_path))
-
+    message = commit_message or f"chore(e2e): record CI run {run_id} [skip ci]"
+    prepared = False
+    reason = ""
     for attempt in range(1, attempts + 1):
+        if not prepared:
+            code = history.record(metrics_path, history_path, run_id=run_id)
+            if code != history.EXIT_OK:
+                return code
+            _git_checked(repo, "add", "--", str(history_path))
+            if not _has_staged_change(repo, history_path):
+                print("history 没有变化（同一 run 重跑），不提交")
+                return EXIT_OK
+            # 只提交这个文件：即使工作树里还有别的改动（checkout 残留），也不带进去。
+            _git_checked(
+                repo, "commit", "-m", message, "--", str(history_path))
+            prepared = True
+
         push = _git(repo, "push", "origin", f"HEAD:{branch}")
         if push.returncode == 0:
             print(f"已写回 {branch}（第 {attempt} 次尝试）")
@@ -101,34 +126,22 @@ def commit_and_push(repo: Path, history_path: Path, message: str,
             print(detail, file=sys.stderr)
         print(f"push 被拒（第 {attempt} 次），rebase 到最新 {branch} 后重试")
         pull = _git(repo, "pull", "--rebase", "origin", branch)
-        if pull.returncode != 0:
-            _git(repo, "rebase", "--abort")
-            raise WritebackError(
-                f"pull --rebase 失败，本轮历史未入库："
-                f"{_decode(pull.stderr) or _decode(pull.stdout)}")
+        if pull.returncode == 0:
+            # 提交已被 rebase 到最新分支：下一次只需重推，不要再 record
+            # （再 record 会得到「没有变化」并提前返回 0，把这一轮丢掉）。
+            continue
 
-    print(f"::error::push 连续 {attempts} 次均失败（并发写回），本轮历史未入库")
+        _git(repo, "rebase", "--abort")
+        print(f"rebase 冲突（第 {attempt} 次）：丢弃本次写回提交，"
+              f"按最新 {branch} 重算")
+        _git_checked(repo, "fetch", "origin", branch)
+        _git_checked(repo, "reset", "--hard", f"origin/{branch}")
+        prepared = False
+        reason = "rebase 冲突"
+
+    print(f"::error::连续 {attempts} 次写回均失败"
+          f"{f'（最后一次：{reason}）' if reason else ''}，本轮历史未入库")
     return EXIT_FAILED
-
-
-def writeback(metrics_path: Path, history_path: Path, run_id: str,
-              repo: Path, branch: str = "main",
-              attempts: int = DEFAULT_ATTEMPTS,
-              commit_message: str | None = None) -> int:
-    """CI 写回的完整链路：metrics → record → commit → push（带重试）。"""
-    if attempts < 1:
-        print("--attempts 必须 >= 1", file=sys.stderr)
-        return EXIT_USAGE
-    if not metrics_path.is_file():
-        print(f"没有 {metrics_path}（e2e 环境未启动），本轮不入库")
-        return EXIT_OK
-
-    code = history.record(metrics_path, history_path, run_id=run_id)
-    if code != history.EXIT_OK:
-        return code
-
-    message = commit_message or f"chore(e2e): record CI run {run_id} [skip ci]"
-    return commit_and_push(repo, history_path, message, branch, attempts)
 
 
 def build_parser() -> argparse.ArgumentParser:
