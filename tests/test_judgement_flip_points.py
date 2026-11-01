@@ -24,6 +24,12 @@ R72 补的是这些翻转点的**前提**：#4 的「元数据漂移 → 退出 
 都落在判不出回归的计数上。R76 补最后一个：`check_per_workflow`（逐 workflow
 样本量诊断）没有数字翻转点，它的「判决」是一份报告（达标 / 不达标）；R54 的
 用例没有一条证明这两个词不可能出现在退出 4/3 的消息里。
+
+R77 补的是同一道门的另一格：**元数据根本不是 JSON**。R72/R73/R76 造的元数据
+全是合法 JSON（坏也只坏形状），于是「``json.loads`` 读不懂就按内容重算」或
+「当空元数据继续」在既有用例上全绿——前者会把一次真实回归按内容重新判成红，
+后者把元数据问题说成「没有数据可判」。两条判据（#4 留一法、#3 逐 workflow
+回归）各用自己边界外的计数钉一次，另在 CLI 层钉「退出 4，不是 8」。
 """
 
 from __future__ import annotations
@@ -472,6 +478,65 @@ def test_no_sample_preempts_the_per_workflow_sample_report(
     assert code == gate.EXIT_NO_SAMPLE, message
     assert "没有任何带 run 记录的工作流" in message, message
     assert "达标" not in message, message
+
+
+# ------------------------------------------ 元数据不是 JSON（R77）
+
+def test_unparseable_metadata_is_not_a_verdict_for_the_leave_one_out_rate(
+        tmp_path: Path) -> None:
+    """``json.loads`` 失败与漂移同一处置：退出 4，不得按内容重算，也不得说成 3。
+
+    R72 的三条用例把退出 4/3 的分支对齐了，但造的元数据都是**合法 JSON**
+    （R76 §7-3 挂的同型缺口）。于是两种改法在它们面前全绿：
+
+    - 「读不懂就从 ``workflows/`` 重算」——一份真实快照按内容重新判定，元数据
+      问题（重导）被翻译成「判了且不合格」（查供应商）；
+    - 「读不懂当空元数据继续」——退出码从 4 变成 3，报告一句「没有数据可判」。
+
+    这里用 #4 的边界外计数（rest 30/0 + target 4/10，硬门槛下退出 1）：先证明
+    同一组计数在元数据可读时确实说话，再把元数据换成 ``{not json`` 看它闭嘴。
+    """
+    snap = tmp_path / "snap"
+    _write_rate_snapshot(snap, {"rest": (30, 0), "target": (10, 4)})
+
+    code, message = gate.check_per_workflow_rate(
+        snap, gate.DEFAULT_MARGIN, fail_on_exceeds=True)
+    assert code == gate.EXIT_GATE_TRIGGERED, message
+    assert "1 个超出" in message, message
+
+    (snap / "snapshot-meta.json").write_text("{not json", encoding="utf-8")
+    for fail_on_exceeds in (True, False):
+        code, message = gate.check_per_workflow_rate(
+            snap, gate.DEFAULT_MARGIN, fail_on_exceeds=fail_on_exceeds)
+        assert code == gate.EXIT_META_DRIFT, (fail_on_exceeds, message)
+        assert "无法解析" in message, message
+        # 判决词与报告词都不许先出现：退出 4 的处置是重导，不是查供应商。
+        assert "超出" not in message, message
+        assert "报告模式" not in message, message
+
+
+def test_unparseable_metadata_is_not_a_verdict_for_the_per_workflow_regression(
+        tmp_path: Path) -> None:
+    """#3 的同一格：内容 16/79（会判回归）+ ``{not json`` → 退出 4，不是 1 也不是 3。
+
+    R73 的三条用例同样全在合法 JSON 上；回归这条还多一个坑——``history`` 也在
+    这份读不懂的文件里，退回「无样本」会把「上一轮基线丢了」说成「没有数据」，
+    而按内容重算会直接判出回归。两种都指向错误的处置。
+    """
+    snap = tmp_path / "snap"
+    _write_regression_snapshot(
+        snap, {"character": (79, 2)}, {"character": (79, 16)})
+
+    code, message = gate.check_per_workflow_regression(snap, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_GATE_TRIGGERED, message
+    assert "1 个判回归" in message, message
+
+    (snap / "snapshot-meta.json").write_text("{not json", encoding="utf-8")
+    code, message = gate.check_per_workflow_regression(snap, gate.DEFAULT_MARGIN)
+    assert code == gate.EXIT_META_DRIFT, message
+    assert "无法解析" in message, message
+    assert "判回归" not in message, message
+    assert "退出码 1" not in message, message
 
 
 # ------------------------------------------------ #5 样本量 margin 10 个百分点

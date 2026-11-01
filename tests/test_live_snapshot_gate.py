@@ -1655,6 +1655,28 @@ def test_malformed_metadata_exits_four_from_the_cli(
     assert live_gate.main() == live_gate.EXIT_META_DRIFT
 
 
+@pytest.mark.parametrize("flag", [
+    "--check-per-workflow-rate",
+    "--check-per-workflow-regression",
+])
+def test_unparseable_metadata_exits_four_from_the_cli(
+        monkeypatch, tmp_path: Path, flag: str) -> None:
+    """坏 JSON 从 CLI 必须以 4 退出：8 会把处置带偏到「查判据算术」。
+
+    ``_run_judgement`` 把 ``ValueError`` 归成 8（判据算术失败），而
+    ``json.JSONDecodeError`` 正是 ``ValueError`` 的子类——判据里那条
+    ``except (OSError, ValueError)`` 一旦被删，CLI 会从 4 变成 8。R75 记的
+    三种冒充（1 / 8 / 3）里，8 是唯一还没在坏 JSON 上钉过的一种。
+    """
+    import sys
+
+    _rate_snapshot(tmp_path, {"wf-a": (10, 1), "wf-b": (10, 0)})
+    (tmp_path / "snapshot-meta.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [
+        "check_live_snapshot_gate.py", flag, "--data-dir", str(tmp_path)])
+    assert live_gate.main() == live_gate.EXIT_META_DRIFT
+
+
 def test_numeric_string_counts_are_still_accepted(tmp_path: Path) -> None:
     """数值字符串仍可解释（导出写整数，手改的 ``"1"`` 不因此拒整份快照）。"""
     _write_malformed_per_workflow(
