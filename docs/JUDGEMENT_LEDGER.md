@@ -157,7 +157,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 跳过坏条目继续渲染会被咬住（R78） | `test_check_rejects_bad_json_even_when_one_entry_would_render` |
 | CI 只读校验**入库的**历史（R78） | `tests/test_e2e_retry_history.py::test_ci_checks_the_committed_history_file` |
 | 本页「不能直接迁移」的答案 | `tests/test_judgement_ledger.py::test_ledger_answers_the_r63_migration_question` |
-| msys 归因不写完整性级别（R71） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_never_an_integrity_level` |
+| msys 归因「机制 + 处方」两半、但不钉「本令牌是 Low」（R71/R81） | `tests/test_msys_attribution.py::test_skip_reason_names_the_mechanism_and_the_actionable_fix` |
 | 「签名 / 模块 / 探针」真值表（R71） | `tests/test_msys_attribution.py::test_skip_truth_table_has_exactly_two_independent_variables` |
 | 「无签名 ≠ 环境问题」（R71） | `tests/test_msys_attribution.py::test_probe_flips_on_the_msys_signature_only` |
 | 允许转 skip 的 6 个模块（R71） | `tests/test_msys_attribution.py::test_skip_surface_is_exactly_the_six_transport_modules` |
@@ -450,15 +450,25 @@ R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。�
 
 全量套件两次运行同为 **2189 passed / 113 skipped / 0 failed**（High 123.95s、
 Low 124.94s）。**R71 复测（同机同码，约 20 小时后）方向反过来了**：High
-**2279 passed / 28 skipped**、真降 Low **2194 passed / 113 skipped**——28-skip
-profile 在 High 下又出现了。两次观测合起来才是完整的结论：**能不能挂接那个共享
-对象会自己变**（谁先创建/挂接、DACL 如何），既不跟令牌 IL 绑定，也不在一台机器
-上保持恒定。所以：
+**2279 passed / 28 skipped**、真降 Low **2194 passed / 113 skipped**。
 
-- **113 skips 不是令牌完整性级别的函数。** 就「转 skip」这条判据而言，判别变量
-  是探针是否复现 `NtCreateDirectoryObject` 签名——也就是本会话能否挂接那个共享对象。
-- R17 的结论（Low 被拒）在**那次会话**是实测事实，但它不是通用归因；R70 起文案
-  只写机制（「cannot attach this session's shared msys-2.0 object」），不写 IL。
+**R81 把根因查清了（2026-11-01，本机只读取证 + 合成对象交叉对照）**：
+
+- 对象 `\BaseNamedObjects\msys-2.0S5-1888ae32e00d56aa` 的 DACL 只有一条
+  `Everyone → 0x2000F`（含 `DIRECTORY_CREATE_OBJECT`），**没有 SACL**；Low
+  打开者的写权限仍然全拒（`0xC0000022`），High 打开者全通。
+- 同一 DACL 的合成临时对象：**High 创建 → Low 被拒；Low 创建 → Low 通过**。
+  所以对象**隐式带着创建者的完整性级别**，DACL 里写着允许并不够。
+- IL 由父令牌继承，但 `F:` 上的可执行文件被强制降到 Low（`F:\...\.venv\python.exe`
+  → Low；同一二进制复制到 C: → 继承父的 High；**Low 进程再起 C: 的 `py.exe`
+  仍是 Low**）。
+
+于是「113 vs 28」的判别变量是**启动器的 IL**，而不是「会话状态」这种不可操作的
+说法。R70 的「High 也失败」在本机不复现（Git Bash / PowerShell / py.exe 三种 C:
+启动器下 `sh.exe` 全 rc=0，High 全量 2373/28）；那次所谓「High」最可能是 Low
+解释器派生的 shell——本机实测这种派生不会升 IL。**skip 文案自 R81 起恢复处方**
+（High shell + C: 启动器 + `PYTHONPATH`），但仍不把责任钉成「本令牌是 Low」：
+对象侧的 IL 可能高于任何我们能拿到的令牌。
 
 判据本身（`_msys_skip_applies`）只有两个自变量：
 
@@ -469,10 +479,10 @@ profile 在 High 下又出现了。两次观测合起来才是完整的结论：
 | 否 | 是 | 否 | 照常失败 |
 | 否 | 否 | 任意 | 照常失败 |
 
-**登记这个判据的同时必须登记它的代价**：skip 不等于通过。113 条用例在本会话
+**登记这个判据的同时必须登记它的代价**：skip 不等于通过。113 条用例在 Low 会话
 **没有执行**；上表只说明「那批失败带 msys 签名或落在传输模块内」，不说明这些
-用例的断言成立。复现 28-skip profile 需要能挂接共享对象的会话状态——R70 §7-1
-的根因未追查，R71 按用户拍定只改归因措辞、不追根因（B1）。
+用例的断言成立。要真正执行它们，按上面的处方从 High shell 用 C: 启动器跑——
+本机实测 28 skips 全是平台类（macOS 签名 / fcntl / Unix 进程树），没有 msys 归因。
 
 **判据还必须对自己的失败免疫**：R71 第一次变异验证时，文案用例判红，断言消息里
 带着 `NtCreateDirectoryObject`，钩子按签名把它转成 skip——输出变成「全绿」，判据
