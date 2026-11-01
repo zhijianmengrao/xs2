@@ -144,6 +144,11 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 元数据缺失仍是 3（反方向，R79） | `tests/test_live_snapshot_gate.py::test_missing_meta_is_still_no_sample_for_every_judge` |
 | 元数据顶层不是对象 → 4（不是 1，R79） | `tests/test_live_snapshot_gate.py::test_meta_that_is_not_a_json_object_is_drift` |
 | 八处判据只走一道元数据门（R79） | `tests/test_live_snapshot_gate.py::test_every_judge_reads_the_metadata_through_one_door` |
+| 畸形 `totals` → 4（不是 1/8/0，R80） | `tests/test_live_snapshot_gate.py::test_malformed_totals_is_drift_not_a_verdict`、`test_malformed_totals_exits_four_from_the_cli` |
+| 空 `totals` 仍是 3（反方向，R80） | `tests/test_live_snapshot_gate.py::test_empty_totals_is_still_no_sample_not_drift` |
+| 非对象 `per_workflow` 块 → 4（不是 3/1，R80） | `tests/test_live_snapshot_gate.py::test_non_object_per_workflow_block_is_drift_not_no_sample` |
+| 历史畸形逐条列出且**不进退出码**（R80） | `tests/test_live_snapshot_gate.py::test_four_history_readers_report_the_same_note`、`test_malformed_history_does_not_change_the_regression_verdict` |
+| 计数形状规则只写一份（R80） | `tests/test_live_snapshot_gate.py::test_count_shape_rules_are_written_once` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
@@ -382,6 +387,54 @@ push 频率；CI 的职责只有「入库的那份历史仍然可读」。
 **后者是唯一能守住「将来新增判据」的那条用例**。
 
 
+
+### 7.8 畸形 totals 与逐条历史：4 与「只报告」（R80）
+
+§7.5 收的是 `per_workflow` 块内的形状，§7.7 收的是读取路径。剩下的两块是
+`totals`（`evaluate` / `check_sample_size` 读它）与 `history`（四处判据读它）。
+**处置不同是有意的**：`totals` 是**当前**这一轮的计数，坏了就没有可判的数字；
+`history` 描述的是**过去**的轮次，跳过它只会削弱连续性，不会把当前判决变成假话。
+
+**`totals` → 4。** 旧写法 `int(recorded.get("attempts") or 0)` 实测有三种冒充
+（本机 CLI，`_r80_probe.py` 原始输出）：
+
+| 形状 | 修复前退出码 | 冒充的东西 | 修复后 |
+|---|---|---|---|
+| `totals: "junk"` | **1**（`AttributeError` 未捕获） | 「判了且不合格」→ 查供应商 | 4 |
+| `{"attempts": "abc"}` | **8**（`_run_judgement` 归为算术失败） | 「判据崩了」→ 修判据 | 4 |
+| `{"failed": true}`（内容 1 次失败） | **0**：`int(True)` 是 1，静默当成一次真实失败 | 「通过」——没有异常、没有 traceback | 4 |
+| `{"attempts": 20.5}` | **0**：`int(20.5)` 截断成 20 | 「通过」 | 4 |
+
+空值（缺失 / `null` / `{}` / `[]`）仍是 **3**：没有可被冒充的计数，本机「还没
+导出过快照」是预期状态。容器与字段共用一个 `_count_block`，`per_workflow` 的
+非空非对象（`"junk"`）也一并从 3 改成 4；`check_lead_time` 原本没走形状校验
+（`"junk"` → 1、`"failed": "abc"` → 8），R80 顺带收进同一套。
+
+**`history` 的畸形条目 → 只报告，不进退出码**（用户拍定）。旧输出只有
+「另有 N 条历史形状无效已跳过」，读日志的人不知道该修哪一条；R80 起逐条给出
+`第 N 条：原因`，四处（`evaluate` 的回归层 / `check_per_workflow_rate` /
+`check_per_workflow_regression` / `check_lead_time`）共用 `_invalid_history_note`，
+文案一致由构造保证。`history` 本身不是数组同样只报告（旧写法静默当作「没有历史」）。
+
+| 前提 | 期望 | 用例 |
+|---|---|---|
+| `totals` 是 truthy 非对象 / 字段是 `"abc"` / `true` / 负数 / 浮点 / `null` | 两条判据都 4；消息含「totals 元数据形状无效」 | `test_malformed_totals_is_drift_not_a_verdict` |
+| `totals` 是缺失 / `null` / `{}` / `[]` | 仍是 3（不是 4） | `test_empty_totals_is_still_no_sample_not_drift` |
+| 外部退出码 | 默认判定与 `--check-sample-size` 都以 4 退出（不是 1/8） | `test_malformed_totals_exits_four_from_the_cli` |
+| `per_workflow: "junk"` | 四条判据（含校准）都 4，不再是 3/1 | `test_non_object_per_workflow_block_is_drift_not_no_sample` |
+| 历史条目的 `true` / `1.5` | 与 per_workflow/totals 同一规则：跳过并逐条报原因 | `test_history_entry_counts_use_the_same_shape_rules` |
+| 四处读 history 的判据 | 同一句「另有 N 条…（第 N 条：…）」，退出码不受影响 | `test_four_history_readers_report_the_same_note` |
+| 加坏历史前后 | 回归判决不变（仍 1） | `test_malformed_history_does_not_change_the_regression_verdict` |
+| `history: "junk"` | 只报告「history 期望数组」 | `test_non_list_history_block_is_reported_not_silently_ignored` |
+| 将来新增的计数校验 | 必须走 `_count_value_error`，不许手抄 | `test_count_shape_rules_are_written_once` |
+
+**八次变异如实记录**：M1（删 `evaluate` 的 totals 校验）6 红、M2（删
+`check_sample_size` 的）6 红——两者都只咬字段形状，容器由 `_count_block` 单独挡；
+M3（布尔重新算 1）**3 红，三个族各一条**（共享校验器的直接后果：一处放松、
+三处同时失守）；M4（逐条原因丢位置）9 红；M5（共用文案丢掉明细）5 红；
+M6（容器退回 `{}`）6 红；M7（`history` 非数组静默忽略）**1 红，唯一咬合**；
+M8（history 退回 `int()`）4 红，其中 `test_count_shape_rules_are_written_once`
+是唯一守住「将来新增第四处」的那条。`cp` 还原后 md5 逐字节相同（`8e13df17…`）。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
