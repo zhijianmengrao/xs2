@@ -671,10 +671,11 @@ C: 解释器处方仍然有效（C: 不在标签树下），但它是**绕开**�
 icacls "F:\DeterminFlow x2" /setintegritylevel (OI)(CI)Medium
 ```
 
-本条**没有执行**这一步：改用户目录的安全属性不是测试该做的事。`conftest.py` 的
+本条在 R84 时**没有执行**这一步：改用户目录的安全属性不是测试该做的事；R85 经用户拍定后已执行，见下条。`conftest.py` 的
 skip 文案因此同时给出「清标签」与「C: 解释器」两条路（R84 已同步，用例钉住）。
 R36 记录的「服务进程为 Low-IL」与此一致，但本轮没有回查当时的标签状态，不把
 因果钉到某个具体轮次。
+**R85 执行（2026-11-01，用户拍定 R84 §9-2）**：清标签落地并重定基线。前置审计（只读）覆盖 **17290 个目录 + 169 个 `.exe`/`.dll`**，显式标签只有根目录一条（`Low:(OI)(CI)(NW)`，无 `(I)`），其余全部继承——所以 `icacls "F:\DeterminFlow x2" /setintegritylevel (OI)(CI)Medium` 一步即可覆盖全树；改后复核：根 `Medium:(OI)(CI)(NW)`、`.venv\Scripts\python.exe` `Medium:(I)(NW)`、显式 Low 残留 **0**。**一个必须写下来的事实**：清成 Medium 后 venv 解释器的令牌是 `S-1-16-8192`（Medium），**不是 High**——Windows 用镜像的强制标签给令牌封顶，镜像带 Medium 标签时不会继承 High 父进程；R84 §8-2 的「清标签后 venv 继承父进程 IL」只对**完全没有标签**的镜像成立。要真正 High 仍走 C: 解释器 + `PYTHONPATH`。**基线**：venv 全量 **2486 passed / 28 skipped / 0 failed**（180.64s），与 R84 的 High 基线逐项相同（2401+85=2486、113−85=28，85 条正是被 msys 签名转 skip 的那批）。**记账变更**：本机不再维护「Low/High 双基线」，改为**单一本地基线 2486/28**；用例总数不变（2514），CI 的 ubuntu/windows 计数不变。**未做**：没有删除 SACL 里的标签 ACE（只改成显式 Medium）；没有跑前端 / e2e / docker build（零代码改动）。
 
 判据本身（`_msys_skip_applies`）只有两个自变量：
 
