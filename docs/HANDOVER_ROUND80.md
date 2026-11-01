@@ -121,7 +121,7 @@ M7 是唯一只红一条的变异，其余都在 3–9 条之间。
 
 | 项 | 结果 |
 |---|---|
-| 定向：新增 27 条 | **27 passed**（0.55s 内） |
+| 定向：新增 27 条（`-k` 选中 27 条、195 deselected） | **27 passed**（0.47s） |
 | 相关集：`test_live_snapshot_gate` + `test_judgement_flip_points` + `test_judgement_ledger` + `test_ci_gate_wiring` | **258 passed**（6.89s） |
 | 全量（本机，Low `S-1-16-4096`） | **2288 passed / 113 skipped / 0 failed**（141.67s） |
 | 真机闸门（入库快照） | 默认 / `--check-sample-size` / `--check-per-workflow` / `--check-per-workflow-rate` / `--check-per-workflow-regression` / `--calibrate-lead-time` 全部 **0** |
@@ -179,3 +179,8 @@ M7 是唯一只红一条的变异，其余都在 3–9 条之间。
 
 `$GITHUB_STEP_SUMMARY` 正文 API 不提供，趋势表由本地同一个 `render_trend()` 逐字
 验证（与 R74 §7-2 同一条限制）；CI 上能核到的是「这一步以 0 退出」。
+
+补记提交 `307b3db`（纯文档）的 run **41268639618**（03:18:21 → 03:23:09，约
+4m48s）同样五 job 全 `success`：ubuntu **2336/65**（102.86s）、windows
+**2372/29**（221.16s）、前端 490/0、e2e 10/10 与上一个 run 逐项相同。文档提交
+本身仍会触发 CI，回填链到此为止（与 R66/R77/R78/R79 同）。
