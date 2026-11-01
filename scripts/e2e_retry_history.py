@@ -3,7 +3,9 @@
 R74 让**单次** run 的重跑频率可机读（``--metrics-json`` + step summary），但
 每次 run 都是孤立的：没有历史就说不出「这轮比上轮差」。本脚本把每次入库的
 运行追加成一轮，历史随被判数据入库（快照式），本机显式 ``record`` 后随提交
-进入仓库；CI 只读 ``check``，不改 ``permissions``。
+进入仓库；R88 起 CI 的独立 ``e2e-history-writeback`` job 在 main 的 push 上
+``record`` 并回写（``run_id=ci-<run_id>``，同 run 重跑覆盖同一轮），写权限只给
+那个 job——``backend`` 的 ``check`` 仍是只读。
 
 **判据边界（R78 用户拍定）**：只判「历史数据有效」，不判「趋势变差」。
 

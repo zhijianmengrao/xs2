@@ -341,6 +341,18 @@ jobs:
           fi
           exit $code
 
+      # R88：把本次 e2e 的 metrics 交给写回 job。**只在 main 的 push 上传**——
+      # PR 不产生历史轮次，也不需要写权限。e2e 环境起不来（退出码 3）时没有
+      # metrics：这里只告警，写回 job 会打印「本轮不入库」并正常结束。
+      - name: Upload e2e metrics for history writeback
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-metrics
+          path: ${{ runner.temp }}/e2e-metrics.json
+          if-no-files-found: warn
+          retention-days: 1
+
       - name: e2e retry summary (observability)
         # 重跑频率此前只能 grep 日志（R68 §7-4）。metrics 缺失/损坏时脚本打印
         # 可见说明并退出 0，不让「没有数据」冒充「0 次重跑」。
@@ -357,6 +369,69 @@ jobs:
         run: |
           python scripts/e2e_retry_history.py check \
             --history tests/fixtures/e2e_retry_history/history.json >> "$GITHUB_STEP_SUMMARY"
+
+  # R88：CI 回写 e2e 重跑历史。R81 §7 的结论是「不做」（代价表见交接），R85 的
+  # 用户拍定改为「做」。落点是一个**独立 job**，不是 backend 里加一步：
+  # 写权限（contents: write）只给这个 job，而它**不跑仓库测试**——token 的写入
+  # 面与不可信代码的执行面不重叠。backend 的 PR 运行仍只有 contents: read。
+  e2e-history-writeback:
+    needs: backend
+    # 只在 main 的 push 上写；PR 一律跳过。backend 失败也写（e2e 断言失败的
+    # 轮次对趋势有价值）；取消，或环境起不来（没有 metrics）时不写。
+    if: "always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.backend.result != 'cancelled'"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    # 串行化：两个并发 push 的写回不能同时改同一个 history.json。
+    concurrency:
+      group: e2e-history-writeback
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        # 没有 artifact（e2e 环境未启动）不是写回 job 的失败：下一步会打印
+        # 「本轮不入库」并正常结束。
+        continue-on-error: true
+        with:
+          name: e2e-metrics
+          path: ${{ runner.temp }}/e2e
+      - name: Record the e2e round
+        run: |
+          metrics="$RUNNER_TEMP/e2e/e2e-metrics.json"
+          if [ ! -f "$metrics" ]; then
+            echo "没有 $metrics（e2e 环境未启动），本轮不入库"
+            exit 0
+          fi
+          # run_id 用 github.run_id（不是重试次数）：同一 run 重跑时覆盖
+          # 同一轮，而不是把一次运行记成两轮（R78 的「同 id 覆盖」契约）。
+          python3 scripts/e2e_retry_history.py record \
+            "$metrics" \
+            --history tests/fixtures/e2e_retry_history/history.json \
+            --run-id "ci-${{ github.run_id }}"
+      - name: Commit and push (retry on non-fast-forward)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- tests/fixtures/e2e_retry_history/history.json; then
+            echo "history 没有变化（同一 run 重跑），不提交"
+            exit 0
+          fi
+          git add tests/fixtures/e2e_retry_history/history.json
+          # [skip ci]：GITHUB_TOKEN 的 push 本来就不会触发 workflow；写进
+          # message 是为了将来换成 PAT/其它触发器时仍然不产生自触发循环。
+          git commit -m "chore(e2e): record CI run ${{ github.run_id }} [skip ci]"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "已写回 main（第 $attempt 次尝试）"
+              exit 0
+            fi
+            echo "push 被拒（第 $attempt 次），rebase 到最新 main 后重试"
+            git pull --rebase origin main || { git rebase --abort || true; exit 1; }
+          done
+          echo "::error::三次 push 均失败（并发写回），本轮历史未入库"
+          exit 1
 
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
