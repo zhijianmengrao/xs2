@@ -88,7 +88,26 @@ R94 §5 的三条边界全部收口：
 
 ## 6. 提交与 CI
 
-（待推送后回填）
+- 提交 `ea6e962` 推送后，CI run **41323628155**：backend / windows-backend /
+  frontend / container-config / container-build 五个 job `success`；
+  **`e2e-history-writeback` 失败**，fetch 步骤报：
+
+  ```text
+  ::error::GitHub API 415（…/artifacts?name=e2e-metrics）：
+  {"message":"Unsupported 'Accept' header: 'application/octet-stream'.
+   Must accept 'application/json'."}
+  ```
+
+  - 根因：artifact 下载端点只接受 JSON Accept，真正的 zip 由 302 后的 blob
+    主机返回；`octet-stream` 直接被 415。
+  - 假服务器不校验 Accept，R95 的 9 条用例全绿也漏了它——已补
+    「列表与下载两个请求都必须是 `application/vnd.github+json`」的断言。
+  - **这是 R95 语义改动的第一次生产证明**：旧接线的
+    `continue-on-error: true` 会把 415 吞成「没有 metrics」并以 0 退出，
+    静默丢掉这一轮；现在 fetch 步骤直接红，job 失败。
+- 修复：下载请求改回 `application/vnd.github+json`；本机用真实 GitHub API 对
+  run 41323628155 重跑 fetch，成功解出 1 个文件（`e2e-metrics.json`，1365 B）。
+- 修复后的 CI run：（待推送后回填）
 
 ## 7. 本轮教训
 

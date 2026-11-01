@@ -128,7 +128,9 @@ def fetch(run_id: str, repo: str, artifact: str, destination: Path,
         archive_url = selected.get("archive_download_url")
         if not isinstance(archive_url, str) or not archive_url:
             raise FetchError(f"artifact {artifact} 缺少 archive_download_url")
-        raw = _read(archive_url, token, timeout, "application/octet-stream")
+        # GitHub 的 artifact 下载端点只接受 JSON Accept（octet-stream 会 415），
+        # 真正的 zip 由 302 后的 blob 主机返回。
+        raw = _read(archive_url, token, timeout, "application/vnd.github+json")
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             files = _extract(archive, destination)
     except urllib.error.HTTPError as exc:

@@ -105,6 +105,9 @@ def test_fetch_extracts_the_named_artifact(tmp_path: Path) -> None:
     # 列表请求带认证头；查询参数把 artifact 名交给服务端过滤。
     assert recorded[0][0] == API_PATH
     assert recorded[0][1].get("authorization") == "Bearer test-token"
+    # R95 生产实测：下载端点用 octet-stream 会 415，两个请求都必须是 JSON Accept。
+    assert recorded[0][1].get("accept") == "application/vnd.github+json"
+    assert recorded[1][1].get("accept") == "application/vnd.github+json"
 
 
 def test_missing_artifact_is_not_a_failure(tmp_path: Path, capsys) -> None:
