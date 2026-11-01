@@ -19,6 +19,8 @@ R88 把写回做成独立 job，但「提交 → push → 被拒 → rebase 重�
    ``record-invalid`` / ``push-rejected`` / ``rebase-conflict`` / ``git-error``）
    以**固定类别**追加进 step summary（R91）：同一个退出码可能来自不同原因，
    类别必须让处置各不相同（R64 教训）。
+7. ``--dry-run`` 只在历史副本上算一遍并报告将写入的轮次，不写文件、不提交、
+   不推送（R94）——用于本地预演，也是 ``scripts/replay_ci_writeback.py`` 的底座。
 
 **写权限与执行面分离不变**：这个脚本只被 ``e2e-history-writeback`` job 调用，
 仍然不跑 pytest / e2e / npm / docker（``tests/test_ci_history_writeback.py``
@@ -31,6 +33,7 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -93,6 +96,7 @@ REASON_PUSH_REJECTED = "push-rejected"
 REASON_REBASE_CONFLICT = "rebase-conflict"
 REASON_GIT_ERROR = "git-error"
 REASON_USAGE = "usage"
+REASON_DRY_RUN = "dry-run"
 
 
 def _default_summary_path() -> Path | None:
@@ -188,24 +192,64 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
             f"连续 {attempts} 次写回均失败（最后一次：{last_failure}）")
 
 
+def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
+              source: str) -> tuple[int, str, str]:
+    """dry-run：在历史**副本**上真算一遍，不碰仓库、不落盘（R94）。"""
+    if not metrics_path.is_file():
+        print(f"没有 {metrics_path}（e2e 环境未启动），本轮不入库（dry-run）")
+        return EXIT_OK, REASON_METRICS_MISSING, "e2e 环境未启动，本轮不入库"
+    before = history_path.read_bytes() if history_path.is_file() else b""
+    try:
+        previous = len(history.load_history(history_path)) if before else 0
+    except history.HistoryError as exc:
+        print(str(exc), file=sys.stderr)
+        return history.EXIT_META_DRIFT, REASON_RECORD_INVALID, str(exc)
+
+    with tempfile.TemporaryDirectory(prefix="ci-writeback-dry-run-") as tmp:
+        copy = Path(tmp) / history_path.name
+        if before:
+            copy.write_bytes(before)
+        code = history.record(metrics_path, copy, run_id=run_id, source=source)
+        if code != history.EXIT_OK:
+            return code, REASON_RECORD_INVALID, f"record 退出 {code}，本轮不入库"
+        after = copy.read_bytes()
+        rounds = len(history.load_history(copy))
+
+    if after == before:
+        print(f"dry-run：history 没有变化（run_id={run_id} 已在历史里）")
+        return (EXIT_OK, REASON_NO_CHANGE,
+                f"历史已含这一轮（{rounds}/{history.MAX_ROUNDS} 轮），未提交")
+    print(f"dry-run：将记录 run_id={run_id}（来源 {source}），"
+          f"历史 {rounds}/{history.MAX_ROUNDS} 轮"
+          f"（+{rounds - previous}，未写入）")
+    return (EXIT_OK, REASON_DRY_RUN,
+            f"将写入历史 {rounds}/{history.MAX_ROUNDS} 轮"
+            f"（+{rounds - previous}，未提交）")
+
+
 def writeback(metrics_path: Path, history_path: Path, run_id: str,
               repo: Path, branch: str = "main",
               attempts: int = DEFAULT_ATTEMPTS,
               commit_message: str | None = None,
-              summary_path: Path | None = None) -> int:
+              summary_path: Path | None = None,
+              dry_run: bool = False) -> int:
     """CI 写回的完整链路：metrics → record → commit → push（带重试与重算）。
 
     每一轮 ``record`` 都在**当前历史**上重算：push 被拒后 rebase 成功时提交
     已经在最新分支上，只需重推；rebase 冲突时本地提交是在旧历史上算的，丢弃
     它、回到最新分支后重算（R90）——否则一轮历史会因为一次并发编辑而丢失。
     """
-    try:
-        code, reason, detail = _writeback_steps(
-            metrics_path, history_path, run_id, repo, branch, attempts,
-            commit_message)
-    except WritebackError as exc:
-        print(f"::error::{exc}", file=sys.stderr)
-        code, reason, detail = EXIT_FAILED, REASON_GIT_ERROR, str(exc)
+    if dry_run:
+        code, reason, detail = _rehearse(
+            metrics_path, history_path, run_id, source="ci")
+    else:
+        try:
+            code, reason, detail = _writeback_steps(
+                metrics_path, history_path, run_id, repo, branch, attempts,
+                commit_message)
+        except WritebackError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            code, reason, detail = EXIT_FAILED, REASON_GIT_ERROR, str(exc)
     _emit_summary(summary_path, run_id, reason, detail)
     return code
 
@@ -227,6 +271,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="提交信息（默认带 run_id 与 [skip ci]）")
     parser.add_argument("--summary", type=Path, default=None,
                         help="step summary 文件；缺省读 GITHUB_STEP_SUMMARY")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="只在历史副本上算一遍并报告，不写文件、不提交（R94）")
     return parser
 
 
@@ -236,7 +282,8 @@ def main(argv: list[str] | None = None) -> int:
         args.metrics, args.history, args.run_id, args.repo,
         branch=args.branch, attempts=args.attempts,
         commit_message=args.commit_message,
-        summary_path=args.summary or _default_summary_path())
+        summary_path=args.summary or _default_summary_path(),
+        dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

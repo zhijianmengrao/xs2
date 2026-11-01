@@ -416,6 +416,73 @@ def test_summary_write_failure_does_not_change_the_verdict(
     assert "step summary 写入失败" in capsys.readouterr().err
 
 
+# ------------------------------------------------------------ dry-run（R94）
+def test_dry_run_does_not_touch_the_repo(tmp_path: Path, capsys) -> None:
+    """dry-run 只在历史副本上算：HEAD、index、历史文件都不动。"""
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    head = _git("rev-parse", "HEAD", cwd=work)
+    before = _history_path(work).read_bytes()
+
+    code = writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-1", work, dry_run=True)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "dry-run" in out
+    assert f"1/{history.MAX_ROUNDS}" in out
+    assert _git("rev-parse", "HEAD", cwd=work) == head
+    assert _git("status", "--porcelain", cwd=work).strip() == ""
+    assert _history_path(work).read_bytes() == before
+
+
+def test_dry_run_reports_no_change_for_a_recorded_run(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    metrics = _write_metrics(tmp_path / "metrics.json")
+    assert writeback.writeback(metrics, _history_path(work), "ci-1", work) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        history, "_iso_now", lambda: "2026-11-01T09:00:00+00:00")
+    assert writeback.writeback(
+        metrics, _history_path(work), "ci-1", work, dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    assert "dry-run" in out and "没有变化" in out
+
+
+def test_dry_run_rejects_bad_metrics_without_writing(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    before = _history_path(work).read_bytes()
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+
+    assert writeback.writeback(
+        bad, _history_path(work), "ci-1", work, dry_run=True) == 4
+    assert _history_path(work).read_bytes() == before
+
+
+def test_cli_wires_dry_run(tmp_path: Path) -> None:
+    origin = _seed(tmp_path)
+    work = _clone(tmp_path, origin, "work")
+    head = _git("rev-parse", "HEAD", cwd=work)
+
+    code = writeback.main([
+        "--metrics", str(_write_metrics(tmp_path / "metrics.json")),
+        "--history", str(_history_path(work)),
+        "--run-id", "ci-1",
+        "--repo", str(work),
+        "--dry-run",
+    ])
+
+    assert code == 0
+    assert _git("rev-parse", "HEAD", cwd=work) == head
+
+
 def test_result_categories_are_distinct_literals() -> None:
     """类别是 CI 可读的契约：值固定且互不相同，改名要改这里。"""
     values = [
@@ -427,10 +494,11 @@ def test_result_categories_are_distinct_literals() -> None:
         writeback.REASON_REBASE_CONFLICT,
         writeback.REASON_GIT_ERROR,
         writeback.REASON_USAGE,
+        writeback.REASON_DRY_RUN,
     ]
     assert values == [
         "written", "no-change", "metrics-missing", "record-invalid",
-        "push-rejected", "rebase-conflict", "git-error", "usage",
+        "push-rejected", "rebase-conflict", "git-error", "usage", "dry-run",
     ]
     assert len(set(values)) == len(values)
 
