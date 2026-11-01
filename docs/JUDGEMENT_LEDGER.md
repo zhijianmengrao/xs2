@@ -106,7 +106,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 0 | 通过 | — | 全部 |
 | 1 | 判了，且不合格 | 查数据 / 查供应商 | 默认判定（政策上限、回归）、per-workflow 回归/失败率、e2e 编排行为 |
 | 3 | 无样本 | 重导快照 / 重录历史 | 全部读快照的模式、e2e 重跑历史（缺失或为空） |
-| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效 / 路径读不开 / 顶层不是对象；路径被占时先清理再重导） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
+| 4 | 元数据漂移 | 重导快照 / 重录历史（内容变了没重导 / 形状无效 / 路径读不开 / 顶层不是对象 / **另一块与内容不一致**；路径被占时先清理再重导） | 全部读快照的模式、e2e 重跑历史（读不懂 / 形状无效 / 计数矛盾） |
 | 5 | 快照过期 | 重导快照 | 仅 `--check-stale` |
 | 6 | 覆盖度缺口 | 重导快照 | 仅 `--check-coverage` |
 | 7 | 样本太薄 | 攒更多 run 再导 | 仅 `--check-sample-size` |
@@ -149,6 +149,9 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 非对象 `per_workflow` 块 → 4（不是 3/1，R80） | `tests/test_live_snapshot_gate.py::test_non_object_per_workflow_block_is_drift_not_no_sample` |
 | 历史畸形逐条列出且**不进退出码**（R80） | `tests/test_live_snapshot_gate.py::test_four_history_readers_report_the_same_note`、`test_malformed_history_does_not_change_the_regression_verdict` |
 | 计数形状规则只写一份（R80） | `tests/test_live_snapshot_gate.py::test_count_shape_rules_are_written_once` |
+| 另一块元数据与内容不一致 → 4（R82） | `tests/test_live_snapshot_gate.py::test_moved_failure_is_drift_for_every_totals_reader`、`test_lying_totals_is_drift_for_every_per_workflow_reader`、`test_contradicting_blocks_exit_four_from_the_cli` |
+| 另一块**缺失**不是矛盾、但必须写明（R82） | `tests/test_live_snapshot_gate.py::test_absent_per_workflow_block_is_reported_not_judged`、`test_sample_size_without_per_workflow_block_says_no_cross_check`、`test_absent_totals_block_is_not_a_contradiction` |
+| 两份内容复算同口径（R82） | `tests/test_live_snapshot_gate.py::test_content_counting_has_one_rule` |
 | e2e 重跑历史的窗口 **20 轮**（R78） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window` |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
@@ -435,6 +438,58 @@ M3（布尔重新算 1）**3 红，三个族各一条**（共享校验器的直�
 M6（容器退回 `{}`）6 红；M7（`history` 非数组静默忽略）**1 红，唯一咬合**；
 M8（history 退回 `int()`）4 红，其中 `test_count_shape_rules_are_written_once`
 是唯一守住「将来新增第四处」的那条。`cp` 还原后 md5 逐字节相同（`8e13df17…`）。
+
+### 7.9 两块元数据：任何读计数的入口都校验整份工件（R82）
+
+R80 §8-5 挂的账是「totals 只与内容复算比、per_workflow 只与内容复算比，两者的
+**互相**一致性没有判据」。实测的缺口比这句话更具体：**默认判定
+（`evaluate` / `--fail-if-above`，CI 第 8 步）根本不读 `per_workflow` 元数据。**
+两个 workflow 各 10 次尝试、各 1 次失败，把 a 的一次失败改成 b 的：全局合计
+`(20, 2)` 分毫不动，`evaluate` 退出 **0**，只有 `--check-per-workflow` 退 4。
+反方向同样存在：四条 per-workflow 判据不读 totals，totals 说谎时它们照常判决。
+
+**处理方式：不给新开关，六处各补「另一块」。** 加 `--check-meta-consistency`
+等于再造一个可以被跳过、忘记跑的步骤，而默认闸门依旧失明——这正是历轮批评的
+「恒绿防护」的另一种外衣。落地点是六个读计数的入口：
+
+| 入口 | 本来读 | R82 起也校验 |
+|---|---|---|
+| `evaluate`（默认判定） | totals | per_workflow（形状 + 与内容漂移） |
+| `check_sample_size` | totals | per_workflow（同上） |
+| `check_per_workflow` | per_workflow | totals（形状 + 与内容漂移） |
+| `check_per_workflow_rate` | per_workflow | totals（同上） |
+| `check_per_workflow_regression` | per_workflow | totals（同上） |
+| `check_lead_time` | per_workflow | totals（同上） |
+
+**不写「totals 与 per_workflow 求和对账」。** 两块都被钉到**同一次**内容复算后，
+求和对账永远不会唯一决定任何事：能构造出的差异都会被更强的内容漂移先抓到，它
+会是一条走不到的死判据。替代它的是构造保证——`recompute_totals` 改成
+`recompute_per_workflow` 的求和（`_totals_of`），全仓只有一份内容计数口径，并由
+`test_content_counting_has_one_rule` 钉住「全局合计 = 分组求和」。
+
+**缺失不是矛盾。** 另一块缺失（旧快照、手写 fixture）时跳过、退出码不变，但
+`evaluate` / `check_sample_size` 的说明必须写明「本次未做分组交叉校验」——
+否则读者会以为默认判定校验了两块。`totals.runs` 仍不校验：没有判据消费它，
+而 `live_snapshot_exceeds` 的 `runs` 3 vs 120 是合成的，抬它只会给重导加一个
+没人读的失败点。
+
+| 前提 | 期望 | 用例 |
+|---|---|---|
+| per_workflow 挪一次失败（totals 不变） | `evaluate` / `check_sample_size` 都 4（原先是 0/7） | `test_moved_failure_is_drift_for_every_totals_reader` |
+| totals 说谎（per_workflow 与内容都真） | 四条 per_workflow 判据都 4，消息含 `totals` | `test_lying_totals_is_drift_for_every_per_workflow_reader` |
+| 外部退出码 | 默认 / `--check-sample-size` / `--check-per-workflow-rate` 都以 4 退出 | `test_contradicting_blocks_exit_four_from_the_cli` |
+| 另一块缺失 | 退出码不变，说明含「未做分组交叉校验」 | `test_absent_per_workflow_block_is_reported_not_judged`、`test_sample_size_without_per_workflow_block_says_no_cross_check` |
+| 缺失的 totals | 不是「说谎的 totals」，不判 4 | `test_absent_totals_block_is_not_a_contradiction` |
+| 两份复算同口径 | 全局合计 = 分组求和（含坏 run 文件被同样跳过） | `test_content_counting_has_one_rule` |
+| 入库快照 | 六个入口全绿 | `test_every_count_reader_passes_the_committed_snapshot` |
+
+**十次变异如实记录**：M1（删 `evaluate` 的 per_workflow 检查）1 红 / 2 中唯一；
+M2（删 `check_sample_size` 的）1 红 / 2 中唯一；M3–M6（依次删四条 per_workflow
+判据的 totals 检查）各 **1 红 / 4 中唯一**；M7（缺失块抬成 4）2 红（向错方向的
+假红被两条反方向用例同时咬住）；M8（`recompute_totals` 退回第二份计数）3 红——
+不变量用例**不唯一**，它与两条元数据一致性用例一起红；M9（totals 只校验形状）
+**4 红，一个放松、四条判据同时失守**（共享校验器的直接后果）；M10（漂移文案不
+点名块）同样 4 红。`cp` 备份还原后 md5 逐字节相同（`1d3d1834…`）。
 
 ## 8. 环境归因：skip 判据的自变量（R71）
 
