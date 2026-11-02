@@ -35,6 +35,7 @@ R77 补的是同一道门的另一格：**元数据根本不是 JSON**。R72/R73
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -42,7 +43,9 @@ from pathlib import Path
 import pytest
 
 from scripts import check_live_snapshot_gate as gate
+from scripts import e2e_retry_history as history
 from scripts import e2e_workflow_stub as e2e
+from scripts import replay_sandbox_gc as gc
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEDGER = REPO_ROOT / "docs" / "JUDGEMENT_LEDGER.md"
@@ -67,6 +70,8 @@ _FLIP_POINT_TESTS = {
           "test_freshness_flips_within_one_microsecond"),
     "8": ("test_shape_tolerances_flip_on_both_sides",),
     "9": ("test_backoff_amplitude_flips_at_the_registered_minimum",),
+    "17": ("test_configured_window_flips_between_the_last_kept_and_first_dropped_round",),
+    "18": ("test_sandbox_gc_age_flips_at_the_registered_days",),
 }
 
 
@@ -661,6 +666,53 @@ def _ledger_rows(section_start: str, section_end: str) -> list[list[str]]:
         cells = [cell.strip() for cell in line.split("|")]
         rows.append(cells)
     return rows
+
+
+# ------------------------------------------------ #17 窗口 8 轮（R109/R111）
+
+def test_configured_window_flips_between_the_last_kept_and_first_dropped_round(
+        tmp_path: Path, monkeypatch) -> None:
+    """窗口 8：写满 8 轮仍在窗口内，第 9 轮把最早一轮挤掉。"""
+    window = 8
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, str(window))
+    target = tmp_path / "history.json"
+    metrics = tmp_path / "metrics.json"
+    metrics.write_text(json.dumps({
+        "schema": 1, "total": 1, "passed": 1, "failed": 0, "retried": 0,
+        "scenarios": [{"name": "only", "passed": True, "attempts": 1,
+                       "first_failure": ""}]}), encoding="utf-8")
+
+    for index in range(window):
+        assert history.record(metrics, target, run_id=f"r{index}") == 0
+    entries = history.load_history(target)
+    assert len(entries) == window
+    assert entries[0]["run_id"] == "r0"
+
+    assert history.record(metrics, target, run_id="r8") == 0
+    entries = history.load_history(target)
+    assert len(entries) == window
+    assert entries[0]["run_id"] == "r1"
+    assert entries[-1]["run_id"] == "r8"
+
+
+# ------------------------------------------------ #18 GC 年龄 7 天（R110/R111）
+
+def test_sandbox_gc_age_flips_at_the_registered_days(tmp_path: Path) -> None:
+    """mtime 恰好 7 天（含等号）是候选；年轻 1ms 不是。"""
+    now = 1_000_000_000.0
+    days = gc.DEFAULT_MIN_AGE_DAYS
+    cutoff = now - days * 86400
+    boundary = tmp_path / (gc.SANDBOX_PREFIX + "boundary")
+    boundary.mkdir()
+    younger = tmp_path / (gc.SANDBOX_PREFIX + "younger")
+    younger.mkdir()
+    os.utime(boundary, (cutoff, cutoff))
+    os.utime(younger, (cutoff + 0.001, cutoff + 0.001))
+
+    found = {path.name for path, _age in gc.candidates(
+        tmp_path, days, now=now)}
+    assert boundary.name in found
+    assert younger.name not in found
 
 
 def test_every_numeric_tolerance_has_a_registered_flip_point() -> None:

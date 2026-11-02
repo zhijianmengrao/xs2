@@ -2,7 +2,7 @@
 
 > 本文回答 R63 §9-2 挂账的问题：**「R63 的预算式能不能迁移到别的阈值」**。
 > 结论先说：**不能直接迁移**——它只对「两个实测量的比值 ≥ r」且偏移同时加在
-> 分子分母上这一种形态成立。下面把十条判据逐条登记，并写明每条自己的容忍量、
+> 分子分母上这一种形态成立。下面把十八条判据逐条登记，并写明每条自己的容忍量、
 > 可复算边界与盲区。
 >
 > 数字由 `tests/test_judgement_ledger.py` 与代码常量对齐；分类文字无法自动校验。
@@ -35,6 +35,10 @@
 | 12 | 满窗时的写入身份 | `replay_ci_scenarios.py::_run_scenario`（`last_run_id`） | 环境型（身份，不是容忍量） | 无（精确相等） | `result.last_run_id == 本轮 run_id`；`rounds` 仍按 `min(before+delta, MAX_ROUNDS)` 断言并用 `rounds_clipped` 标注 | 窗口满 40 轮后 `rounds` 恒定在 40，`rounds_delta` 的 +1/+2 不可辨（39 轮 conflict 先被裁剪）；该断言不依赖窗口状态，但 `last_run_id` 由 writeback 自报（读同一 `origin/<branch>`），不是独立第二证据源 | 1 |
 | 13 | 期望失败场景（永久拒绝） | `replay_ci_scenarios.py::Scenario` / `_run_scenario` | 环境型（身份 + 计数） | 无（精确相等） | exit=1、reason=`push-rejected`、rounds=基线、`last_run_id`=基线末条、`push_attempts=3`；输出必须出现 3 次 `simulated rejection` 与 3 次 `push 被拒（第`；失败沙箱必须「存在过 → 清理 → 不存在」 | 传输故障也能让 push 三次非零，不数钩子签名就会为错误的原因变绿；清理只覆盖期望失败场景，意外失败仍保留现场 | 1 |
 | 14 | 全链 artifact 身份分离 | `replay_ci_scenarios.py`（fetch 场景）+ `replay_ci_writeback.py::--fetch-run-id` | 环境型（身份） | 无（精确相等） | artifact API 用 GitHub run id，历史写入用 `replay-ci-fetched-<sha>`；`result.last_run_id` 必须等于后者；输出含 `已下载 1 个文件` | 真实下载依赖 backend 同 run 上传 artifact（job 用 needs+success 门控）；缺 artifact 时 fetch 退 0、writeback 退 0（metrics-missing），必须由驱动的期望 `written` 判红 | 1 |
+| 15 | 全链 metrics 内容指纹（R107） | `replay_ci_writeback.py::_metrics_content` + `replay_ci_scenarios.py` 的 fetch 场景 | 环境型（身份） | 无（精确相等） | 写回前打印 `replay：metrics 内容 total=… passed=… failed=… retried=… attempts=…`；全链场景断 `metrics 内容 total=10`，本地夹具故意 3 场景/1 重跑（total=3） | 只钉 `total`：`retried/attempts` 是当轮运行结果，钉死会把 e2e flake 变成 replay 回归；生产形状的断言只证明「没缺」，不证明「来源对」（M110） | 1 |
+| 16 | 拒绝预算的行为边界（R108） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject`）+ 两个 `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第一次拒绝时注入冲突轮；预算 3 → 三次全拒、`simulated rejection` 3、末条 `replay-conflict`；预算 2 → 第三次成功、净 +2、末条本轮；`push 被拒（第` 次数 3/2 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥 | 1 |
+| 17 | 保留期可配置（R109） | `e2e_retry_history.py::max_rounds`（`XS2_MAX_ROUNDS`） | 环境型（配置） | 默认 40；范围 [3, 1000]；非法值告警退回 | record 裁剪/文案、writeback `window_full`/文案、驱动期望、冲突夹具、钩子注入都从同一读取点取窗口 | 默认值仍是 40，政策没变；非法值是「出声的默认」（`::warning::`），不是静默；按天滚动未实现 | — |
+| 18 | 沙箱 GC 守卫（R110） | `replay_sandbox_gc.py::candidates` + `main` | 政策型（删除） | 默认 7 天；4 道守卫 | 直接子目录 + `replay-ci-writeback-` 前缀 + 非符号链接/junction + mtime 超龄；默认 dry-run，`--apply` 才删，删后 `exists()` 复核 | 只清本机/长期环境；runner 临时目录无需 GC；7 天是默认值，保留策略数值未拍板 | 0/1/2 |
 
 ## 3. R63 的预算式能迁移到哪
 
@@ -186,6 +190,11 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 归因用例的失败不被吞（R71） | `tests/test_msys_attribution.py::test_attribution_failures_are_never_converted_into_skips` |
 | 113 skips 的四行实测矩阵（R70 §6.1） | 本页 §8：High 2189/113 与**真降** Low 2189/113 逐字相同 |
 
+| 全链 metrics 内容指纹（R107） | `tests/test_replay_ci_writeback.py::test_replay_reports_the_metrics_content`、`test_replay_reports_the_fetched_metrics_content`、`tests/test_replay_ci_scenarios.py::test_local_metrics_shape_is_deliberately_different` |
+| 预算 2 与 3 的行为边界（R108） | `tests/test_replay_ci_writeback.py::test_replay_hook_injects_conflict_on_first_rejection`、`test_replay_rejection_budget_two_is_a_real_boundary` |
+| `XS2_MAX_ROUNDS` 默认/范围/告警（R109） | `tests/test_e2e_retry_history.py::test_max_rounds_env_override_and_invalid`、`test_record_uses_the_configured_window`、`tests/test_ci_writeback_history.py::test_writeback_window_follows_env`、`tests/test_replay_ci_scenarios.py::test_driver_uses_the_configured_window` |
+| 沙箱 GC 四道守卫与默认 dry-run（R110） | `tests/test_replay_sandbox_gc.py::test_dry_run_lists_only_old_matching_directories`、`test_apply_removes_only_the_candidates`、`test_symlink_with_matching_name_is_skipped`、`test_negative_age_is_a_usage_error`、`test_missing_root_is_a_usage_error` |
+
 ## 7. 翻转点（R69）
 
 「数字等于常量」不等于「数字是判决的边界」：把阈值写成 `基线 + margin * 2` 的
@@ -205,6 +214,8 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 6 | 新鲜度 7 天 | 滞后 7.0 天 | 7.1 天 | `test_freshness_flips_at_the_registered_days`、`test_freshness_default_is_the_registered_days`、`test_freshness_flips_within_one_microsecond` |
 | 8 | 形状 −0.05 / +0.30 | −0.050 / +0.300 | −0.051 / +0.301 | `test_shape_tolerances_flip_on_both_sides` |
 | 9 | 幅度 0.7s | extra 0.700s | 0.699s | `test_backoff_amplitude_flips_at_the_registered_minimum` |
+| 17 | 窗口 8 轮 | 写满 8 轮仍在窗口（首条 r0） | 第 9 轮挤掉最早一轮（首条 r1） | `test_configured_window_flips_between_the_last_kept_and_first_dropped_round` |
+| 18 | GC 年龄 7 天 | mtime 恰好 7 天（含等号）是候选 | 年轻 1ms 不是候选 | `test_sandbox_gc_age_flips_at_the_registered_days` |
 
 #7（覆盖度）、#10（判据算术失败）与 #11（环境归因）没有数字容忍量：#7 判的是
 集合关系，#10 不是判据而是「算不下去」的分流，#11 判的是**系统签名字符串是否
@@ -1027,3 +1038,42 @@ R36 记录的「服务进程为 Low-IL」与此一致，但本轮没有回查当
 `_metadata_shape_message()` → 退出码 4。**4 与 8 的分界**：8 是「判据自己算不
 下去」（修判据），4 是「被判的数据坏了」（重导）；把数据错误归到 8 会让两种
 处置互相冒充，与 R64 给 `OverflowError` 单独开 8 是同一条纪律的反面。
+
+## 10. R107–R110：输入来源、预算边界、窗口配置与删除守卫（2026-11-02）
+
+### 10.1 指纹不是来源证明（R107）
+
+全链写回前打印实际 metrics 的计数指纹（`replay：metrics 内容 total=…`），
+并让驱动自己的本地夹具故意与生产 artifact 不同形（3 场景/1 重跑 vs 10
+场景）。只断言生产形状（`total=10`）能发现「没打印/没下载」，发现不了
+「打印的是另一份文件」——M110 把指纹写死成 10，全链行为用例照样绿，
+只有变体形状（2/4 场景）的单测能咬住。**判据要证明来源，必须让错误来源
+的形状与正确来源不同。**
+
+### 10.2 预算：改时机，不改断言（R108）
+
+R106 的 `reject_pushes=3` 只是字面口径：冲突在 writeback 前注入，第一次
+push 被非快进挡下、根本到不了钩子，预算 2 与 3 行为等价。R108 把注入搬进
+`pre-receive`（第一次拒绝时用 plumbing 追加一轮冲突历史），第一次 push
+真的到钩子；预算 3 → 三次全拒，预算 2 → 第三次成功。**一个数字要成为
+行为边界，改变的是状态/时机，不是断言里的常量。**
+
+钩子内写对象还有一个硬约束：`pre-receive` 失败会丢弃 quarantine，注入脚本
+必须清掉 `GIT_OBJECT_DIRECTORY` / `GIT_ALTERNATE_OBJECT_DIRECTORIES` /
+`GIT_QUARANTINE_PATH`，否则 `update-ref` 指向不存在的对象。
+
+### 10.3 配置：一个读取点（R109）
+
+`XS2_MAX_ROUNDS`（默认 40，范围 [3, 1000]）由 `max_rounds()` 单点读取；
+record、写回文案、`window_full`、驱动期望、冲突夹具、钩子注入全部走它。
+非法值不静默：`::warning::` 后退回 40。**一个配置项若有两处读取，就会
+出现「裁剪按 A、期望按 B」的分裂**；驱动用「窗口 8、基线 8」把这种分裂
+判红。只改文案的缺陷（M123）需要文案断言，`rounds` 全对时它完全隐形。
+
+### 10.4 删除：默认不删（R110）
+
+`replay_sandbox_gc.py` 四道守卫各自独立：直接子目录、`replay-ci-writeback-`
+前缀、非符号链接/junction、mtime 超龄；默认 dry-run，`--apply` 才删，删后
+复核。删除复用 `_remove_sandbox`（Windows 只读 pack 的历史修复）。**删除
+类工具默认必须是 dry-run**；守卫要各自有变异咬住，否则测的只是「删了一个」。
+GC 不进 CI：runner 临时目录随 job 消失，没有历史现场可清。
