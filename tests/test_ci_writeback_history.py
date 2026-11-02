@@ -675,6 +675,28 @@ def test_result_json_names_the_round_that_trimmed_the_window(
     assert entries[0]["run_id"] == "seed-1"
 
 
+def test_writeback_window_follows_env(tmp_path: Path, monkeypatch) -> None:
+    """R109：写回窗口也必须走 max_rounds()，不能只 record 换了读取点。"""
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "5")
+    origin = _seed(tmp_path, entries=5)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-new", work, result_path=result) == 0
+
+    payload = _result(result)
+    assert payload["rounds"] == 5
+    assert payload["window_full"] is True
+    assert payload["last_run_id"] == "ci-new"
+    # 文案也必须说 5 轮：否则「裁剪按 5、报告按 40」会静默分裂。
+    assert "5/5 轮" in payload["detail"]
+    entries = history.load_history(_history_path(work))
+    assert len(entries) == 5
+    assert entries[0]["run_id"] == "seed-1"
+
+
 def test_dry_run_at_the_window_reports_the_dropped_round(
         tmp_path: Path, capsys) -> None:
     """dry-run 在满窗时不能报「+0 / 未写入」了事：那是另一次「没有变化」。"""

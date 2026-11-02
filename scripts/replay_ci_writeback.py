@@ -114,7 +114,7 @@ import subprocess
 GIT_DIR = os.environ["GIT_DIR"]
 BRANCH = {branch!r}
 HISTORY = {history_rel!r}
-MAX_ROUNDS = {history.MAX_ROUNDS}
+MAX_ROUNDS = {history.max_rounds()}
 ENTRY = {entry}
 
 env = os.environ.copy()
@@ -228,7 +228,7 @@ def _create_conflicting_round(work: Path, origin: Path, branch: str,
     # 与 record 的窗口语义一致：满 MAX_ROUNDS 时挤掉最早一轮。否则满窗
     # 失败场景（R105 的组合场景）会把 origin 留在 41 轮——生产里 record
     # 永远不会写出这种历史，夹具自己造出来就会让窗口断言失去意义。
-    entries = (entries + [_conflict_entry()])[-history.MAX_ROUNDS:]
+    entries = (entries + [_conflict_entry()])[-history.max_rounds():]
     history.validate_history({"schema": history.SCHEMA, "history": entries})
     other = sandbox / "other"
     _git("clone", "-q", str(origin), str(other))

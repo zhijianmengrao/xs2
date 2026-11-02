@@ -144,6 +144,7 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
     类别用于 summary、报错与机读结果工件（R97）；``push_attempts`` 只统计
     真正发起的 push（缺 metrics / 无变化 / 用法错误都是 0）。
     """
+    window = history.max_rounds()
     attempts_made = 0
     if attempts < 1:
         print("--attempts 必须 >= 1", file=sys.stderr)
@@ -168,7 +169,7 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
                 print("history 没有变化（同一 run 重跑），不提交")
                 return (EXIT_OK, REASON_NO_CHANGE,
                         f"历史已含这一轮（{_rounds(history_path)}/"
-                        f"{history.MAX_ROUNDS} 轮），不提交", attempts_made)
+                        f"{window} 轮），不提交", attempts_made)
             # 只提交这个文件：即使工作树里还有别的改动（checkout 残留），也不带进去。
             _git_checked(
                 repo, "commit", "-m", message, "--", str(history_path))
@@ -180,7 +181,7 @@ def _writeback_steps(metrics_path: Path, history_path: Path, run_id: str,
             print(f"已写回 {branch}（第 {attempt} 次尝试）")
             return (EXIT_OK, REASON_WRITTEN,
                     f"第 {attempt} 次尝试，历史 {_rounds(history_path)}/"
-                    f"{history.MAX_ROUNDS} 轮", attempts_made)
+                    f"{window} 轮", attempts_made)
         detail = _decode(push.stderr)
         if detail:
             print(detail, file=sys.stderr)
@@ -213,6 +214,7 @@ def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
 
     dry-run 不发起 push，所以尝试次数固定是 0。
     """
+    window = history.max_rounds()
     if not metrics_path.is_file():
         print(f"没有 {metrics_path}（e2e 环境未启动），本轮不入库（dry-run）")
         return (EXIT_OK, REASON_METRICS_MISSING,
@@ -239,7 +241,7 @@ def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
     if after == before:
         print(f"dry-run：history 没有变化（run_id={run_id} 已在历史里）")
         return (EXIT_OK, REASON_NO_CHANGE,
-                f"历史已含这一轮（{rounds}/{history.MAX_ROUNDS} 轮），未提交", 0)
+                f"历史已含这一轮（{rounds}/{window} 轮），未提交", 0)
     # 满窗时 record 会挤压最早一轮：净轮数可以是 0 甚至负数，但「写入了」
     # 这件事是真的。只报 +0 会让 dry-run 与「没有变化」再次同形（R102）。
     added = 0 if any(entry["run_id"] == run_id
@@ -248,16 +250,16 @@ def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
     net = added - dropped
     if dropped > 0:
         print(f"dry-run：将记录 run_id={run_id}（来源 {source}），"
-              f"历史窗口已满 {rounds}/{history.MAX_ROUNDS} 轮"
+              f"历史窗口已满 {rounds}/{window} 轮"
               f"（写入挤掉最早 {dropped} 轮，净 {net:+d}，未写入）")
         return (EXIT_OK, REASON_DRY_RUN,
-                f"将写入历史（窗口已满 {rounds}/{history.MAX_ROUNDS} 轮，"
+                f"将写入历史（窗口已满 {rounds}/{window} 轮，"
                 f"挤掉最早 {dropped} 轮，净 {net:+d}，未提交）", 0)
     print(f"dry-run：将记录 run_id={run_id}（来源 {source}），"
-          f"历史 {rounds}/{history.MAX_ROUNDS} 轮"
+          f"历史 {rounds}/{window} 轮"
           f"（+{rounds - previous}，未写入）")
     return (EXIT_OK, REASON_DRY_RUN,
-            f"将写入历史 {rounds}/{history.MAX_ROUNDS} 轮"
+            f"将写入历史 {rounds}/{window} 轮"
             f"（+{rounds - previous}，未提交）", 0)
 
 
@@ -305,7 +307,7 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
         "exit_code": code,
         "rounds": rounds,
         "last_run_id": remote[-1]["run_id"] if remote else None,
-        "window_full": rounds is not None and rounds >= history.MAX_ROUNDS,
+        "window_full": rounds is not None and rounds >= history.max_rounds(),
         "push_attempts": push_attempts,
         "dry_run": dry_run,
     })

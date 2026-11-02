@@ -642,6 +642,33 @@ def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
     assert text.count("窗口已满") == sum(clipped.values())
 
 
+def test_driver_uses_the_configured_window(
+        tmp_path: Path, monkeypatch) -> None:
+    """R109：驱动、record、冲突夹具必须共用一个保留期读取点。
+
+    把窗口设成 8、基线也是 8：冲突场景 +2 会被裁剪（8+2 > 8），失败场景的
+    注入也必须裁到 8（不能造出 9 轮）；如果某处还在读常量 40，
+    rounds/window_full/rounds_clipped 会互相矛盾，驱动会判 1。
+    """
+    monkeypatch.setenv(scenarios.history.MAX_ROUNDS_ENV, "8")
+    repo = _seed_with_rounds(tmp_path, 8)
+    result = tmp_path / "result.json"
+
+    code = scenarios.main(_argv(repo, result))
+
+    assert code == 0
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["max_rounds"] == 8
+    assert payload["window_full"] is True
+    by_name = {record["name"]: record for record in payload["scenarios"]}
+    # 8 + 2 被压到 8：裁剪标记必须出现。
+    assert by_name["conflict"]["actual"]["rounds"] == 8
+    assert by_name["conflict"]["rounds_clipped"] is True
+    assert by_name["rejected-conflict"]["actual"]["rounds"] == 8
+    # 失败场景的注入也裁到 8，不能造出第 9 轮。
+    assert by_name["rejected-hook-conflict"]["actual"]["rounds"] == 8
+
+
 def test_window_full_identity_is_the_only_remaining_witness(
         tmp_path: Path, monkeypatch) -> None:
     """满窗时其余四项全对、只有末条不是本轮：必须由 last_run_id 判红。

@@ -172,6 +172,44 @@ def test_record_trims_to_the_window(tmp_path: Path) -> None:
     assert entries[-1]["run_id"] == f"r{history.MAX_ROUNDS}"
 
 
+def test_max_rounds_env_override_and_invalid(monkeypatch, capsys) -> None:
+    """R109：保留期可配置；非法值必须告警并退回默认，不能静默生效。"""
+    monkeypatch.delenv(history.MAX_ROUNDS_ENV, raising=False)
+    assert history.max_rounds() == history.MAX_ROUNDS == 40
+
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "80")
+    assert history.max_rounds() == 80
+
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "abc")
+    assert history.max_rounds() == 40
+    assert "不是整数" in capsys.readouterr().err
+
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "2")
+    assert history.max_rounds() == 40
+    assert "超出" in capsys.readouterr().err
+
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "1001")
+    assert history.max_rounds() == 40
+    assert "超出" in capsys.readouterr().err
+
+
+def test_record_uses_the_configured_window(tmp_path: Path, monkeypatch,
+                                          capsys) -> None:
+    """R109：record 的裁剪与文案都必须走 max_rounds()，不能各读各的。"""
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "4")
+    target = tmp_path / "history.json"
+    for index in range(5):
+        assert history.record(
+            _metrics_file(tmp_path / f"{index}.json", _metrics()),
+            target, run_id=f"r{index}") == 0
+
+    entries = history.load_history(target)
+    assert len(entries) == 4
+    assert entries[0]["run_id"] == "r1"
+    assert entries[-1]["run_id"] == "r4"
+    assert "/4 轮" in capsys.readouterr().out
+
+
 def test_record_check_only_does_not_write(tmp_path: Path, capsys) -> None:
     """PR 预检：校验 + 打印将写入的条目，但一个字节都不落盘（R92）。"""
     source = _metrics_file(tmp_path / "metrics.json", _metrics())

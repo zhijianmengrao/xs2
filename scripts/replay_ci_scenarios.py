@@ -377,6 +377,7 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
                   fetch_repo: str = "",
                   artifact: str | None = None) -> dict:
     """跑一个场景并返回逐项观测；不抛异常，失败写进返回值。"""
+    window = history.max_rounds()
     head = _git_text(repo, "rev-parse", "HEAD")
     source_history = repo / history_rel
     history_before = source_history.read_bytes()
@@ -417,18 +418,16 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
     code, output = _invoke_replay(argv)
     result = _read_result(result_path)
     if scenario.succeeds:
-        expected_rounds = min(before + scenario.rounds_delta,
-                              history.MAX_ROUNDS)
+        expected_rounds = min(before + scenario.rounds_delta, window)
         expected_last_run_id = run_id
         # 窗口满时轮数会恒定在 MAX_ROUNDS：这一项只能证明「窗口没坏」，不能
         # 再证明「本轮写进去了」。rounds_clipped 把这件事写进产物，免得看
         # 日志的人把 40 == 40 当成强证据。
-        rounds_clipped = before + scenario.rounds_delta > history.MAX_ROUNDS
+        rounds_clipped = before + scenario.rounds_delta > window
     else:
         # 写回失败时本轮不入库，远端只会因夹具注入而变化（目前只有冲突轮）。
         # 注入也遵守 MAX_ROUNDS：满窗时挤掉最早一轮，不会造出 41 轮。
-        expected_rounds = min(before + scenario.injected_rounds,
-                              history.MAX_ROUNDS)
+        expected_rounds = min(before + scenario.injected_rounds, window)
         expected_last_run_id = (
             scenario.expected_last_run_id or baseline_last_run_id)
         # 失败场景不宣称「本轮写入了」，所以「轮数被裁剪」不适用；末条身份
@@ -546,6 +545,7 @@ def run(repo: Path, branch: str, history_rel: str,
         fetch_repo: str = "",
         artifact: str | None = None) -> int:
     repo = Path(repo).resolve()
+    window = history.max_rounds()
     scenarios = SCENARIOS + (
         (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO)
         if fetch_api_url else ())
@@ -567,14 +567,14 @@ def run(repo: Path, branch: str, history_rel: str,
 
     print(
         f"replay-ci：源仓库 {repo} HEAD {baseline['head'][:8]}，"
-        f"历史 {baseline['rounds']}/{history.MAX_ROUNDS} 轮，"
+        f"历史 {baseline['rounds']}/{window} 轮，"
         f"末条 {baseline['last_run_id']}",
         flush=True)
-    window_full = baseline["rounds"] >= history.MAX_ROUNDS
+    window_full = baseline["rounds"] >= window
     if window_full:
         print(
             f"replay-ci：注意：历史窗口已满 "
-            f"{baseline['rounds']}/{history.MAX_ROUNDS}，rounds 计数会被"
+            f"{baseline['rounds']}/{window}，rounds 计数会被"
             f"裁剪；写入判定以 result.last_run_id 为准",
             flush=True)
 
@@ -616,7 +616,7 @@ def run(repo: Path, branch: str, history_rel: str,
         "branch": branch,
         "history": history_rel,
         "before": baseline["rounds"],
-        "max_rounds": history.MAX_ROUNDS,
+        "max_rounds": window,
         "window_full": window_full,
         "source_head": baseline["head"],
         "ok": ok,

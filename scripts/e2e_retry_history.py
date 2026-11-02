@@ -55,6 +55,38 @@ SCHEMA = 1
 # 只剩 6~7 个工作轮的量。40 ≈ 13 轮，回到 R88 前的日历跨度。
 MAX_ROUNDS = 40
 
+# R109：保留期可配置，默认仍是 40。环境变量是**部署策略**，不是判据：
+# 所有运行期入口（record / writeback / replay 驱动 / 冲突夹具）都必须走
+# ``max_rounds()`` 这同一个读取点，否则「裁剪到 80、期望按 40 算」这类
+# 两个事实两种说法会立刻出现。
+MAX_ROUNDS_ENV = "XS2_MAX_ROUNDS"
+MAX_ROUNDS_FLOOR = 3
+MAX_ROUNDS_CEILING = 1000
+
+
+def max_rounds() -> int:
+    """当前历史保留期：``XS2_MAX_ROUNDS`` 覆盖，非法值退回 40 并告警。
+
+    非法值不静默生效：写错的环境变量会让策略悄悄回到默认，正是「配置
+    看起来生效了」的典型坑。范围夹在 [3, 1000]：低于 3 撑不起相邻两轮
+    趋势，高于 1000 已超出趋势样本的合理规模。
+    """
+    raw = os.environ.get(MAX_ROUNDS_ENV, "").strip()
+    if not raw:
+        return MAX_ROUNDS
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"::warning::{MAX_ROUNDS_ENV}={raw!r} 不是整数，"
+              f"保留期退回 {MAX_ROUNDS}", file=sys.stderr)
+        return MAX_ROUNDS
+    if value < MAX_ROUNDS_FLOOR or value > MAX_ROUNDS_CEILING:
+        print(f"::warning::{MAX_ROUNDS_ENV}={value} 超出 "
+              f"[{MAX_ROUNDS_FLOOR}, {MAX_ROUNDS_CEILING}]，"
+              f"保留期退回 {MAX_ROUNDS}", file=sys.stderr)
+        return MAX_ROUNDS
+    return value
+
 # 条目来源（R93）：CI 写回与本机显式导出是两个不同的入口，历史要能自己说清
 # 哪一轮来自哪。旧条目没有这个字段——按「未标注」报告，**不猜**（不拿 run_id
 # 的形状反推来源：那会把命名习惯变成事实）。
@@ -318,7 +350,8 @@ def record(metrics_path: Path, history_path: Path,
             break
     else:
         history.append(record_entry)
-    trimmed = history[-MAX_ROUNDS:]
+    window = max_rounds()
+    trimmed = history[-window:]
     # 写入前自校验（R92）：算出来的历史必须能通过自己的校验器。这条覆盖
     # record 自己的算术（覆盖/去重/裁剪），不是再验一遍输入——输入已经验过。
     try:
@@ -330,7 +363,7 @@ def record(metrics_path: Path, history_path: Path,
         print(f"check-only：将写入 run_id={run_id}："
               f"{entry['retried']}/{entry['total']} 个场景重跑"
               f"（总尝试 {entry['attempts']} 次），历史 {len(trimmed)}/"
-              f"{MAX_ROUNDS} 轮（未写入）")
+              f"{window} 轮（未写入）")
         return EXIT_OK
     try:
         _write_history(history_path, trimmed)
@@ -344,7 +377,7 @@ def record(metrics_path: Path, history_path: Path,
         action = "覆盖" if replaced else "记录"
     print(f"已{action} run_id={run_id}：{entry['retried']}/{entry['total']} "
           f"个场景重跑（总尝试 {entry['attempts']} 次），"
-          f"历史 {len(trimmed)}/{MAX_ROUNDS} 轮")
+          f"历史 {len(trimmed)}/{window} 轮")
     return EXIT_OK
 
 
@@ -441,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="历史文件")
     chk.add_argument("--limit", type=int, default=5,
                      help=f"趋势表最多显示最近几轮（默认 5；只影响显示，"
-                          f"不改历史窗口 {MAX_ROUNDS}）")
+                          f"不改历史窗口 {max_rounds()}）")
     return parser
 
 
