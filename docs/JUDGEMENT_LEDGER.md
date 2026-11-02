@@ -883,6 +883,30 @@ R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact �
 - **测试精度**：`out.count("push 被拒")` 会把钩子安装提示也算进去；断言词
   必须带边界（`push 被拒（第`）。
 
+### 7.26 replay 拒绝/冲突进生产 CI：三条路径的逐场景断言（R101）
+
+- `replay-ci-writeback`（`ubuntu-24.04`、只读、PR 与 push 都跑）调用
+  `scripts/replay_ci_scenarios.py`；生产 job **不跑 pytest**，pytest 覆盖只是
+  并存的第二道锚，不再是唯一执行者。
+- 期望计数是**精确值**，不是容忍量（因此不进 §2 的数字容忍量表）：
+
+  | 场景 | rounds 增量 | push_attempts |
+  |---|---|---|
+  | `happy` | +1 | 1 |
+  | `rejected`（`--reject-pushes 1`） | +1 | 2 |
+  | `conflict`（`--conflict`） | +2（冲突轮 + 本轮） | 2 |
+
+- 每个场景前后比较源仓库 HEAD 与 history 字节；任一变化 → 1，并**停止**
+  后续场景（基线已污染，继续跑只会扩散）。
+- 退出码：0 全符 / 1 场景不符 / 2 用法 / **3 基线不可用**（repo 不是 git 仓、
+  history 缺失/读不懂）。3 不是 1——环境坏不冒充回放语义坏。
+- 守卫：`tests/test_replay_ci_scenarios.py` +6、
+  `tests/test_ci_replay_wiring.py` +9。
+- 变异：M63–M70 **8/8 全咬合**（M64/M66/M70 各自唯一咬合）。
+- **边界**：只在 ubuntu 跑（Windows 的 replay 行为由 `windows-backend` 的
+  pytest 覆盖）；永久拒绝（三次全拒）仍只由 pytest 覆盖；不跑
+  `--fetch-api-url`（下载→写回整链已由生产 fetch 与 R96/R99 覆盖）。
+
 ## 8. 环境归因：skip 判据的自变量（R71）
 
 R70 §6.1 的发现推翻了 `tests/conftest.py` 旧 skip 文案的因果句。把四行实测矩阵
