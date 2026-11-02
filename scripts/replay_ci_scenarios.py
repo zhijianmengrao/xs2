@@ -194,7 +194,9 @@ SCENARIOS: tuple[Scenario, ...] = (
 # R103：全链场景不喂本地 metrics，而是让 replay 先下载真实 artifact。
 FETCH_SCENARIO = Scenario(
     "fetched", 1, 1, fetch=True,
-    must_contain=("已下载 1 个文件", "已写回"),
+    # total=10 只可能来自生产 artifact（本地夹具故意是 3 场景），
+    # retried/attempts 不钉死：e2e 偶发重跑不应让全链 job 变红（R107）。
+    must_contain=("已下载 1 个文件", "metrics 内容 total=10", "已写回"),
 )
 
 # R106：全链 × 永久拒绝 × 冲突的三重叠加。期望与本地 metrics 的
@@ -214,6 +216,7 @@ FETCH_REJECTED_CONFLICT_SCENARIO = Scenario(
     injected_rounds=1,
     expected_last_run_id="replay-conflict",
     must_contain=("已下载 1 个文件",
+                  "metrics 内容 total=10",
                   "rebase 冲突（第 1 次）",
                   "::error::连续 3 次写回均失败"),
     must_not_contain=("已写回",),
@@ -245,14 +248,20 @@ def _git_text(repo: Path, *args: str) -> str:
 
 
 def _metrics(path: Path) -> Path:
-    """与 e2e 相同的 10 场景形状；``record`` 只校验形状，不跑模型。"""
+    """本地夹具：3 场景、其中 1 个重跑一次（总尝试 4）。
+
+    生产 artifact 是 10 场景形状（当前 10/0/10）。**故意与生产不同**：全链
+    场景断言 ``replay：metrics 内容 total=10``，如果 fetch 成功却回退到这份
+    本地夹具，计数指纹会变成 ``total=3 attempts=4``，断言立刻露馅（R107）。
+    """
     scenarios = [
-        {"name": f"scenario_{index}", "passed": True, "attempts": 1,
-         "first_failure": ""}
-        for index in range(10)
+        {"name": "local_0", "passed": True, "attempts": 2,
+         "first_failure": "local retry"},
+        {"name": "local_1", "passed": True, "attempts": 1, "first_failure": ""},
+        {"name": "local_2", "passed": True, "attempts": 1, "first_failure": ""},
     ]
     path.write_text(json.dumps({
-        "schema": 1, "total": 10, "passed": 10, "failed": 0, "retried": 0,
+        "schema": 1, "total": 3, "passed": 3, "failed": 0, "retried": 1,
         "scenarios": scenarios}), encoding="utf-8")
     return path
 

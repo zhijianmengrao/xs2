@@ -172,6 +172,15 @@ def _rounds(path: Path) -> int:
         return 0
 
 
+def _metrics_content(metrics_path: Path) -> dict | None:
+    """读 metrics 的计数指纹；坏了返回 None（record 会给出正式错误）。"""
+    try:
+        return history.entry_from_metrics(
+            json.loads(metrics_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, history.HistoryError):
+        return None
+
+
 def replay(repo: Path, metrics: Path | None, run_id: str,
            history_rel: str = DEFAULT_HISTORY, branch: str = "main",
            keep: bool = False, summary_path: Path | None = None,
@@ -218,6 +227,15 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
                           f"写回会按「没有 metrics」处理", file=sys.stderr)
 
         if can_write and metrics_path is not None:
+            # R107：把**实际被写回的那份 metrics** 的计数指纹打出来。全链场景
+            # 断言它等于 artifact 的形状；若误用本地夹具（形状故意不同），
+            # 「已下载 1 个文件」仍在，但这一行会露馅。
+            content = _metrics_content(metrics_path)
+            if content is not None:
+                print(f"replay：metrics 内容 total={content['total']} "
+                      f"passed={content['passed']} failed={content['failed']} "
+                      f"retried={content['retried']} "
+                      f"attempts={content['attempts']}")
             code = writeback.writeback(
                 metrics_path, target, run_id, work, branch=branch,
                 summary_path=summary_path, dry_run=dry_run,

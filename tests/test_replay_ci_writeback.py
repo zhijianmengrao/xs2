@@ -35,6 +35,19 @@ def _metrics(path: Path) -> Path:
     return path
 
 
+def _metrics_shape(path: Path, total: int) -> Path:
+    """任意场景数的合法 metrics（用于证明内容指纹确实来自被写回的文件）。"""
+    scenarios = [
+        {"name": f"shape_{index}", "passed": True, "attempts": 1,
+         "first_failure": ""}
+        for index in range(total)
+    ]
+    path.write_text(json.dumps({
+        "schema": 1, "total": total, "passed": total, "failed": 0,
+        "retried": 0, "scenarios": scenarios}), encoding="utf-8")
+    return path
+
+
 def _entry(run_id: str) -> dict:
     return {
         "run_id": run_id,
@@ -424,6 +437,51 @@ def test_replay_combines_conflict_with_permanent_rejection(
     assert payload["last_run_id"] == "replay-conflict"
     assert sandbox.exists(), "期望失败场景保留现场"
     replay._remove_sandbox(sandbox)
+
+
+def test_replay_reports_the_metrics_content(
+        tmp_path: Path, capsys) -> None:
+    """R107：写回前的计数指纹必须来自真正被 record 的那份 metrics。"""
+    repo = _seed(tmp_path)
+    metrics = _metrics_shape(tmp_path / "local-metrics.json", 2)
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(metrics),
+        "--run-id", "replay-1",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert ("metrics 内容 total=2 passed=2 failed=0 retried=0 attempts=2"
+            in out)
+
+
+def test_replay_reports_the_fetched_metrics_content(
+        tmp_path: Path, capsys) -> None:
+    """R107：全链的计数指纹必须来自下载的 artifact，而不是本地夹具。"""
+    repo = _seed(tmp_path)
+    fetched = _metrics_shape(tmp_path / "artifact-metrics.json", 4)
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": fetched.read_bytes()}))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert ("metrics 内容 total=4 passed=4 failed=0 retried=0 attempts=4"
+            in out)
 
 
 def test_replay_fetch_and_rejection_work_together(

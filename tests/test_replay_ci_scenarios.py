@@ -84,13 +84,20 @@ def _seed_with_rounds(tmp_path: Path, count: int) -> Path:
 
 
 def _metrics_file(tmp_path: Path) -> Path:
+    """测试用 artifact：10 场景，与生产 e2e metrics 同形（R107）。
+
+    驱动自己的本地夹具是 3 场景；全链场景钉 total=10，所以夹具必须与生产
+    artifact 同形，否则「来源」断言测的就不是生产形状。
+    """
     path = tmp_path / "fetched-metrics.json"
+    scenarios = [
+        {"name": f"fetched_{index}", "passed": True, "attempts": 1,
+         "first_failure": ""}
+        for index in range(10)
+    ]
     path.write_text(json.dumps({
-        "schema": 1, "total": 1, "passed": 1, "failed": 0, "retried": 0,
-        "attempts": 1,
-        "scenarios": [{"name": "happy", "passed": True, "attempts": 1,
-                       "first_failure": ""}],
-    }), encoding="utf-8")
+        "schema": 1, "total": 10, "passed": 10, "failed": 0, "retried": 0,
+        "scenarios": scenarios}), encoding="utf-8")
     return path
 
 
@@ -394,6 +401,24 @@ def test_scenario_table_pins_the_replay_counts() -> None:
     assert "已下载 1 个文件" in triple.must_contain
 
 
+def test_local_metrics_shape_is_deliberately_different(
+        tmp_path: Path) -> None:
+    """R107：本地夹具与生产 artifact 形状必须不同，否则内容来源不可辨。
+
+    全链场景钉 ``metrics 内容 total=10``；本地夹具是 3 场景/1 次重跑。如果
+    fetch 成功却回退到本地 metrics，计数指纹会变成 total=3，断言应判红。
+    """
+    path = scenarios._metrics(tmp_path / "metrics.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["total"] == 3
+    assert payload["passed"] == 3
+    assert payload["retried"] == 1
+    assert sum(item["attempts"] for item in payload["scenarios"]) == 4
+    for scenario in (scenarios.FETCH_SCENARIO,
+                     scenarios.FETCH_REJECTED_CONFLICT_SCENARIO):
+        assert "metrics 内容 total=10" in scenario.must_contain
+
+
 def test_driver_rejects_half_a_fetch_configuration(tmp_path: Path) -> None:
     repo = _seed(tmp_path)
     result = tmp_path / "result.json"
@@ -439,6 +464,9 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "exit_code": 0, "reason": "written", "rounds": 1,
         "last_run_id": f"replay-ci-fetched-{short}",
         "push_attempts": 1}
+    # R107：两份全链场景的计数指纹都必须来自生产 artifact（total=10），
+    # 而不是驱动自己的 3 场景本地夹具。
+    assert "metrics 内容 total=10" in fetched["output"]
     # R106：下载真的成功后再叠加三次拒绝 + 冲突，期望与本地组合场景一致；
     # fetch 只换 metrics 来源，不能改变写回语义。
     triple = by_name["fetched-rejected-conflict"]
@@ -447,6 +475,7 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "exit_code": 1, "reason": "push-rejected", "rounds": 1,
         "last_run_id": "replay-conflict",
         "push_attempts": 3}
+    assert "metrics 内容 total=10" in triple["output"]
     assert triple["sandbox_cleaned"] is True
     assert triple["sandbox"] is not None
     assert not Path(triple["sandbox"]).exists()
