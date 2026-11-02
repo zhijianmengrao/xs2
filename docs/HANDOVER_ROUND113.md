@@ -99,7 +99,19 @@ artifact 仍按 `total=10` 断来源，额外断「第 4 次拒绝时注入冲�
 
 ## 7. CI
 
-- 待本轮代码+文档推送后触发；结果回填到 §8。
+- run **41479138215**（16:12:14→16:28:38 UTC，含一次失败 job 重跑，约
+  16m24s）：**10 个 job 全 `success`**。
+  - backend **2652/65**、windows-backend **2688/29**（均 **2717**）；
+  - `replay-ci-writeback` 两平台各 **13/13 PASS**；
+  - `replay-ci-fetch-chain` 两平台各 **16/16 PASS**（13 本地 + 3 全链）；
+    `fetched-rejected-hook-at-4` 实测 `exit=0 rounds=43 push_attempts=5`；
+  - 前端 **490 / 0**。
+- **首次运行时 `e2e-history-writeback` 失败**：三次 push 都收到 GitHub
+  `Internal Server Error`（远端历史仍是 41/80，没有半写回）。这是服务端
+  瞬时错误，不是代码/判据问题；`rerun-failed-jobs` 后该 job success，
+  整轮 conclusion 变为 success。
+- 写回历史 **41 → 42**（`ci-41479138215`、`source=ci`），bot 提交
+  `7420a6c`（`[skip ci]`，未自触发）；本文档回填提交预计 **42 → 43**。
 
 ## 8. 边界与下一步
 
@@ -113,5 +125,9 @@ artifact 仍按 `total=10` 断来源，额外断「第 4 次拒绝时注入冲�
 
 ## 9. 提交与 CI
 
-- 代码+文档提交待写；显式路径 add，`config/skills_config.json` 未纳入。
-- CI 结果与写回轮次待回填。
+- 代码+文档提交 **8c3e727**（`feat(R113): 注入矩阵扩到 N=4/5 + 全链失败
+  形状`），显式路径 add，6 文件 +658/−119；`config/skills_config.json`
+  未纳入。
+- CI run **41479138215**（见 §7）；写回 bot `7420a6c`。
+- 本文档与 PROJECT_INFO/记忆回填后推送，预计触发最后一轮 CI 并写回
+  **42 → 43**。

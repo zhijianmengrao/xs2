@@ -496,7 +496,7 @@ jobs:
           - os: windows-latest
             python: python
     runs-on: ${{ matrix.os }}
-    # 十个场景各 1–3 次本地 git 操作，正常 < 2 分钟；卡住通常是沙箱 git 或
+    # 十三个场景各 1–5 次本地 git 操作，正常 < 3 分钟；卡住通常是沙箱 git 或
     # 拒绝钩子没返回，不应拖到 GHA 的 6 小时上限。
     timeout-minutes: 15
     env:
