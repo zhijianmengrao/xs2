@@ -131,13 +131,19 @@ sha256（**没有** `git checkout --`）。
 
 ## 6. 提交与 CI
 
-- 当前工作树改动：`scripts/replay_ci_scenarios.py`、
-  `scripts/replay_ci_writeback.py`、`.github/workflows/ci.yml`、
-  `tests/test_replay_ci_scenarios.py`、`tests/test_replay_ci_writeback.py`、
-  `tests/test_ci_replay_wiring.py`、本文件与 PROJECT_INFO/JUDGEMENT_LEDGER。
-- `config/skills_config.json` 的外来改动保持未提交。
-- 推送后预计写回 **21 → 22**（代码提交）**→ 23**（文档回填）；八个 job
-  定义需全绿（replay 矩阵两平台、全链 job 一个）。
+- 提交 `e4df184`（`feat(R103): 四边界收口`），显式路径 add；
+  `config/skills_config.json` 的外来改动保持未提交（提交后工作树仅剩该文件）。
+- 本机全量：**2654 passed / 28 skipped / 0 failed**（2682 条，207.54s）。
+- CI run **41384694336**：**9 个 job run**（8 个定义，replay 矩阵两平台）
+  全 `success`——backend **2617/65**、windows-backend **2653/29**（均
+  **2682**）；`replay-ci-writeback` ubuntu/windows 各 **4/4 PASS**
+  （rounds 22/22/23；永久拒绝 exit 1、rounds 21、末条
+  `ci-41379929177`、push_attempts 3，失败沙箱
+  `/tmp/replay-ci-writeback-hba8etr_` 断言后清理）；`replay-ci-fetch-chain`
+  **5/5 PASS**（`fetched` rounds 22、`last_run_id=replay-ci-fetched-e4df1849`、
+  push_attempts 1，artifact 内 output 同时含 `已下载 1 个文件` 与 `已写回`）。
+- 写回历史 **21 → 22 轮**（`ci-41384694336`、`source=ci`、10/10/0），bot 提交
+  `82a6eac`（`[skip ci]`，未自触发）；本文档回填提交预计 **22 → 23**。
 
 ## 7. 本轮教训
 
