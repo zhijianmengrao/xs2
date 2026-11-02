@@ -154,7 +154,11 @@ def _extract(archive: zipfile.ZipFile, destination: Path) -> list[Path]:
         if info.is_dir():
             continue
         relative = PurePosixPath(info.filename.replace("\\", "/"))
-        if relative.is_absolute() or ".." in relative.parts:
+        # Windows 把 ``Z:foo`` / ``Z:\foo`` 当驱动器相对路径：Path.joinpath
+        # 会在中途重置盘符，把文件写出目标目录（R104）。artifact 必须能在
+        # 两个平台解压，而冒号在 Windows 文件名里本来就非法。
+        if (relative.is_absolute() or ".." in relative.parts
+                or any(":" in part for part in relative.parts)):
             raise ArtifactInvalid(f"artifact 含非法路径：{info.filename!r}")
         target = destination.joinpath(*relative.parts)
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -12,10 +12,13 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from artifact_api_fixture import api_path, listing, server, zip_bytes
 from scripts import fetch_ci_artifact as fetch
@@ -164,6 +167,72 @@ def test_zip_path_traversal_is_rejected(tmp_path: Path, capsys) -> None:
 
     assert "非法路径" in capsys.readouterr().err
     assert not (tmp_path / "evil.txt").exists()
+
+
+class _FakeZipEntry:
+    def __init__(self, name: str, data: bytes) -> None:
+        self.filename = name
+        self._data = data
+
+    def is_dir(self) -> bool:
+        return False
+
+
+class _FakeZip:
+    """只实现 ``_extract`` 用到的两个方法，绕开 zipfile 的平台归一化。"""
+
+    def __init__(self, files: dict[str, bytes]) -> None:
+        self._entries = [
+            _FakeZipEntry(name, data) for name, data in files.items()
+        ]
+
+    def infolist(self) -> list[_FakeZipEntry]:
+        return list(self._entries)
+
+    def open(self, info: _FakeZipEntry) -> io.BytesIO:
+        return io.BytesIO(info._data)
+
+
+def test_extract_rejects_backslash_traversal(tmp_path: Path) -> None:
+    """R104：反斜杠必须先归一，否则 Windows 的 ``..\\`` 会绕过 ``..`` 判定。
+
+    Windows 的 ``zipfile`` 在读取时已经把 ``\\`` 换成 ``/``
+    （``_sanitize_filename``），POSIX 不会；用 fake archive 直接驱动，
+    两个平台钉住同一条规则。
+    """
+    archive = _FakeZip({"..\\evil.txt": b"escape"})
+
+    with pytest.raises(fetch.ArtifactInvalid, match="非法路径"):
+        fetch._extract(archive, tmp_path / "e2e")  # type: ignore[arg-type]
+
+    assert not (tmp_path / "evil.txt").exists()
+    assert not (tmp_path / "e2e" / "..\\evil.txt").exists()
+
+
+@pytest.mark.parametrize("name", [
+    "Z:\\evil.txt",
+    "Z:evil.txt",
+    "dir/Z:\\evil.txt",
+])
+def test_zip_windows_drive_paths_are_rejected(
+        tmp_path: Path, capsys, name: str) -> None:
+    """R104：驱动器相对路径在 Windows 上会重置盘符，必须按非法路径拒绝。"""
+    routes: dict = {}
+    with server(routes) as base:
+        routes[API_PATH] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({name: b"escape"}))
+
+        assert _run(base, tmp_path) == 1
+
+    assert "非法路径" in capsys.readouterr().err
+    destination = tmp_path / "e2e"
+    assert not destination.exists() or not any(
+        path.is_file() for path in destination.rglob("*")), (
+        "被拒绝的 artifact 仍然写出了文件")
 
 
 def test_missing_repo_is_a_usage_error(tmp_path: Path, monkeypatch) -> None:

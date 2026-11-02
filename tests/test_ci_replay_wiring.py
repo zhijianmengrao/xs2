@@ -4,6 +4,9 @@
 不进 CI」，所以这里钉住「CI 里真的有一个生产调用者」，以及它与既有写回
 job 的安全边界——写权限仍只属于 ``e2e-history-writeback``，replay job 只读、
 不跑仓库测试、不引 secrets、PR 也跑。
+
+R103 加了 ``replay-ci-fetch-chain``（下载 artifact → 写回）；R104 把这条全链
+与 replay 主 job 对齐到同一组平台矩阵。
 """
 
 from __future__ import annotations
@@ -35,6 +38,12 @@ def _job(name: str) -> dict:
 
 def _text(job: dict) -> str:
     return json.dumps(job, ensure_ascii=False)
+
+
+def _matrix(job: dict) -> set[tuple[str, str]]:
+    matrix = (job.get("strategy") or {}).get("matrix") or {}
+    include = matrix.get("include") or []
+    return {(entry.get("os"), entry.get("python")) for entry in include}
 
 
 def _driver_steps() -> list[dict]:
@@ -155,7 +164,36 @@ def test_fetch_chain_job_is_push_only_and_waits_for_the_uploader() -> None:
         "needs.backend.result == 'success'",
     ):
         assert token in condition, f"全链 job 条件缺少 {token!r}"
-    assert job.get("runs-on") == "ubuntu-24.04"
+
+
+def test_fetch_chain_job_runs_on_the_same_platforms_as_replay() -> None:
+    """R104：全链不能再是单平台；否则 Windows 只覆盖了 replay 的一半链路。"""
+    job = _job(FETCH_JOB)
+    assert job.get("runs-on") == "${{ matrix.os }}"
+    assert _matrix(job) == _matrix(_job(JOB)) == {
+        ("ubuntu-24.04", "python3"),
+        ("windows-latest", "python"),
+    }
+    assert (job.get("strategy") or {}).get("fail-fast") is False, (
+        "一条平台腿失败不应取消另一条")
+    env = job.get("env") or {}
+    assert env.get("PYTHONUTF8") == "1", "Windows 控制台默认编码会打穿中文输出"
+    assert env.get("PYTHONIOENCODING") == "utf-8"
+    timeout = job.get("timeout-minutes")
+    assert isinstance(timeout, int) and 0 < timeout <= 30, timeout
+
+
+def test_fetch_chain_job_uses_bash_and_the_matrix_python() -> None:
+    """Windows 默认 shell 是 pwsh：bash 写法与解释器名都必须显式。"""
+    step = _fetch_steps()[0]
+    assert step.get("shell") == "bash", (
+        "全链驱动步骤没有 shell: bash；Windows 上 exit $code 会变成 pwsh 语法")
+    env = step.get("env") or {}
+    assert env.get("PYTHON") == "${{ matrix.python }}"
+    run = str(step["run"])
+    assert '"$PYTHON" scripts/replay_ci_scenarios.py' in run
+    assert "python3 scripts/replay_ci_scenarios.py" not in run, (
+        "windows-latest 没有 python3 这个命令名")
 
 
 def test_fetch_chain_job_is_read_only_but_can_read_actions() -> None:
@@ -195,6 +233,7 @@ def test_fetch_chain_job_uploads_its_result_even_on_failure() -> None:
     ]
     assert len(uploads) == 1, uploads
     upload = uploads[0]
-    assert "replay-fetch-result" in _text({"upload": upload})
+    assert "replay-fetch-result-${{ matrix.os }}" in _text({"upload": upload}), (
+        "两条矩阵腿的上传名会撞车")
     assert upload.get("if") == "always()", (
         "失败时不上传全链 result 工件，现场只能靠翻日志")

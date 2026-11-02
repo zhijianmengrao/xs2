@@ -538,11 +538,25 @@ jobs:
   # R103：把 `--fetch-api-url` 全链（下载 artifact → 写回）接进生产。独立
   # push-only job：token 与 `actions: read` 只在这里出现，replay 主 job 仍是
   # 零 token、PR 照跑。backend 成功才可能已经有 e2e-metrics artifact。
+  # R104：与 replay 主 job 同平台矩阵。下载/解压的路径规则（反斜杠、驱动器
+  # 相对路径）只在 Windows 上才走得到；`shell: bash` + `$PYTHON` 让两平台的
+  # 退出码透传与解释器名一致，artifact 名带 os 避免两条腿撞名。
   replay-ci-fetch-chain:
     needs: backend
     if: "always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.backend.result == 'success'"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: python3
+          - os: windows-latest
+            python: python
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     permissions:
       contents: read
       # 列 artifact / 下载 zip 需要 actions: read；写权限仍只在写回 job。
@@ -550,15 +564,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Materialize main for the sandbox clone
+        shell: bash
         run: git checkout -B main
       - name: Replay the fetched-artifact writeback chain
         # artifact API 的 run id 是本轮 GitHub run；历史 run id 由驱动生成为
         # replay-ci-fetched-<sha>，两者不能混用（R103）。
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PYTHON: ${{ matrix.python }}
         run: |
           code=0
-          python3 scripts/replay_ci_scenarios.py \
+          "$PYTHON" scripts/replay_ci_scenarios.py \
             --repo . \
             --branch main \
             --fetch-api-url https://api.github.com \
@@ -576,7 +593,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: replay-fetch-result
+          name: replay-fetch-result-${{ matrix.os }}
           path: ${{ runner.temp }}/replay-fetch-result.json
           if-no-files-found: warn
           retention-days: 1
