@@ -464,6 +464,55 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+  # R101：把 R99 的拒绝/冲突回放接进生产 CI。此前这些场景只由
+  # tests/test_replay_ci_writeback.py 在 backend job 里以 pytest 驱动；这个
+  # 独立 job 用 scripts/replay_ci_scenarios.py 在真实 checkout 上走三条路径
+  # （happy / 被拒一次后重试 / 冲突后重算），并断言退出码、reason、rounds、
+  # push_attempts 与关键输出。pytest 覆盖保留，但不再是唯一执行者。
+  #
+  # 只读与隔离：不声明 permissions（继承顶层 contents: read），不跑
+  # pytest / e2e / npm / docker，不引 secrets——fork PR 也能跑。写回只发生在
+  # replay 的临时沙箱，真实 origin 不会被推。PR 与 push 都跑：合入前就能发现
+  # 回放回归，而不是等 main 上的生产写回 job 才暴露。
+  replay-ci-writeback:
+    runs-on: ubuntu-24.04
+    # 三个场景各 1–2 次本地 git 操作，正常 < 1 分钟；卡住通常是沙箱 git 或
+    # 拒绝钩子没返回，不应拖到 GHA 的 6 小时上限。
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # PR 的 checkout 是 detached HEAD，replay 的 `git clone -b main` 需要
+      # 一个本地 main 分支；这只改 runner 上的临时工作区，不改提交内容。
+      - name: Materialize main for the sandbox clone
+        run: git checkout -B main
+      - name: Replay happy, rejected and conflicting writebacks
+        # 退出码语义：0=三场景全符 1=场景断言不符 3=基线不可用（checkout/
+        # git/history 问题）。两种非零都让这一步红；3 单独提示排查方向，
+        # 不让「环境坏」冒充「回放语义坏」（R49 的同一处置）。
+        run: |
+          code=0
+          python3 scripts/replay_ci_scenarios.py \
+            --repo . \
+            --branch main \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --result-json "$RUNNER_TEMP/replay-ci-result.json" || code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::error::replay 无法建立基线（退出码 3）：先看 checkout/git/history，不是回放语义"
+          elif [ "$code" -ne 0 ]; then
+            echo "::error::replay 场景断言不符（退出码 $code）"
+          fi
+          exit $code
+      - name: Upload replay result
+        # 失败也上传：result JSON 里带每个场景的 expected/actual/failure
+        # 与被截断的捕获输出，排查不需要翻整份 job 日志。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-ci-result
+          path: ${{ runner.temp }}/replay-ci-result.json
+          if-no-files-found: warn
+          retention-days: 1
+
   # Windows 权威基线（R19）：本机开发环境为 Windows + Python 3.14（venv 3.14.8），
   # 且存在 Windows 专属语义测试（win_names/幻影目录/设备名）。ubuntu job 保留作
   # 快速跨平台信号；本 job 与本机 High-IL 全量跑（docs/PROJECT_INFO.md 测试环境）
