@@ -2729,6 +2729,78 @@
           "first_failure": ""
         }
       ]
+    },
+    {
+      "run_id": "ci-41453307854",
+      "exported_at": "2026-11-02T13:32:10+00:00",
+      "source": "ci",
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "retried": 0,
+      "attempts": 10,
+      "scenarios": [
+        {
+          "name": "happy_path",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "failure_propagates",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "turn_terminates",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "transient_error_is_retried",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "permanent_error_is_not_retried",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "stream_stall_fails_fast",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "retry_backoff_is_honoured",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "retry_backoff_shape_is_honoured",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "retry_backoff_long_chain_shape_is_honoured",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        },
+        {
+          "name": "retry_backoff_four_segment_shape_is_honoured",
+          "passed": true,
+          "attempts": 1,
+          "first_failure": ""
+        }
+      ]
     }
   ]
 }
