@@ -39,6 +39,10 @@ replay 先走 ``fetch_ci_artifact`` 从真实 API 下载 artifact，再走同一
 链路。artifact API 的 run id 与历史 run id 是两件事（前者是 GitHub run，
 后者是 ``replay-ci-fetched-<sha>``），由 ``--fetch-run-id`` 分开。
 
+R106 在同一份全链配置上追加 ``fetched-rejected-conflict``：真实 artifact
+下载成功后再叠加三次拒绝与冲突注入，端到端证明「下载 → 非快进拒绝 →
+钩子拒绝 → 重算 → 全失败」这条链没有被 fetch 路径绕开。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -170,6 +174,8 @@ SCENARIOS: tuple[Scenario, ...] = (
     ),
     # R105：冲突注入 + 三次尝试全被拒。远端会多出注入的冲突轮（+1），
     # 但本轮写回没有入库——末条必须正好是 replay-conflict。
+    # reject_pushes 的行为边界是 2（第一次 push 到不了钩子，见 R106）；这里的
+    # 3 只是与纯永久拒绝同口径，改数字只有表钉用例能发现。
     Scenario(
         "rejected-conflict", 0, 3, reject_pushes=3, conflict=True,
         expected_exit=EXIT_MISMATCH,
@@ -189,6 +195,29 @@ SCENARIOS: tuple[Scenario, ...] = (
 FETCH_SCENARIO = Scenario(
     "fetched", 1, 1, fetch=True,
     must_contain=("已下载 1 个文件", "已写回"),
+)
+
+# R106：全链 × 永久拒绝 × 冲突的三重叠加。期望与本地 metrics 的
+# rejected-conflict 完全一致——fetch 只换 metrics 来源，不能改变写回语义；
+# 「已下载 1 个文件」把「artifact 真的被用上」钉在同一个场景里。
+#
+# 注意 reject_pushes=3 的行为边界其实是 2：第一次 push 被非快进挡下、根本
+# 到不了 pre-receive 钩子，所以钩子只要拒绝后两次就能让三次尝试全失败
+# （R106 变异实测 2 与 3 的输出/轮数/末条完全一致）。写 3 是与纯永久拒绝
+# 保持同一个「拒绝预算」口径，不是行为阈值；改这个数字只有表钉用例能发现。
+FETCH_REJECTED_CONFLICT_SCENARIO = Scenario(
+    "fetched-rejected-conflict", 0, 3, reject_pushes=3, conflict=True,
+    fetch=True,
+    expected_exit=EXIT_MISMATCH,
+    expected_reason="push-rejected",
+    expect_sandbox=True,
+    injected_rounds=1,
+    expected_last_run_id="replay-conflict",
+    must_contain=("已下载 1 个文件",
+                  "rebase 冲突（第 1 次）",
+                  "::error::连续 3 次写回均失败"),
+    must_not_contain=("已写回",),
+    output_counts=(("push 被拒（第", 3), ("simulated rejection", 2)),
 )
 
 # 单个场景是 1–2 次本地 git 操作；超时保护只防止沙箱 git/钩子卡死。
@@ -477,7 +506,9 @@ def run(repo: Path, branch: str, history_rel: str,
         fetch_repo: str = "",
         artifact: str | None = None) -> int:
     repo = Path(repo).resolve()
-    scenarios = SCENARIOS + ((FETCH_SCENARIO,) if fetch_api_url else ())
+    scenarios = SCENARIOS + (
+        (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO)
+        if fetch_api_url else ())
     try:
         baseline = _baseline(repo, history_rel)
     except BaselineError as exc:

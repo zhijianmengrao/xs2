@@ -1,8 +1,9 @@
 """R101/R103：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
 
 这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言五个
-场景的退出码/rounds/push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch
-证明驱动不盲信子调用的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
+本地场景（``--fetch-api-url`` 时再追加两个全链场景）的退出码/rounds/
+push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch 证明驱动不盲信子调用
+的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
 ``tests/test_ci_replay_wiring.py``。
 """
 
@@ -377,6 +378,21 @@ def test_scenario_table_pins_the_replay_counts() -> None:
     assert combined.output_counts == (
         ("push 被拒（第", 3), ("simulated rejection", 2))
 
+    # R106：全链版本必须与本地组合场景同语义，只多出「真的下载了」这一项。
+    triple = scenarios.FETCH_REJECTED_CONFLICT_SCENARIO
+    assert triple.name == "fetched-rejected-conflict"
+    assert triple.fetch is True
+    assert (triple.rounds_delta, triple.push_attempts) == (0, 3)
+    assert triple.reject_pushes == 3 and triple.conflict is True
+    assert triple.injected_rounds == 1
+    assert triple.expected_exit == 1
+    assert triple.expected_reason == "push-rejected"
+    assert triple.expect_sandbox is True
+    assert triple.expected_last_run_id == "replay-conflict"
+    assert triple.output_counts == (
+        ("push 被拒（第", 3), ("simulated rejection", 2))
+    assert "已下载 1 个文件" in triple.must_contain
+
 
 def test_driver_rejects_half_a_fetch_configuration(tmp_path: Path) -> None:
     repo = _seed(tmp_path)
@@ -416,16 +432,28 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     by_name = {record["name"]: record for record in payload["scenarios"]}
     assert list(by_name) == [
         "happy", "rejected", "conflict", "permanently-rejected",
-        "rejected-conflict", "fetched"]
+        "rejected-conflict", "fetched", "fetched-rejected-conflict"]
     fetched = by_name["fetched"]
     assert fetched["ok"] is True, fetched["failure"]
     assert fetched["actual"] == {
         "exit_code": 0, "reason": "written", "rounds": 1,
         "last_run_id": f"replay-ci-fetched-{short}",
         "push_attempts": 1}
-    # artifact API 用的是 GitHub run id，不是历史 run id。
-    assert any("/987654/" in path for path, _headers in recorded)
-    assert fetched["sandbox_cleaned"] is None
+    # R106：下载真的成功后再叠加三次拒绝 + 冲突，期望与本地组合场景一致；
+    # fetch 只换 metrics 来源，不能改变写回语义。
+    triple = by_name["fetched-rejected-conflict"]
+    assert triple["ok"] is True, triple["failure"]
+    assert triple["actual"] == {
+        "exit_code": 1, "reason": "push-rejected", "rounds": 1,
+        "last_run_id": "replay-conflict",
+        "push_attempts": 3}
+    assert triple["sandbox_cleaned"] is True
+    assert triple["sandbox"] is not None
+    assert not Path(triple["sandbox"]).exists()
+    # artifact API 用的是 GitHub run id，不是历史 run id；两个全链场景
+    # 都必须真的走 API，而不是本地 metrics。
+    assert sum("/987654/" in path for path, _headers in recorded) >= 2
+    assert not any("replay-ci-" in path for path, _headers in recorded)
 
 
 def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:

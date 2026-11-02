@@ -456,6 +456,54 @@ def test_replay_fetch_and_rejection_work_together(
     assert payload["reason"] == "written"
 
 
+def test_replay_fetch_conflict_and_rejection_work_together(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R106：artifact 下载成功后再走三次拒绝 + 冲突。
+
+    fetch 只换 metrics 来源；写回语义必须与本地组合场景完全一致——第一次
+    是非快进拒绝（钩子只看到第 2、3 次），远端只多出注入的冲突轮。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    routes: dict = {}
+    result = tmp_path / "result.json"
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"}, _archive(tmp_path))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+            "--reject-pushes", "3",
+            "--conflict",
+            "--result-json", str(result),
+        ]) == 1
+
+    captured = capsys.readouterr()
+    assert "已下载 1 个文件" in captured.out
+    assert captured.out.count("push 被拒（第") == 3
+    assert captured.out.count("rebase 冲突（第 1 次）") == 1
+    assert "::error::连续 3 次写回均失败" in captured.out
+    assert "已写回" not in captured.out
+    # 第一次是非快进拒绝；钩子只拒绝第 2、3 次。
+    assert captured.err.count("simulated rejection") == 2
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "push-rejected"
+    assert payload["push_attempts"] == 3
+    assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "replay-conflict"
+    assert sandbox.exists(), "期望失败场景保留现场"
+    replay._remove_sandbox(sandbox)
+
+
 def test_replay_rejects_a_negative_rejection_count(tmp_path: Path) -> None:
     repo = _seed(tmp_path)
     code = replay.main([
