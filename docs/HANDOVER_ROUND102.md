@@ -95,18 +95,24 @@ R101 为 2639/28（2667）。
   >`MAX_ROUNDS`；驱动按 `min` 期望 40、`window_full=true`，判定不受影响。
 - 永久拒绝（三次全拒）、replay job 上 Windows、`--fetch-api-url` 全链、
   驱动子进程化仍未做（R101 §5 的其余边界）。
-- **CI 未跑、代码未提交未推送**——等待拍定后提交。
+- 提交、CI 与写回见 §6（已按拍定执行完成）。
 
 ## 6. 提交与 CI
 
-- 当前工作树改动：`scripts/ci_writeback_history.py`、
-  `scripts/replay_ci_scenarios.py`、`tests/test_ci_writeback_history.py`、
-  `tests/test_replay_ci_scenarios.py`、`tests/test_replay_ci_writeback.py`、
-  `.github/workflows/ci.yml`、本文件与 PROJECT_INFO/JUDGEMENT_LEDGER。
-- `config/skills_config.json` 的外来改动保持未提交。
-- 推送后预计写回 **19 → 20**（代码提交）**→ 21**（文档回填）；七个 job 需
-  全绿，`replay-ci-writeback` 三场景应仍为 3/3，且日志里带
-  `last_run_id=replay-ci-...`。
+- 提交 `9aff148`（`feat(R102): MAX_ROUNDS 耗尽防护（last_run_id 身份断言）`），
+  显式路径 add；`config/skills_config.json` 外来改动保持未提交（提交后工作树
+  仅剩该文件）。
+- 本机复核：**2645 passed / 28 skipped / 0 failed**（2673 条，194.89s）。首轮
+  曾出现既有 flake `test_memory_extract.py::test_format_correction_shares_one_timeout_budget`
+  （0.03s 睡眠塞进 0.05s 总预算，与本轮改动无关；`src/` 未动），单跑 5/5 全过、
+  全量重跑通过。
+- CI run **41379087828** 七 job 全 `success`：backend **2608/65**、
+  windows-backend **2644/29**（均 **2673**）、frontend **490/0**、
+  `replay-ci-writeback` 三场景 **3/3 PASS**（rounds 20/20/21，
+  `last_run_id=replay-ci-{happy,rejected,conflict}-9aff1482`，push_attempts
+  1/2/2）。
+- 写回历史 **19 → 20 轮**（`ci-41379087828`、`source=ci`、10/10/0），bot 提交
+  `6024499`（`[skip ci]`，未自触发）；本文档回填提交预计 **20 → 21**。
 
 ## 7. 本轮教训
 
