@@ -109,7 +109,10 @@ def _install_rejection_hook(origin: Path, rejections: int) -> None:
         '  exit 1\n'
         'fi\n'
         'exit 0\n',
-        encoding="utf-8")
+        encoding="utf-8",
+        # Windows 文本模式会把 shebang 写成 ``#!/bin/sh\r``；Git for Windows
+        # 的 sh 对 CRLF 不该赌运气（R103）。
+        newline="\n")
     hook.chmod(0o755)
     print(f"replay：已安装拒绝钩子（前 {rejections} 次 push 被拒）")
 
@@ -174,7 +177,8 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
            artifact: str = ARTIFACT_NAME, fetch_repo: str = "",
            token: str | None = None, reject_pushes: int = 0,
            conflict: bool = False,
-           result_path: Path | None = None) -> int:
+           result_path: Path | None = None,
+           fetch_run_id: str | None = None) -> int:
     repo = Path(repo).resolve()
     sandbox = Path(tempfile.mkdtemp(prefix="replay-ci-writeback-"))
     code = 1
@@ -198,7 +202,7 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
         if fetch_api_url:
             fetched_dir = sandbox / "e2e"
             fetched = artifact_fetch.fetch(
-                run_id, fetch_repo, artifact, fetched_dir,
+                fetch_run_id or run_id, fetch_repo, artifact, fetched_dir,
                 token=token, api_url=fetch_api_url)
             if fetched != 0:
                 code = fetched
@@ -253,6 +257,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"),
                         help="--fetch-api-url 的 token")
     parser.add_argument("--run-id", required=True, help="回放轮次的 run_id")
+    parser.add_argument("--fetch-run-id", default=None,
+                        help="artifact API 的 run id（默认与 --run-id 相同；"
+                             "R103 起生产全链用 GitHub run id）")
     parser.add_argument("--history", default=DEFAULT_HISTORY,
                         help="仓库内的历史文件相对路径")
     parser.add_argument("--branch", default="main", help="回放的分支")
@@ -279,10 +286,13 @@ def main(argv: list[str] | None = None) -> int:
         print("--reject-pushes 不能为负", file=sys.stderr)
         return 2
     return replay(
-        args.repo, args.metrics, args.run_id, args.history, args.branch,
-        args.keep, args.summary, args.dry_run, args.from_worktree,
-        args.fetch_api_url, args.artifact, args.fetch_repo, args.token,
-        args.reject_pushes, args.conflict, args.result_json)
+        repo=args.repo, metrics=args.metrics, run_id=args.run_id,
+        history_rel=args.history, branch=args.branch, keep=args.keep,
+        summary_path=args.summary, dry_run=args.dry_run,
+        from_worktree=args.from_worktree, fetch_api_url=args.fetch_api_url,
+        artifact=args.artifact, fetch_repo=args.fetch_repo, token=args.token,
+        reject_pushes=args.reject_pushes, conflict=args.conflict,
+        result_path=args.result_json, fetch_run_id=args.fetch_run_id)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-"""R101：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
+"""R101/R103：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
 
-这里驱动的是**真实** ``replay_ci_writeback.main``（临时 git 仓），断言三个
-场景的退出码/rounds/push_attempts 与源仓库只读；另外用 monkeypatch 证明驱动
-不盲信子调用的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
+这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言四个
+场景的退出码/rounds/push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch
+证明驱动不盲信子调用的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
 ``tests/test_ci_replay_wiring.py``。
 """
 
@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from scripts import replay_ci_scenarios as scenarios
+from artifact_api_fixture import api_path, listing, server, zip_bytes
 
 HISTORY_REL = "tests/fixtures/e2e_retry_history/history.json"
 
@@ -54,11 +57,14 @@ def _entry(run_id: str) -> dict:
     }
 
 
-def _argv(repo: Path, result: Path, summary: Path | None = None) -> list[str]:
+def _argv(repo: Path, result: Path, summary: Path | None = None,
+          extra: list[str] | None = None) -> list[str]:
     argv = ["--repo", str(repo), "--branch", "main",
             "--result-json", str(result)]
     if summary is not None:
         argv += ["--summary", str(summary)]
+    if extra:
+        argv += extra
     return argv
 
 
@@ -76,7 +82,87 @@ def _seed_with_rounds(tmp_path: Path, count: int) -> Path:
     return repo
 
 
-def test_driver_runs_happy_rejected_and_conflict(tmp_path: Path) -> None:
+def _metrics_file(tmp_path: Path) -> Path:
+    path = tmp_path / "fetched-metrics.json"
+    path.write_text(json.dumps({
+        "schema": 1, "total": 1, "passed": 1, "failed": 0, "retried": 0,
+        "attempts": 1,
+        "scenarios": [{"name": "happy", "passed": True, "attempts": 1,
+                       "first_failure": ""}],
+    }), encoding="utf-8")
+    return path
+
+
+def _scenario_name(run_id: str) -> str:
+    return run_id[len("replay-ci-"):].rsplit("-", 1)[0]
+
+
+def _fake_invoke(*, push_attempts: int | None = None,
+                 last_run_id: str | None = None,
+                 rounds: int | None = None,
+                 mutate: Path | None = None,
+                 rejection_lines: int = 3):
+    """模拟 replay 子进程：写 result JSON 与关键输出，返回 (code, output)。"""
+
+    def invoke(argv: list[str]) -> tuple[int, str]:
+        result_path = Path(argv[argv.index("--result-json") + 1])
+        run_id = argv[argv.index("--run-id") + 1]
+        name = _scenario_name(run_id)
+
+        if mutate is not None:
+            payload = json.loads(mutate.read_text(encoding="utf-8"))
+            payload["history"].append(_entry("mutated-by-replay"))
+            mutate.write_text(json.dumps(payload), encoding="utf-8")
+
+        if name == "permanently-rejected":
+            payload = {
+                "schema": 1, "run_id": run_id, "source": "ci",
+                "reason": "push-rejected", "detail": "", "exit_code": 1,
+                "rounds": 0 if rounds is None else rounds,
+                "last_run_id": last_run_id,
+                "window_full": False, "push_attempts": 3, "dry_run": False,
+            }
+            lines = []
+            for attempt in range(1, rejection_lines + 1):
+                lines.append(f"push 被拒（第 {attempt} 次），"
+                             f"rebase 到最新 main 后重试")
+                lines.append("simulated rejection")
+            lines.append("::error::连续 3 次写回均失败"
+                         "（最后一次：push-rejected），本轮历史未入库")
+            sandbox = Path(tempfile.mkdtemp(prefix="fake-replay-sandbox-"))
+            lines.append(f"replay：沙箱保留在 {sandbox}（失败现场）")
+            output = "\n".join(lines) + "\n"
+        else:
+            expected_pushes = 2 if name in ("rejected", "conflict") else 1
+            payload = {
+                "schema": 1, "run_id": run_id, "source": "ci",
+                "reason": "written", "detail": "", "exit_code": 0,
+                "rounds": (2 if name == "conflict" else 1)
+                          if rounds is None else rounds,
+                "last_run_id": run_id if last_run_id is None else last_run_id,
+                "window_full": False,
+                "push_attempts": (expected_pushes
+                                  if push_attempts is None
+                                  else push_attempts),
+                "dry_run": False,
+            }
+            output = "已写回 main（第 1 次尝试）\n"
+            if name == "rejected":
+                output += ("simulated rejection\n"
+                           "push 被拒（第 1 次），rebase 到最新 main 后重试\n"
+                           "已写回 main（第 2 次尝试）\n")
+            if name == "conflict":
+                output += ("rebase 冲突（第 1 次）：丢弃本次写回提交，"
+                           "按最新 main 重算\n"
+                           "已写回 main（第 2 次尝试）\n")
+
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        return (1 if name == "permanently-rejected" else 0), output
+
+    return invoke
+
+
+def test_driver_runs_all_four_scenarios(tmp_path: Path) -> None:
     repo = _seed(tmp_path)
     head = _git("rev-parse", "HEAD", cwd=repo)
     short = head[:8]
@@ -94,7 +180,8 @@ def test_driver_runs_happy_rejected_and_conflict(tmp_path: Path) -> None:
     assert payload["window_full"] is False
     assert payload["source_head"] == head
     by_name = {record["name"]: record for record in payload["scenarios"]}
-    assert list(by_name) == ["happy", "rejected", "conflict"]
+    assert list(by_name) == [
+        "happy", "rejected", "conflict", "permanently-rejected"]
     assert by_name["happy"]["actual"] == {
         "exit_code": 0, "reason": "written", "rounds": 1,
         "last_run_id": f"replay-ci-happy-{short}",
@@ -107,10 +194,20 @@ def test_driver_runs_happy_rejected_and_conflict(tmp_path: Path) -> None:
         "exit_code": 0, "reason": "written", "rounds": 2,
         "last_run_id": f"replay-ci-conflict-{short}",
         "push_attempts": 2}
+    assert by_name["permanently-rejected"]["actual"] == {
+        "exit_code": 1, "reason": "push-rejected", "rounds": 0,
+        "last_run_id": None,
+        "push_attempts": 3}
     for record in payload["scenarios"]:
         assert record["ok"] is True, record["failure"]
         assert record["source_mutated"] is False
         assert record["rounds_clipped"] is False
+    # 失败沙箱必须真的留下过，再被驱动清理；不能只在输出里说一句。
+    permanent = by_name["permanently-rejected"]
+    assert permanent["sandbox_cleaned"] is True
+    assert permanent["sandbox"] is not None
+    assert not Path(permanent["sandbox"]).exists(), (
+        "驱动报告已清理，但失败沙箱仍在磁盘上")
 
     # 源仓库一个字节都不该动。
     assert _git("rev-parse", "HEAD", cwd=repo) == head
@@ -119,38 +216,34 @@ def test_driver_runs_happy_rejected_and_conflict(tmp_path: Path) -> None:
 
     # step summary 每个场景一行，reason 是 ok。
     text = summary.read_text(encoding="utf-8")
-    assert text.count("replay-ci-") == 3
+    assert text.count("replay-ci-") == 4
     assert "**ok**" in text
+
+
+def test_driver_counts_the_simulated_rejections(
+        tmp_path: Path, monkeypatch) -> None:
+    """永久拒绝必须看到 3 次钩子拒绝；1 次传输故障不能冒充。"""
+    repo = _seed(tmp_path)
+    monkeypatch.setattr(scenarios, "_invoke_replay",
+                        _fake_invoke(rejection_lines=1))
+    result = tmp_path / "result.json"
+
+    code = scenarios.main(_argv(repo, result))
+
+    assert code == 1
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    by_name = {record["name"]: record for record in payload["scenarios"]}
+    permanent = by_name["permanently-rejected"]
+    assert permanent["ok"] is False
+    assert "出现 1 次，期望 3 次" in permanent["failure"]
 
 
 def test_driver_does_not_trust_the_replay_exit_code(
         tmp_path: Path, monkeypatch) -> None:
     """子调用退 0 但 result 里的 push_attempts 不对：驱动必须判 1。"""
     repo = _seed(tmp_path)
-
-    def fake_main(argv: list[str]) -> int:
-        result_path = Path(argv[argv.index("--result-json") + 1])
-        run_id = argv[argv.index("--run-id") + 1]
-        name = run_id.split("-")[2]
-        # 三个场景一律写「只 push 了一次」：rounds 与输出都正确，让
-        # rejected/conflict 的失败**只**能由 push_attempts 断言发现。
-        result_path.write_text(json.dumps({
-            "schema": 1, "run_id": run_id, "source": "ci",
-            "reason": "written", "detail": "", "exit_code": 0,
-            "rounds": 2 if name == "conflict" else 1,
-            "last_run_id": run_id,
-            "push_attempts": 1, "dry_run": False,
-        }), encoding="utf-8")
-        print("已写回 main（第 1 次尝试）")
-        if name == "rejected":
-            print("push 被拒（第 1 次），rebase 到最新 main 后重试")
-            print("已写回 main（第 2 次尝试）")
-        if name == "conflict":
-            print("rebase 冲突（第 1 次）：丢弃本次写回提交，按最新 main 重算")
-            print("已写回 main（第 2 次尝试）")
-        return 0
-
-    monkeypatch.setattr(scenarios.replay, "main", fake_main)
+    monkeypatch.setattr(scenarios, "_invoke_replay",
+                        _fake_invoke(push_attempts=1))
     result = tmp_path / "result.json"
 
     code = scenarios.main(_argv(repo, result))
@@ -168,24 +261,8 @@ def test_driver_stops_when_the_source_repo_is_mutated(
         tmp_path: Path, monkeypatch) -> None:
     """源仓库 HEAD/历史被改动 → 1，且不继续跑后续场景。"""
     repo = _seed(tmp_path)
-    target = repo / HISTORY_REL
-
-    def fake_main(argv: list[str]) -> int:
-        payload = json.loads(target.read_text(encoding="utf-8"))
-        payload["history"].append(_entry("mutated-by-replay"))
-        target.write_text(json.dumps(payload), encoding="utf-8")
-        result_path = Path(argv[argv.index("--result-json") + 1])
-        run_id = argv[argv.index("--run-id") + 1]
-        result_path.write_text(json.dumps({
-            "schema": 1, "run_id": run_id, "source": "ci", "reason": "written",
-            "detail": "", "exit_code": 0, "rounds": 1,
-            "last_run_id": run_id,
-            "push_attempts": 1, "dry_run": False,
-        }), encoding="utf-8")
-        print("已写回 main（第 1 次尝试）")
-        return 0
-
-    monkeypatch.setattr(scenarios.replay, "main", fake_main)
+    monkeypatch.setattr(scenarios, "_invoke_replay",
+                        _fake_invoke(mutate=repo / HISTORY_REL))
     result = tmp_path / "result.json"
 
     code = scenarios.main(_argv(repo, result))
@@ -231,11 +308,13 @@ def test_driver_returns_3_when_history_is_unreadable(tmp_path: Path) -> None:
 def test_scenario_table_pins_the_r99_counts() -> None:
     """场景表是这张判据的唯一来源；数字漂了必须有人先改这里。"""
     by_name = {scenario.name: scenario for scenario in scenarios.SCENARIOS}
-    assert list(by_name) == ["happy", "rejected", "conflict"]
+    assert list(by_name) == [
+        "happy", "rejected", "conflict", "permanently-rejected"]
 
     happy = by_name["happy"]
     assert (happy.rounds_delta, happy.push_attempts) == (1, 1)
     assert happy.reject_pushes == 0 and happy.conflict is False
+    assert happy.expected_exit == 0 and happy.expected_reason == "written"
 
     rejected = by_name["rejected"]
     assert (rejected.rounds_delta, rejected.push_attempts) == (1, 2)
@@ -245,18 +324,98 @@ def test_scenario_table_pins_the_r99_counts() -> None:
     assert (conflict.rounds_delta, conflict.push_attempts) == (2, 2)
     assert conflict.conflict is True
 
+    permanent = by_name["permanently-rejected"]
+    assert (permanent.rounds_delta, permanent.push_attempts) == (0, 3)
+    assert permanent.reject_pushes == 3
+    assert permanent.expected_exit == 1
+    assert permanent.expected_reason == "push-rejected"
+    assert permanent.expect_sandbox is True
+
+
+def test_driver_rejects_half_a_fetch_configuration(tmp_path: Path) -> None:
+    repo = _seed(tmp_path)
+    result = tmp_path / "result.json"
+
+    assert scenarios.main(_argv(
+        repo, result, extra=["--fetch-api-url", "http://127.0.0.1:1"])) == 2
+    assert scenarios.main(_argv(
+        repo, result, extra=["--fetch-run-id", "42"])) == 2
+
+
+def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
+    """下载真实 artifact → 写回：fetch run id 与历史 run id 必须分开。"""
+    repo = _seed(tmp_path)
+    head = _git("rev-parse", "HEAD", cwd=repo)
+    short = head[:8]
+    archive = zip_bytes({"e2e-metrics.json": _metrics_file(tmp_path).read_bytes()})
+    routes: dict = {}
+    recorded: list = []
+    result = tmp_path / "result.json"
+
+    with server(routes, recorded) as base:
+        routes[api_path("owner/repo", "987654", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"}, archive)
+
+        code = scenarios.main(_argv(
+            repo, result,
+            extra=["--fetch-api-url", base,
+                   "--fetch-run-id", "987654",
+                   "--fetch-repo", "owner/repo"]))
+
+    assert code == 0
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    by_name = {record["name"]: record for record in payload["scenarios"]}
+    assert list(by_name) == [
+        "happy", "rejected", "conflict", "permanently-rejected", "fetched"]
+    fetched = by_name["fetched"]
+    assert fetched["ok"] is True, fetched["failure"]
+    assert fetched["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 1,
+        "last_run_id": f"replay-ci-fetched-{short}",
+        "push_attempts": 1}
+    # artifact API 用的是 GitHub run id，不是历史 run id。
+    assert any("/987654/" in path for path, _headers in recorded)
+    assert fetched["sandbox_cleaned"] is None
+
+
+def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
+    """R98 同型：脚本模式的 ``sys.path`` 引导必须自己成立。"""
+    repo = _seed(tmp_path)
+    result = tmp_path / "result.json"
+    completed = subprocess.run(
+        [sys.executable, "-X", "utf8",
+         str(scenarios.REPO_ROOT / "scripts" / "replay_ci_scenarios.py"),
+         "--repo", str(repo), "--branch", "main",
+         "--result-json", str(result)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(scenarios.REPO_ROOT))
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["ok"] is True
+    assert len(payload["scenarios"]) == 4
+
 
 # ------------------------------------- 窗口边界（R102：MAX_ROUNDS 耗尽防护）
 @pytest.mark.parametrize("count, expected, clipped", [
-    # 38：三个场景的增量都没碰到窗口，rounds 仍是强证据。
-    (38, {"happy": 39, "rejected": 39, "conflict": 40},
-         {"happy": False, "rejected": False, "conflict": False}),
+    # 38：三个成功场景的增量都没碰到窗口，rounds 仍是强证据。
+    (38, {"happy": 39, "rejected": 39, "conflict": 40,
+          "permanently-rejected": 38},
+         {"happy": False, "rejected": False, "conflict": False,
+          "permanently-rejected": False}),
     # 39：conflict 的 +2 先被压成 +1（40 == 40），只有它能暴露裁剪。
-    (39, {"happy": 40, "rejected": 40, "conflict": 40},
-         {"happy": False, "rejected": False, "conflict": True}),
-    # 40：三个场景的 rounds 全部恒定，只剩 last_run_id 能证明本轮已入库。
-    (40, {"happy": 40, "rejected": 40, "conflict": 40},
-         {"happy": True, "rejected": True, "conflict": True}),
+    (39, {"happy": 40, "rejected": 40, "conflict": 40,
+          "permanently-rejected": 39},
+         {"happy": False, "rejected": False, "conflict": True,
+          "permanently-rejected": False}),
+    # 40：三个成功场景的 rounds 全部恒定，只剩 last_run_id 能证明本轮已入库。
+    (40, {"happy": 40, "rejected": 40, "conflict": 40,
+          "permanently-rejected": 40},
+         {"happy": True, "rejected": True, "conflict": True,
+          "permanently-rejected": False}),
 ])
 def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         tmp_path: Path, count: int, expected: dict, clipped: dict) -> None:
@@ -278,8 +437,12 @@ def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         assert record["rounds_clipped"] is clipped[name]
         assert record["expected"]["rounds"] == expected[name]
         assert record["actual"]["rounds"] == expected[name]
-        assert record["actual"]["last_run_id"] == (
-            f"replay-ci-{name}-{head[:8]}")
+        if name == "permanently-rejected":
+            # 失败场景：远端末条仍是基线那一条，不是本轮。
+            assert record["actual"]["last_run_id"] == f"seed-{count - 1}"
+        else:
+            assert record["actual"]["last_run_id"] == (
+                f"replay-ci-{name}-{head[:8]}")
     # 摘要必须自己说出「这一项的轮数已被裁剪」，不能只留一个恒等式。
     text = summary.read_text(encoding="utf-8")
     assert text.count("窗口已满") == sum(clipped.values())
@@ -293,30 +456,8 @@ def test_window_full_identity_is_the_only_remaining_witness(
     exit/reason/rounds/push_attempts/输出，这条会全绿。
     """
     repo = _seed_with_rounds(tmp_path, scenarios.history.MAX_ROUNDS)
-
-    def fake_main(argv: list[str]) -> int:
-        result_path = Path(argv[argv.index("--result-json") + 1])
-        run_id = argv[argv.index("--run-id") + 1]
-        name = run_id.split("-")[2]
-        result_path.write_text(json.dumps({
-            "schema": 1, "run_id": run_id, "source": "ci",
-            "reason": "written", "detail": "", "exit_code": 0,
-            "rounds": scenarios.history.MAX_ROUNDS,
-            "last_run_id": "some-other-round",
-            "window_full": True,
-            "push_attempts": 1 if name == "happy" else 2,
-            "dry_run": False,
-        }), encoding="utf-8")
-        print("已写回 main（第 1 次尝试）")
-        if name == "rejected":
-            print("push 被拒（第 1 次），rebase 到最新 main 后重试")
-            print("已写回 main（第 2 次尝试）")
-        if name == "conflict":
-            print("rebase 冲突（第 1 次）：丢弃本次写回提交，按最新 main 重算")
-            print("已写回 main（第 2 次尝试）")
-        return 0
-
-    monkeypatch.setattr(scenarios.replay, "main", fake_main)
+    monkeypatch.setattr(scenarios, "_invoke_replay", _fake_invoke(
+        last_run_id="some-other-round", rounds=scenarios.history.MAX_ROUNDS))
     result = tmp_path / "result.json"
 
     code = scenarios.main(_argv(repo, result))

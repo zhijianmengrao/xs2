@@ -478,24 +478,42 @@ jobs:
   # pytest / e2e / npm / docker，不引 secrets——fork PR 也能跑。写回只发生在
   # replay 的临时沙箱，真实 origin 不会被推。PR 与 push 都跑：合入前就能发现
   # 回放回归，而不是等 main 上的生产写回 job 才暴露。
+  # R103：同一套定义跑 ubuntu + windows。Git for Windows 自带 sh，拒绝钩子
+  # 与沙箱 git 都能走；`shell: bash` 让两平台的退出码透传写法保持一致。
+  # 失败沙箱由驱动断言存在后清理，不在 runner 的临时目录里累积。
   replay-ci-writeback:
-    runs-on: ubuntu-24.04
-    # 三个场景各 1–2 次本地 git 操作，正常 < 1 分钟；卡住通常是沙箱 git 或
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: python3
+          - os: windows-latest
+            python: python
+    runs-on: ${{ matrix.os }}
+    # 四个场景各 1–3 次本地 git 操作，正常 < 2 分钟；卡住通常是沙箱 git 或
     # 拒绝钩子没返回，不应拖到 GHA 的 6 小时上限。
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
       # PR 的 checkout 是 detached HEAD，replay 的 `git clone -b main` 需要
       # 一个本地 main 分支；这只改 runner 上的临时工作区，不改提交内容。
       - name: Materialize main for the sandbox clone
+        shell: bash
         run: git checkout -B main
-      - name: Replay happy, rejected and conflicting writebacks
-        # 退出码语义：0=三场景全符 1=场景断言不符 3=基线不可用（checkout/
+      - name: Replay happy, rejected, conflicting and permanently rejected writebacks
+        # 退出码语义：0=四场景全符 1=场景断言不符 3=基线不可用（checkout/
         # git/history 问题）。两种非零都让这一步红；3 单独提示排查方向，
         # 不让「环境坏」冒充「回放语义坏」（R49 的同一处置）。
+        shell: bash
+        env:
+          PYTHON: ${{ matrix.python }}
         run: |
           code=0
-          python3 scripts/replay_ci_scenarios.py \
+          "$PYTHON" scripts/replay_ci_scenarios.py \
             --repo . \
             --branch main \
             --summary "$GITHUB_STEP_SUMMARY" \
@@ -512,8 +530,54 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: replay-ci-result
+          name: replay-ci-result-${{ matrix.os }}
           path: ${{ runner.temp }}/replay-ci-result.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  # R103：把 `--fetch-api-url` 全链（下载 artifact → 写回）接进生产。独立
+  # push-only job：token 与 `actions: read` 只在这里出现，replay 主 job 仍是
+  # 零 token、PR 照跑。backend 成功才可能已经有 e2e-metrics artifact。
+  replay-ci-fetch-chain:
+    needs: backend
+    if: "always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.backend.result == 'success'"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # 列 artifact / 下载 zip 需要 actions: read；写权限仍只在写回 job。
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Materialize main for the sandbox clone
+        run: git checkout -B main
+      - name: Replay the fetched-artifact writeback chain
+        # artifact API 的 run id 是本轮 GitHub run；历史 run id 由驱动生成为
+        # replay-ci-fetched-<sha>，两者不能混用（R103）。
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          code=0
+          python3 scripts/replay_ci_scenarios.py \
+            --repo . \
+            --branch main \
+            --fetch-api-url https://api.github.com \
+            --fetch-run-id "${{ github.run_id }}" \
+            --fetch-repo "${{ github.repository }}" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --result-json "$RUNNER_TEMP/replay-fetch-result.json" || code=$?
+          if [ "$code" -eq 3 ]; then
+            echo "::error::replay 全链无法建立基线（退出码 3）：先看 checkout/git/history"
+          elif [ "$code" -ne 0 ]; then
+            echo "::error::replay 全链断言不符（退出码 $code）"
+          fi
+          exit $code
+      - name: Upload replay fetch result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-fetch-result
+          path: ${{ runner.temp }}/replay-fetch-result.json
           if-no-files-found: warn
           retention-days: 1
 

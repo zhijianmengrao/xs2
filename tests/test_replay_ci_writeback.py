@@ -221,6 +221,39 @@ def test_replay_fetches_the_artifact_before_writeback(
     assert "chore(e2e): record CI run replay-fetch" in out
 
 
+def test_replay_separates_the_fetch_run_id_from_the_history_run_id(
+        tmp_path: Path, capsys) -> None:
+    """R103：artifact API 的 run id 与历史 run id 是两件事。"""
+    repo = _seed(tmp_path)
+    routes: dict = {}
+    recorded: list = []
+    result = tmp_path / "result.json"
+    with server(routes, recorded) as base:
+        routes[api_path("owner/repo", "gh-run-42", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"}, _archive(tmp_path))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-writeback-id",
+            "--fetch-api-url", base,
+            "--fetch-run-id", "gh-run-42",
+            "--fetch-repo", "owner/repo",
+            "--result-json", str(result),
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert "chore(e2e): record CI run replay-writeback-id" in out
+    # 列表请求命中的是 GitHub run id；历史条目用的是写回 run id。
+    assert any("/gh-run-42/" in path for path, _headers in recorded)
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["run_id"] == "replay-writeback-id"
+    assert payload["last_run_id"] == "replay-writeback-id"
+
+
 def test_replay_missing_artifact_does_not_write(
         tmp_path: Path, capsys) -> None:
     repo = _seed(tmp_path)

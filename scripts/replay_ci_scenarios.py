@@ -1,35 +1,41 @@
-"""R101：在 CI 里回放写回的三条路径（happy / 被拒一次 / 冲突）。
+"""R101：在 CI 里回放写回的生产路径（happy / 被拒一次 / 冲突 / 永久拒绝）。
 
 R99 已经把「在沙箱 origin 上真实制造 push 拒绝与 rebase 冲突」做成可执行
 能力，但那些场景此前只由 ``tests/test_replay_ci_writeback.py`` 在 backend
 job 里以 pytest 驱动。pytest 能证明函数行为，**证明不了**「生产 CI 的
 checkout、git、shell 钩子、历史文件上，这套回放真的能跑完」。本脚本就是那
-个生产 job 的驱动：它对 ``scripts/replay_ci_writeback.py`` 的 ``main()``
-逐个跑场景，断言退出码、``reason``、``rounds``、``push_attempts`` 与关键
-输出，再把机读结果交给 step summary / artifact。
+个生产 job 的驱动：它把 ``scripts/replay_ci_writeback.py`` 当**真实 CLI
+子进程**逐个跑场景，断言退出码、``reason``、``rounds``、``push_attempts``
+与关键输出，再把机读结果交给 step summary / artifact。
 
 ## 判什么、不判什么
 
 判：回放的**可执行性与链路语义**——写回成功、被拒一次后重试成功、冲突后
-丢弃本地提交并按最新分支重算。每个场景都从 ``--repo`` 的 HEAD 克隆出独立
-沙箱，源仓库一个字节都不该动。
+丢弃本地提交并按最新分支重算、三次全拒后正确失败并保留现场。每个场景都从
+``--repo`` 的 HEAD 克隆出独立沙箱，源仓库一个字节都不该动。
 
 判定写入是否发生不能只看轮数：历史窗口 ``MAX_ROUNDS`` 满了以后
 ``history[-40:]`` 会把最早一轮挤掉，happy/rejected 的净增量变成 0，conflict
-的 +2 也会被压平——``rounds`` 会退化成恒等式（R102）。因此每个场景额外断言
-``result.last_run_id`` 等于本轮的 ``run_id``：窗口状态再怎么变，末条必须
-是这一轮。``rounds`` 仍按 ``min(before + delta, MAX_ROUNDS)`` 断言，另外用
-``rounds_clipped`` 明说这一项的计数是否已被裁剪。
+的 +2 也会被压平——``rounds`` 会退化成恒等式（R102）。因此成功场景额外断言
+``result.last_run_id`` 等于本轮的 ``run_id``；失败场景（永久拒绝）断言远端
+末条**仍是基线那一条**，远端轮数完全没变。
 
-不判：模型质量、e2e 场景通过率、真实 origin 的推送（写回只推沙箱 origin），
-以及永久拒绝（三次全拒）——那条路径按设计保留失败沙箱，pytest 已在两个
-平台覆盖，生产 job 不制造需要人工清理的现场。
+永久拒绝是**期望失败**：退出码 1、``reason=push-rejected``、推送恰好 3 次。
+它必须同时看到 3 次 ``simulated rejection``——否则 msys/传输故障也能让 push
+三次非零，场景会为错误的原因变绿。replay 按设计保留失败沙箱；驱动断言现场
+存在、随后清理，既证明「失败现场真的留下过」，也不让 CI runner 的临时目录
+累积（R103）。
+
+``--fetch-api-url`` 启用时追加 ``fetched`` 场景：不喂本地 metrics，而是让
+replay 先走 ``fetch_ci_artifact`` 从真实 API 下载 artifact，再走同一条写回
+链路。artifact API 的 run id 与历史 run id 是两件事（前者是 GitHub run，
+后者是 ``replay-ci-fetched-<sha>``），由 ``--fetch-run-id`` 分开。
 
 ## 退出码
 
-- 0：三个场景全部符合预期
+- 0：所有场景符合预期
 - 1：至少一个场景的观测与预期不符（真回归；输出里有逐项 expected/actual）
-- 2：用法错误（argparse）
+- 2：用法错误（argparse，或 fetch 参数不成对）
 - 3：基线不可用——``--repo`` 不是 git 仓库、history 缺失/读不懂。**不是**
   回放语义失败，排查方向是 checkout/git/数据，别把它当 1。
 
@@ -47,17 +53,21 @@ job 里驱动，不是生产 job」。把同样的断言塞回 pytest 只是换�
     python scripts/replay_ci_scenarios.py --repo . \\
         --result-json "$RUNNER_TEMP/replay-ci-result.json" \\
         --summary "$GITHUB_STEP_SUMMARY"
+    # 全链：下载 GitHub artifact 后再写回
+    python scripts/replay_ci_scenarios.py --repo . --fetch-api-url \\
+        https://api.github.com --fetch-run-id "$GITHUB_RUN_ID" \\
+        --fetch-repo "$GITHUB_REPOSITORY"
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,7 +100,9 @@ class Scenario:
     - happy：一次 push 成功，rounds +1，push_attempts=1；
     - rejected：第 1 次被拒、第 2 次成功，rounds +1，push_attempts=2；
     - conflict：origin 上预置一轮冲突历史 + 本轮，rounds +2；写回同样经历
-      被拒→rebase 冲突→按最新分支重算→第 2 次 push，push_attempts=2。
+      被拒→rebase 冲突→按最新分支重算→第 2 次 push，push_attempts=2；
+    - permanently-rejected（R103）：三次全被拒，退出码 1、远端轮数不变、
+      push_attempts=3，失败沙箱保留后由驱动清理。
     """
 
     name: str
@@ -98,8 +110,17 @@ class Scenario:
     push_attempts: int
     reject_pushes: int = 0
     conflict: bool = False
+    expected_exit: int = EXIT_OK
+    expected_reason: str = "written"
+    expect_sandbox: bool = False
+    fetch: bool = False
     must_contain: tuple[str, ...] = ()
     must_not_contain: tuple[str, ...] = ()
+    output_counts: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def succeeds(self) -> bool:
+        return self.expected_exit == EXIT_OK
 
 
 SCENARIOS: tuple[Scenario, ...] = (
@@ -107,17 +128,40 @@ SCENARIOS: tuple[Scenario, ...] = (
         "happy", 1, 1,
         must_contain=("已写回",),
         # 证明这一场景真的没有拒绝；否则「被拒一次」与它无法区分。
-        must_not_contain=("push 被拒（第",),
+        must_not_contain=("push 被拒（第", "simulated rejection"),
     ),
     Scenario(
         "rejected", 1, 2, reject_pushes=1,
         must_contain=("push 被拒（第 1 次）", "第 2 次尝试"),
+        # 必须看到钩子自己的拒绝，而不是任何一次传输故障。
+        output_counts=(("simulated rejection", 1),),
     ),
     Scenario(
         "conflict", 2, 2, conflict=True,
         must_contain=("rebase 冲突（第 1 次）", "第 2 次尝试"),
+        must_not_contain=("simulated rejection",),
+    ),
+    Scenario(
+        "permanently-rejected", 0, 3, reject_pushes=3,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="push-rejected",
+        expect_sandbox=True,
+        must_contain=("::error::连续 3 次写回均失败",),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 3), ("simulated rejection", 3)),
     ),
 )
+
+# R103：全链场景不喂本地 metrics，而是让 replay 先下载真实 artifact。
+FETCH_SCENARIO = Scenario(
+    "fetched", 1, 1, fetch=True,
+    must_contain=("已下载 1 个文件", "已写回"),
+)
+
+# 单个场景是 1–2 次本地 git 操作；超时保护只防止沙箱 git/钩子卡死。
+SCENARIO_TIMEOUT = 180.0
+
+SANDBOX_PREFIX = "replay：沙箱保留在 "
 
 
 class BaselineError(RuntimeError):
@@ -167,7 +211,54 @@ def _baseline(repo: Path, history_rel: str) -> dict:
         "history_path": history_path,
         "history_bytes": history_path.read_bytes(),
         "rounds": len(entries),
+        # 失败场景（永久拒绝）要证明远端末条**没有变**：它仍是基线这一条。
+        "last_run_id": entries[-1]["run_id"] if entries else None,
     }
+
+
+def _invoke_replay(argv: list[str]) -> tuple[int, str]:
+    """把 replay 当真实 CLI 子进程跑（R103）。
+
+    此前是进程内 ``replay.main(argv)`` + 重定向 stdout/stderr。那条路径看不见
+    ``sys.path`` 引导、argparse 的进程退出码、未捕获异常的 traceback——R98 的
+    ``ModuleNotFoundError`` 正是只在脚本模式下出现。子进程还让驱动与回放共享
+    全局状态的窗口消失（``redirect_stdout`` 是进程级的）。
+    """
+    env = os.environ.copy()
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-X", "utf8",
+             str(REPO_ROOT / "scripts" / "replay_ci_writeback.py"), *argv],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=env, timeout=SCENARIO_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return (EXIT_MISMATCH,
+                f"replay 子进程超时（{SCENARIO_TIMEOUT:.0f}s）")
+    except OSError as exc:
+        return EXIT_MISMATCH, f"replay 子进程无法启动：{exc}"
+    return completed.returncode, completed.stdout + completed.stderr
+
+
+def _kept_sandbox(output: str) -> Path | None:
+    """从 replay 的收尾行里取出失败沙箱路径。"""
+    for line in reversed(output.splitlines()):
+        if line.startswith(SANDBOX_PREFIX):
+            text = line[len(SANDBOX_PREFIX):].strip()
+            text = text.removesuffix("（失败现场）").strip()
+            return Path(text) if text else None
+    return None
+
+
+def _cleanup_sandbox(path: Path) -> bool:
+    """清理失败沙箱并确认真的删掉了；Windows 的只读 pack 需要重试。"""
+    for _ in range(3):
+        replay._remove_sandbox(path)
+        if not path.exists():
+            return True
+        time.sleep(0.2)
+    return not path.exists()
 
 
 def _read_result(path: Path) -> dict | None:
@@ -179,54 +270,69 @@ def _read_result(path: Path) -> dict | None:
 
 
 def _run_scenario(scenario: Scenario, repo: Path, branch: str,
-                  history_rel: str, before: int, workdir: Path) -> dict:
+                  history_rel: str, before: int,
+                  baseline_last_run_id: str | None, workdir: Path,
+                  fetch_api_url: str | None = None,
+                  fetch_run_id: str | None = None,
+                  fetch_repo: str = "",
+                  artifact: str | None = None) -> dict:
     """跑一个场景并返回逐项观测；不抛异常，失败写进返回值。"""
     head = _git_text(repo, "rev-parse", "HEAD")
     source_history = repo / history_rel
     history_before = source_history.read_bytes()
 
-    metrics = _metrics(workdir / f"{scenario.name}-metrics.json")
     result_path = workdir / f"{scenario.name}-result.json"
+    # 子进程崩溃时不能读到上一轮的旧文件（R103 起每个场景一个子进程）。
+    result_path.unlink(missing_ok=True)
     # run_id 带 HEAD 短 SHA：同一 commit 重跑时稳定，换 commit 自动换键；
     # replay 的 record 对同键是覆盖，不会把一次回放记成两轮。
     run_id = f"replay-ci-{scenario.name}-{head[:8]}"
     argv = [
         "--repo", str(repo),
-        "--metrics", str(metrics),
         "--run-id", run_id,
         "--history", history_rel,
         "--branch", branch,
         "--result-json", str(result_path),
     ]
+    if scenario.fetch:
+        # 全链：artifact API 的 run id 与历史 run id 是两件事，必须分开传。
+        argv += [
+            "--fetch-api-url", str(fetch_api_url),
+            "--fetch-run-id", str(fetch_run_id),
+        ]
+        if fetch_repo:
+            argv += ["--fetch-repo", fetch_repo]
+        if artifact:
+            argv += ["--artifact", artifact]
+    else:
+        metrics = _metrics(workdir / f"{scenario.name}-metrics.json")
+        argv += ["--metrics", str(metrics)]
     if scenario.reject_pushes:
         argv += ["--reject-pushes", str(scenario.reject_pushes)]
     if scenario.conflict:
         argv.append("--conflict")
 
-    stdout, stderr = io.StringIO(), io.StringIO()
-    code = EXIT_MISMATCH
-    try:
-        with contextlib.redirect_stdout(stdout), \
-                contextlib.redirect_stderr(stderr):
-            code = replay.main(argv)
-    except SystemExit as exc:  # argparse 的用法错误
-        code = exc.code if isinstance(exc.code, int) else EXIT_MISMATCH
-    except Exception as exc:  # noqa: BLE001 - 生产驱动不能因异常丢诊断
-        print(f"replay 抛异常：{type(exc).__name__}: {exc}")
-
-    output = stdout.getvalue() + stderr.getvalue()
+    code, output = _invoke_replay(argv)
     result = _read_result(result_path)
-    expected_rounds = min(before + scenario.rounds_delta, history.MAX_ROUNDS)
-    # 窗口满时轮数会恒定在 MAX_ROUNDS：这一项只能证明「窗口没坏」，不能再
-    # 证明「本轮写进去了」。rounds_clipped 把这件事写进产物，免得看日志的人
-    # 把 40 == 40 当成强证据。
-    rounds_clipped = before + scenario.rounds_delta > history.MAX_ROUNDS
+    if scenario.succeeds:
+        expected_rounds = min(before + scenario.rounds_delta,
+                              history.MAX_ROUNDS)
+        expected_last_run_id = run_id
+        # 窗口满时轮数会恒定在 MAX_ROUNDS：这一项只能证明「窗口没坏」，不能
+        # 再证明「本轮写进去了」。rounds_clipped 把这件事写进产物，免得看
+        # 日志的人把 40 == 40 当成强证据。
+        rounds_clipped = before + scenario.rounds_delta > history.MAX_ROUNDS
+    else:
+        # 写回失败时远端没有新轮次：轮数与末条都应停在基线。
+        expected_rounds = before
+        expected_last_run_id = baseline_last_run_id
+        rounds_clipped = False
     expected = {
-        "exit_code": EXIT_OK,
-        "reason": "written",
+        "exit_code": scenario.expected_exit,
+        "reason": scenario.expected_reason,
         "rounds": expected_rounds,
         "rounds_clipped": rounds_clipped,
-        "last_run_id": run_id,
+        "last_run_id": expected_last_run_id,
         "push_attempts": scenario.push_attempts,
     }
     actual = {
@@ -238,8 +344,9 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
     }
 
     problems: list[str] = []
-    if code != EXIT_OK:
-        problems.append(f"退出码 {code}，期望 0")
+    if code != scenario.expected_exit:
+        problems.append(
+            f"退出码 {code}，期望 {scenario.expected_exit}")
     if result is None:
         problems.append("没有写出 --result-json")
     else:
@@ -247,16 +354,20 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
             problems.append(
                 f"result.exit_code={result.get('exit_code')!r} 与进程退出码 "
                 f"{code} 不一致")
-        if result.get("reason") != "written":
+        if result.get("reason") != scenario.expected_reason:
             problems.append(
-                f"reason={result.get('reason')!r}，期望 'written'")
+                f"reason={result.get('reason')!r}，"
+                f"期望 {scenario.expected_reason!r}")
         if result.get("rounds") != expected_rounds:
             problems.append(
                 f"rounds={result.get('rounds')!r}，期望 {expected_rounds}")
-        if result.get("last_run_id") != run_id:
+        if result.get("last_run_id") != expected_last_run_id:
+            hint = ("（窗口满时这是「本轮已入库」的唯一证据）"
+                    if scenario.succeeds
+                    else "（失败场景：远端历史不应变化）")
             problems.append(
-                f"last_run_id={result.get('last_run_id')!r}，期望 {run_id!r}"
-                f"（窗口满时这是「本轮已入库」的唯一证据）")
+                f"last_run_id={result.get('last_run_id')!r}，"
+                f"期望 {expected_last_run_id!r}{hint}")
         if result.get("push_attempts") != scenario.push_attempts:
             problems.append(
                 f"push_attempts={result.get('push_attempts')!r}，"
@@ -267,6 +378,29 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
     for token in scenario.must_not_contain:
         if token in output:
             problems.append(f"输出不应包含 {token!r}")
+    for token, count in scenario.output_counts:
+        actual_count = output.count(token)
+        if actual_count != count:
+            problems.append(
+                f"输出中 {token!r} 出现 {actual_count} 次，期望 {count} 次")
+
+    # 失败沙箱：期望失败场景必须留下现场，随后由驱动清理；成功场景不应留下
+    # 任何沙箱。断言「真的留下过」再删，而不是让 runner 的临时目录累积。
+    sandbox_cleaned: bool | None = None
+    kept = _kept_sandbox(output)
+    if scenario.expect_sandbox:
+        if kept is None:
+            problems.append("期望保留失败沙箱，但输出里没有「沙箱保留在」")
+            sandbox_cleaned = False
+        elif not kept.is_dir():
+            problems.append(f"失败沙箱不存在：{kept}")
+            sandbox_cleaned = False
+        else:
+            sandbox_cleaned = _cleanup_sandbox(kept)
+            if not sandbox_cleaned:
+                problems.append(f"失败沙箱未能清理：{kept}")
+    elif kept is not None:
+        problems.append(f"成功场景却保留了沙箱：{kept}")
 
     # 源仓库只读：HEAD 与 history 字节都必须与调用前一致。放在场景内部检查，
     # 失败时能指出是哪个场景越界，而不是只在最后报一句“变了”。
@@ -284,6 +418,8 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         "exit_code": code,
         "run_id": run_id,
         "rounds_clipped": rounds_clipped,
+        "sandbox_cleaned": sandbox_cleaned,
+        "sandbox": str(kept) if kept is not None else None,
         "expected": expected,
         "actual": actual,
         "failure": "；".join(problems),
@@ -294,7 +430,13 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
 
 def run(repo: Path, branch: str, history_rel: str,
         result_path: Path | None = None,
-        summary_path: Path | None = None) -> int:
+        summary_path: Path | None = None,
+        fetch_api_url: str | None = None,
+        fetch_run_id: str | None = None,
+        fetch_repo: str = "",
+        artifact: str | None = None) -> int:
+    repo = Path(repo).resolve()
+    scenarios = SCENARIOS + ((FETCH_SCENARIO,) if fetch_api_url else ())
     try:
         baseline = _baseline(repo, history_rel)
     except BaselineError as exc:
@@ -313,7 +455,8 @@ def run(repo: Path, branch: str, history_rel: str,
 
     print(
         f"replay-ci：源仓库 {repo} HEAD {baseline['head'][:8]}，"
-        f"历史 {baseline['rounds']}/{history.MAX_ROUNDS} 轮",
+        f"历史 {baseline['rounds']}/{history.MAX_ROUNDS} 轮，"
+        f"末条 {baseline['last_run_id']}",
         flush=True)
     window_full = baseline["rounds"] >= history.MAX_ROUNDS
     if window_full:
@@ -326,10 +469,14 @@ def run(repo: Path, branch: str, history_rel: str,
     records: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="replay-ci-scenarios-") as tmp:
         workdir = Path(tmp)
-        for scenario in SCENARIOS:
+        for scenario in scenarios:
             record = _run_scenario(
                 scenario, repo, branch, history_rel, baseline["rounds"],
-                workdir)
+                baseline["last_run_id"], workdir,
+                fetch_api_url=fetch_api_url,
+                fetch_run_id=fetch_run_id,
+                fetch_repo=fetch_repo,
+                artifact=artifact)
             records.append(record)
             mark = "PASS" if record["ok"] else "FAIL"
             print(
@@ -349,7 +496,7 @@ def run(repo: Path, branch: str, history_rel: str,
 
     # 场景没跑完（中途因源仓库被改动而停止）同样算失败：不能因为剩下的
     # 没跑就报通过。
-    ok = len(records) == len(SCENARIOS) and all(
+    ok = len(records) == len(scenarios) and all(
         record["ok"] for record in records)
     ci_reporting.emit_result(result_path, {
         "schema": RESULT_SCHEMA,
@@ -377,7 +524,7 @@ def run(repo: Path, branch: str, history_rel: str,
             summary_path, f"replay-ci-{record['name']}", reason, detail)
 
     passed = sum(1 for record in records if record["ok"])
-    print(f"replay-ci：{passed}/{len(SCENARIOS)} 场景通过", flush=True)
+    print(f"replay-ci：{passed}/{len(scenarios)} 场景通过", flush=True)
     return EXIT_OK if ok else EXIT_MISMATCH
 
 
@@ -393,13 +540,29 @@ def build_parser() -> argparse.ArgumentParser:
                         help="step summary 文件（可选）")
     parser.add_argument("--result-json", type=Path, default=None,
                         help="机读结果工件（可选）")
+    parser.add_argument("--fetch-api-url", default=None,
+                        help="启用 fetched 场景：先下载 artifact 再写回")
+    parser.add_argument("--fetch-run-id", default=None,
+                        help="artifact API 的 run id（启用全链时必填）")
+    parser.add_argument("--fetch-repo", default="",
+                        help="artifact API 的 owner/name（默认取子进程环境）")
+    parser.add_argument("--artifact", default=None,
+                        help="artifact 名称（默认用 replay 的 e2e-metrics）")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if bool(args.fetch_api_url) != bool(args.fetch_run_id):
+        print("--fetch-api-url 与 --fetch-run-id 必须同时给出",
+              file=sys.stderr)
+        return EXIT_USAGE
     return run(args.repo, args.branch, args.history,
-               args.result_json, args.summary)
+               args.result_json, args.summary,
+               fetch_api_url=args.fetch_api_url,
+               fetch_run_id=args.fetch_run_id,
+               fetch_repo=args.fetch_repo,
+               artifact=args.artifact)
 
 
 if __name__ == "__main__":
