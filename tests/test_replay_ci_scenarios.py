@@ -161,6 +161,44 @@ def _fake_invoke(*, push_attempts: int | None = None,
             sandbox = Path(tempfile.mkdtemp(prefix="fake-replay-sandbox-"))
             lines.append(f"replay：沙箱保留在 {sandbox}（失败现场）")
             output = "\n".join(lines) + "\n"
+        elif name == "rejected-hook-conflict":
+            payload = {
+                "schema": 1, "run_id": run_id, "source": "ci",
+                "reason": "push-rejected", "detail": "", "exit_code": 1,
+                "rounds": 1 if rounds is None else rounds,
+                "last_run_id": ("replay-conflict" if last_run_id is None
+                                else last_run_id),
+                "window_full": False, "push_attempts": 3, "dry_run": False,
+            }
+            lines = ["rebase 冲突（第 1 次）：丢弃本次写回提交，"
+                     "按最新 main 重算"]
+            for attempt in range(1, 4):
+                lines.append(f"push 被拒（第 {attempt} 次），"
+                             f"rebase 到最新 main 后重试")
+                lines.append("simulated rejection")
+            lines.append("::error::连续 3 次写回均失败"
+                         "（最后一次：push-rejected），本轮历史未入库")
+            sandbox = Path(tempfile.mkdtemp(prefix="fake-replay-sandbox-"))
+            lines.append(f"replay：沙箱保留在 {sandbox}（失败现场）")
+            output = "\n".join(lines) + "\n"
+        elif name == "rejected-hook-budget-2":
+            payload = {
+                "schema": 1, "run_id": run_id, "source": "ci",
+                "reason": "written", "detail": "", "exit_code": 0,
+                "rounds": 2 if rounds is None else rounds,
+                "last_run_id": run_id if last_run_id is None else last_run_id,
+                "window_full": False,
+                "push_attempts": 3 if push_attempts is None else push_attempts,
+                "dry_run": False,
+            }
+            output = (
+                "rebase 冲突（第 1 次）：丢弃本次写回提交，"
+                "按最新 main 重算\n"
+                "push 被拒（第 1 次），rebase 到最新 main 后重试\n"
+                "simulated rejection\n"
+                "push 被拒（第 2 次），rebase 到最新 main 后重试\n"
+                "simulated rejection\n"
+                "已写回 main（第 3 次尝试）\n")
         else:
             expected_pushes = 2 if name in ("rejected", "conflict") else 1
             payload = {
@@ -186,13 +224,14 @@ def _fake_invoke(*, push_attempts: int | None = None,
                            "已写回 main（第 2 次尝试）\n")
 
         result_path.write_text(json.dumps(payload), encoding="utf-8")
-        failed = name in ("permanently-rejected", "rejected-conflict")
+        failed = name in ("permanently-rejected", "rejected-conflict",
+                          "rejected-hook-conflict")
         return (1 if failed else 0), output
 
     return invoke
 
 
-def test_driver_runs_all_five_scenarios(tmp_path: Path) -> None:
+def test_driver_runs_all_local_scenarios(tmp_path: Path) -> None:
     repo = _seed(tmp_path)
     head = _git("rev-parse", "HEAD", cwd=repo)
     short = head[:8]
@@ -212,7 +251,8 @@ def test_driver_runs_all_five_scenarios(tmp_path: Path) -> None:
     by_name = {record["name"]: record for record in payload["scenarios"]}
     assert list(by_name) == [
         "happy", "rejected", "conflict", "permanently-rejected",
-        "rejected-conflict"]
+        "rejected-conflict", "rejected-hook-conflict",
+        "rejected-hook-budget-2"]
     assert by_name["happy"]["actual"] == {
         "exit_code": 0, "reason": "written", "rounds": 1,
         "last_run_id": f"replay-ci-happy-{short}",
@@ -234,12 +274,23 @@ def test_driver_runs_all_five_scenarios(tmp_path: Path) -> None:
         "exit_code": 1, "reason": "push-rejected", "rounds": 1,
         "last_run_id": "replay-conflict",
         "push_attempts": 3}
+    # R108：钩子首次拒绝时注入冲突；预算 3 全失败。
+    assert by_name["rejected-hook-conflict"]["actual"] == {
+        "exit_code": 1, "reason": "push-rejected", "rounds": 1,
+        "last_run_id": "replay-conflict",
+        "push_attempts": 3}
+    # R108：同一夹具预算 2 → 第三次 push 成功，注入轮 + 本轮 = 2。
+    assert by_name["rejected-hook-budget-2"]["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 2,
+        "last_run_id": f"replay-ci-rejected-hook-budget-2-{short}",
+        "push_attempts": 3}
     for record in payload["scenarios"]:
         assert record["ok"] is True, record["failure"]
         assert record["source_mutated"] is False
         assert record["rounds_clipped"] is False
     # 失败沙箱必须真的留下过，再被驱动清理；不能只在输出里说一句。
-    for name in ("permanently-rejected", "rejected-conflict"):
+    for name in ("permanently-rejected", "rejected-conflict",
+                 "rejected-hook-conflict"):
         failed = by_name[name]
         assert failed["sandbox_cleaned"] is True
         assert failed["sandbox"] is not None
@@ -253,7 +304,7 @@ def test_driver_runs_all_five_scenarios(tmp_path: Path) -> None:
 
     # step summary 每个场景一行，reason 是 ok。
     text = summary.read_text(encoding="utf-8")
-    assert text.count("replay-ci-") == 5
+    assert text.count("replay-ci-") == 7
     assert "**ok**" in text
 
 
@@ -347,7 +398,8 @@ def test_scenario_table_pins_the_replay_counts() -> None:
     by_name = {scenario.name: scenario for scenario in scenarios.SCENARIOS}
     assert list(by_name) == [
         "happy", "rejected", "conflict", "permanently-rejected",
-        "rejected-conflict"]
+        "rejected-conflict", "rejected-hook-conflict",
+        "rejected-hook-budget-2"]
 
     happy = by_name["happy"]
     assert (happy.rounds_delta, happy.push_attempts) == (1, 1)
@@ -384,6 +436,27 @@ def test_scenario_table_pins_the_replay_counts() -> None:
     assert combined.expected_last_run_id == "replay-conflict"
     assert combined.output_counts == (
         ("push 被拒（第", 3), ("simulated rejection", 2))
+
+    # R108：钩子在第一次拒绝时注入冲突。预算 3 全失败；预算 2 第三次成功.
+    hook = by_name["rejected-hook-conflict"]
+    assert (hook.rounds_delta, hook.push_attempts) == (0, 3)
+    assert hook.reject_pushes == 3 and hook.conflict_on_reject is True
+    assert hook.conflict is False
+    assert hook.injected_rounds == 1
+    assert hook.expected_exit == 1
+    assert hook.expected_last_run_id == "replay-conflict"
+    assert hook.output_counts == (
+        ("push 被拒（第", 3), ("simulated rejection", 3))
+
+    budget2 = by_name["rejected-hook-budget-2"]
+    assert (budget2.rounds_delta, budget2.push_attempts) == (2, 3)
+    assert budget2.reject_pushes == 2 and budget2.conflict_on_reject is True
+    assert budget2.conflict is False
+    assert budget2.expected_exit == 0
+    assert budget2.expected_reason == "written"
+    assert budget2.expect_sandbox is False
+    assert budget2.output_counts == (
+        ("push 被拒（第", 2), ("simulated rejection", 2))
 
     # R106：全链版本必须与本地组合场景同语义，只多出「真的下载了」这一项。
     triple = scenarios.FETCH_REJECTED_CONFLICT_SCENARIO
@@ -457,7 +530,8 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     by_name = {record["name"]: record for record in payload["scenarios"]}
     assert list(by_name) == [
         "happy", "rejected", "conflict", "permanently-rejected",
-        "rejected-conflict", "fetched", "fetched-rejected-conflict"]
+        "rejected-conflict", "rejected-hook-conflict",
+        "rejected-hook-budget-2", "fetched", "fetched-rejected-conflict"]
     fetched = by_name["fetched"]
     assert fetched["ok"] is True, fetched["failure"]
     assert fetched["actual"] == {
@@ -500,27 +574,39 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(result.read_text(encoding="utf-8"))
     assert payload["ok"] is True
-    assert len(payload["scenarios"]) == 5
+    assert len(payload["scenarios"]) == 7
 
 
 # ------------------------------------- 窗口边界（R102：MAX_ROUNDS 耗尽防护）
 @pytest.mark.parametrize("count, expected, clipped", [
-    # 38：三个成功场景的增量都没碰到窗口，rounds 仍是强证据。
+    # 38：四个成功场景的增量都没碰到窗口，rounds 仍是强证据。
     (38, {"happy": 39, "rejected": 39, "conflict": 40,
-          "permanently-rejected": 38, "rejected-conflict": 39},
+          "permanently-rejected": 38, "rejected-conflict": 39,
+          "rejected-hook-conflict": 39,
+          "rejected-hook-budget-2": 40},
          {"happy": False, "rejected": False, "conflict": False,
-          "permanently-rejected": False, "rejected-conflict": False}),
-    # 39：conflict 的 +2 先被压成 +1（40 == 40），只有它能暴露裁剪。
+          "permanently-rejected": False, "rejected-conflict": False,
+          "rejected-hook-conflict": False,
+          "rejected-hook-budget-2": False}),
+    # 39：conflict / budget-2 的 +2 先被压成 +1（40 == 40），只有它们能暴露裁剪。
     (39, {"happy": 40, "rejected": 40, "conflict": 40,
-          "permanently-rejected": 39, "rejected-conflict": 40},
+          "permanently-rejected": 39, "rejected-conflict": 40,
+          "rejected-hook-conflict": 40,
+          "rejected-hook-budget-2": 40},
          {"happy": False, "rejected": False, "conflict": True,
-          "permanently-rejected": False, "rejected-conflict": False}),
-    # 40：三个成功场景的 rounds 全部恒定，只剩 last_run_id 能证明本轮已入库。
-    # 组合失败场景也恒定在 40——冲突注入遵守窗口，不会把远端撑到 41。
+          "permanently-rejected": False, "rejected-conflict": False,
+          "rejected-hook-conflict": False,
+          "rejected-hook-budget-2": True}),
+    # 40：四个成功场景的 rounds 全部恒定，只剩 last_run_id 能证明本轮已入库。
+    # 失败场景也恒定在 40——冲突注入遵守窗口，不会把远端撑到 41。
     (40, {"happy": 40, "rejected": 40, "conflict": 40,
-          "permanently-rejected": 40, "rejected-conflict": 40},
+          "permanently-rejected": 40, "rejected-conflict": 40,
+          "rejected-hook-conflict": 40,
+          "rejected-hook-budget-2": 40},
          {"happy": True, "rejected": True, "conflict": True,
-          "permanently-rejected": False, "rejected-conflict": False}),
+          "permanently-rejected": False, "rejected-conflict": False,
+          "rejected-hook-conflict": False,
+          "rejected-hook-budget-2": True}),
 ])
 def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         tmp_path: Path, count: int, expected: dict, clipped: dict) -> None:
@@ -545,7 +631,7 @@ def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         if name == "permanently-rejected":
             # 失败场景：远端末条仍是基线那一条，不是本轮。
             assert record["actual"]["last_run_id"] == f"seed-{count - 1}"
-        elif name == "rejected-conflict":
+        elif name in ("rejected-conflict", "rejected-hook-conflict"):
             # 失败场景：远端只多出注入的冲突轮，末条就是它。
             assert record["actual"]["last_run_id"] == "replay-conflict"
         else:

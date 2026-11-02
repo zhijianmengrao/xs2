@@ -484,6 +484,80 @@ def test_replay_reports_the_fetched_metrics_content(
             in out)
 
 
+def test_replay_hook_injects_conflict_on_first_rejection(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R108：第一次 push 真的走到钩子，并在拒绝时注入冲突轮。
+
+    与 R105 的「writeback 前注入」相反：第一次 push 不是非快进，钩子看到
+    了它；预算 3 时三次尝试全失败，`simulated rejection` 是 3（不是 2）。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "3",
+        "--conflict-on-reject",
+        "--result-json", str(result),
+    ]) == 1
+
+    captured = capsys.readouterr()
+    assert "首次拒绝时注入冲突" in captured.out
+    assert captured.out.count("push 被拒（第") == 3
+    assert captured.out.count("rebase 冲突（第 1 次）") == 1
+    assert captured.err.count("simulated rejection") == 3
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "push-rejected"
+    assert payload["push_attempts"] == 3
+    # 远端只有注入的冲突轮；本轮没有入库。
+    assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "replay-conflict"
+    assert sandbox.exists()
+    replay._remove_sandbox(sandbox)
+
+
+def test_replay_rejection_budget_two_is_a_real_boundary(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R108：预算 2 → 第三次 push 成功，2 与 3 是行为边界。
+
+    同一夹具、同一冲突注入时机，只改 ``--reject-pushes``：2 让第三次尝试
+    通过（净 +2：注入轮 + 本轮），3 则三次全失败（见上一条）。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "2",
+        "--conflict-on-reject",
+        "--result-json", str(result),
+    ]) == 0
+
+    captured = capsys.readouterr()
+    assert "第 3 次尝试" in captured.out
+    assert "已写回" in captured.out
+    assert captured.out.count("push 被拒（第") == 2
+    assert captured.out.count("rebase 冲突（第 1 次）") == 1
+    assert captured.err.count("simulated rejection") == 2
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "written"
+    assert payload["push_attempts"] == 3
+    # 注入轮 + 本轮都在远端。
+    assert payload["rounds"] == 2
+    assert payload["last_run_id"] == "replay-1"
+    assert not sandbox.exists(), "成功场景不应保留沙箱"
+
+
 def test_replay_fetch_and_rejection_work_together(
         tmp_path: Path, capsys) -> None:
     repo = _seed(tmp_path)

@@ -95,16 +95,105 @@ def _apply_worktree_changes(source: Path, work: Path) -> None:
               f"（只带已跟踪改动）")
 
 
-def _install_rejection_hook(origin: Path, rejections: int) -> None:
-    """在沙箱 origin 上装 pre-receive：前 ``rejections`` 次 push 被拒（R99）。"""
+def _conflict_hook_source(branch: str, history_rel: str) -> str:
+    """第一次拒绝时在 origin 上追加冲突轮（R108）。
+
+    在 ``pre-receive`` 里用 plumbing 直接更新 ref：``read-tree`` 到临时
+    index → 替换 history blob → ``write-tree`` → ``commit-tree`` →
+    ``update-ref``。不走工作树，Windows 上也没有 checkout 的路径问题。
+
+    Git 在钩子里会设置 quarantine 的对象目录；写进去的 blob/commit 会在
+    钩子失败（exit 1）后被丢弃，``update-ref`` 就指向不存在的对象。因此
+    必须显式移除 ``GIT_OBJECT_DIRECTORY`` 等变量，让对象写进真实库。
+    """
+    entry = repr(_conflict_entry())
+    return f'''import json
+import os
+import subprocess
+
+GIT_DIR = os.environ["GIT_DIR"]
+BRANCH = {branch!r}
+HISTORY = {history_rel!r}
+MAX_ROUNDS = {history.MAX_ROUNDS}
+ENTRY = {entry}
+
+env = os.environ.copy()
+for _key in ("GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+             "GIT_QUARANTINE_PATH"):
+    env.pop(_key, None)
+env.update({{
+    "GIT_AUTHOR_NAME": "replay",
+    "GIT_AUTHOR_EMAIL": "replay@example.com",
+    "GIT_COMMITTER_NAME": "replay",
+    "GIT_COMMITTER_EMAIL": "replay@example.com",
+}})
+
+
+def git(*args, input=None, index=None):
+    run_env = env
+    if index is not None:
+        run_env = dict(env)
+        run_env["GIT_INDEX_FILE"] = index
+    return subprocess.run(
+        ["git", "--git-dir", GIT_DIR, *args], input=input,
+        capture_output=True, check=True, env=run_env)
+
+
+ref = "refs/heads/" + BRANCH
+old = git("rev-parse", ref).stdout.strip()
+raw = git("show", ref + ":" + HISTORY).stdout
+payload = json.loads(raw)
+entries = (payload["history"] + [ENTRY])[-MAX_ROUNDS:]
+blob = (json.dumps({{"schema": payload["schema"], "history": entries}},
+                   ensure_ascii=False, indent=2) + "\\n").encode("utf-8")
+blob_sha = git("hash-object", "-w", "--stdin",
+               input=blob).stdout.strip().decode()
+index_file = os.path.join(GIT_DIR, "hooks", "replay-conflict.index")
+try:
+    git("read-tree", ref, index=index_file)
+    git("update-index", "--add", "--cacheinfo", "100644", blob_sha, HISTORY,
+        index=index_file)
+    tree = git("write-tree", index=index_file).stdout.strip().decode()
+finally:
+    if os.path.exists(index_file):
+        os.unlink(index_file)
+commit = git("commit-tree", tree, "-p", old.decode(),
+             "-m", "replay: hook-conflicting round").stdout.strip().decode()
+git("update-ref", ref, commit, old.decode())
+'''
+
+
+def _install_rejection_hook(origin: Path, rejections: int,
+                            inject_conflict: bool = False,
+                            branch: str = "main",
+                            history_rel: str = DEFAULT_HISTORY) -> None:
+    """在沙箱 origin 上装 pre-receive：前 ``rejections`` 次 push 被拒（R99）。
+
+    ``inject_conflict=True``（R108）时，**第一次拒绝**会先在 origin 上追加
+    一轮冲突历史再拒绝。因此第一次 push 真的走到了钩子（不是非快进），
+    后续 push 的重推才会撞上 rebase 冲突。
+    """
     hook = origin / "hooks" / "pre-receive"
     hook.parent.mkdir(parents=True, exist_ok=True)
+    inject = ""
+    if inject_conflict:
+        script = origin / "hooks" / "replay_conflict_inject.py"
+        script.write_text(_conflict_hook_source(branch, history_rel),
+                          encoding="utf-8", newline="\n")
+        script.chmod(0o755)
+        python = Path(sys.executable).as_posix().replace('"', '\\"')
+        inject = (
+            '  if [ "$n" -eq 0 ]; then\n'
+            f'    "{python}" "$GIT_DIR/hooks/replay_conflict_inject.py"'
+            ' || exit 1\n'
+            '  fi\n')
     hook.write_text(
         "#!/bin/sh\n"
         'counter="$GIT_DIR/replay-reject-count"\n'
         'n=$(cat "$counter" 2>/dev/null || echo 0)\n'
         f'if [ "$n" -lt {rejections} ]; then\n'
         '  echo $((n + 1)) > "$counter"\n'
+        + inject +
         '  echo "replay: simulated rejection" >&2\n'
         '  exit 1\n'
         'fi\n'
@@ -114,7 +203,22 @@ def _install_rejection_hook(origin: Path, rejections: int) -> None:
         # 的 sh 对 CRLF 不该赌运气（R103）。
         newline="\n")
     hook.chmod(0o755)
-    print(f"replay：已安装拒绝钩子（前 {rejections} 次 push 被拒）")
+    print(f"replay：已安装拒绝钩子（前 {rejections} 次 push 被拒"
+          f"{'，首次拒绝时注入冲突' if inject_conflict else ''}）")
+
+
+CONFLICT_RUN_ID = "replay-conflict"
+
+
+def _conflict_entry() -> dict:
+    return {
+        "run_id": CONFLICT_RUN_ID,
+        "exported_at": "2026-11-02T00:00:00+00:00",
+        "source": "local",
+        "total": 1, "passed": 1, "failed": 0, "retried": 0, "attempts": 1,
+        "scenarios": [{"name": "conflict", "passed": True, "attempts": 1,
+                       "first_failure": ""}],
+    }
 
 
 def _create_conflicting_round(work: Path, origin: Path, branch: str,
@@ -124,14 +228,7 @@ def _create_conflicting_round(work: Path, origin: Path, branch: str,
     # 与 record 的窗口语义一致：满 MAX_ROUNDS 时挤掉最早一轮。否则满窗
     # 失败场景（R105 的组合场景）会把 origin 留在 41 轮——生产里 record
     # 永远不会写出这种历史，夹具自己造出来就会让窗口断言失去意义。
-    entries = (entries + [{
-        "run_id": "replay-conflict",
-        "exported_at": "2026-11-02T00:00:00+00:00",
-        "source": "local",
-        "total": 1, "passed": 1, "failed": 0, "retried": 0, "attempts": 1,
-        "scenarios": [{"name": "conflict", "passed": True, "attempts": 1,
-                       "first_failure": ""}],
-    }])[-history.MAX_ROUNDS:]
+    entries = (entries + [_conflict_entry()])[-history.MAX_ROUNDS:]
     history.validate_history({"schema": history.SCHEMA, "history": entries})
     other = sandbox / "other"
     _git("clone", "-q", str(origin), str(other))
@@ -188,7 +285,7 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
            fetch_api_url: str | None = None,
            artifact: str = ARTIFACT_NAME, fetch_repo: str = "",
            token: str | None = None, reject_pushes: int = 0,
-           conflict: bool = False,
+           conflict: bool = False, conflict_on_reject: bool = False,
            result_path: Path | None = None,
            fetch_run_id: str | None = None) -> int:
     repo = Path(repo).resolve()
@@ -205,7 +302,9 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
         if conflict:
             _create_conflicting_round(work, origin, branch, history_rel, sandbox)
         if reject_pushes:
-            _install_rejection_hook(origin, reject_pushes)
+            _install_rejection_hook(
+                origin, reject_pushes, inject_conflict=conflict_on_reject,
+                branch=branch, history_rel=history_rel)
         target = work / history_rel
         before = _rounds(target)
 
@@ -296,6 +395,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="沙箱 origin 拒绝前 N 次 push（R99）")
     parser.add_argument("--conflict", action="store_true",
                         help="先让 origin 前进一轮冲突历史（R99）")
+    parser.add_argument("--conflict-on-reject", action="store_true",
+                        help="第一次 push 被拒时在 origin 上注入冲突轮（R108）")
     parser.add_argument("--result-json", type=Path, default=None,
                         help="写回的机读结果工件（R99）")
     return parser
@@ -306,6 +407,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.reject_pushes < 0:
         print("--reject-pushes 不能为负", file=sys.stderr)
         return 2
+    if args.conflict and args.conflict_on_reject:
+        print("--conflict 与 --conflict-on-reject 不能同时使用",
+              file=sys.stderr)
+        return 2
+    if args.conflict_on_reject and args.reject_pushes < 1:
+        print("--conflict-on-reject 需要 --reject-pushes >= 1",
+              file=sys.stderr)
+        return 2
     return replay(
         repo=args.repo, metrics=args.metrics, run_id=args.run_id,
         history_rel=args.history, branch=args.branch, keep=args.keep,
@@ -313,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         from_worktree=args.from_worktree, fetch_api_url=args.fetch_api_url,
         artifact=args.artifact, fetch_repo=args.fetch_repo, token=args.token,
         reject_pushes=args.reject_pushes, conflict=args.conflict,
+        conflict_on_reject=args.conflict_on_reject,
         result_path=args.result_json, fetch_run_id=args.fetch_run_id)
 
 

@@ -117,6 +117,10 @@ class Scenario:
       push_attempts=3，失败沙箱保留后由驱动清理；
     - rejected-conflict（R105）：冲突注入 + 永久拒绝组合。第一次 push 被
       非快进拒绝，钩子拒绝第 2、3 次；远端只多出注入的冲突轮，退出码 1。
+    - rejected-hook-conflict（R108）：钩子在**第一次拒绝**时注入冲突，
+      第一次 push 真的走到钩子；预算 3 时三次全失败。
+    - rejected-hook-budget-2（R108）：同一夹具、预算 2，第三次 push 成功；
+      ``reject_pushes`` 的 2 与 3 因此成为可区分的行为边界。
 
     ``injected_rounds`` 是**夹具侧**先推进 origin 的轮数（冲突注入），
     只在失败场景里参与期望轮数计算：``rounds_delta`` 描述成功场景的净变化，
@@ -130,6 +134,7 @@ class Scenario:
     push_attempts: int
     reject_pushes: int = 0
     conflict: bool = False
+    conflict_on_reject: bool = False
     expected_exit: int = EXIT_OK
     expected_reason: str = "written"
     expect_sandbox: bool = False
@@ -188,6 +193,30 @@ SCENARIOS: tuple[Scenario, ...] = (
         must_not_contain=("已写回",),
         # 第 1 次是非快进拒绝（冲突注入），钩子只拒绝第 2、3 次（R105 实测）。
         output_counts=(("push 被拒（第", 3), ("simulated rejection", 2)),
+    ),
+    # R108：第一次拒绝时由钩子注入冲突。第一次 push 真的走到了钩子（不是
+    # 非快进），因此预算 3 = 三次全失败；预算 2 = 第三次成功。同一夹具下
+    # reject_pushes 的 2/3 第一次成为可区分的**行为**边界。
+    Scenario(
+        "rejected-hook-conflict", 0, 3, reject_pushes=3,
+        conflict_on_reject=True,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="push-rejected",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("rebase 冲突（第 1 次）",
+                      "::error::连续 3 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 3), ("simulated rejection", 3)),
+    ),
+    # 预算 2：钩子拒绝第 1、2 次（第 1 次注入冲突），第三次 push 成功；
+    # 远端 = 注入轮 + 本轮，净 +2。
+    Scenario(
+        "rejected-hook-budget-2", 2, 3, reject_pushes=2,
+        conflict_on_reject=True,
+        must_contain=("rebase 冲突（第 1 次）", "第 3 次尝试", "已写回"),
+        output_counts=(("push 被拒（第", 2), ("simulated rejection", 2)),
     ),
 )
 
@@ -382,6 +411,8 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         argv += ["--reject-pushes", str(scenario.reject_pushes)]
     if scenario.conflict:
         argv.append("--conflict")
+    if scenario.conflict_on_reject:
+        argv.append("--conflict-on-reject")
 
     code, output = _invoke_replay(argv)
     result = _read_result(result_path)
