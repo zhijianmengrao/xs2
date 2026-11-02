@@ -49,6 +49,11 @@ N=2 且预算耗尽、N=2 且第三次成功、N=3（末次拒绝注入、没有
 ``name=ok|retry|fail/尝试次数`` 与 ``first_failure``，全链场景据此断言
 artifact 的内容而不只是总数。
 
+R113 把注入矩阵扩到 N=4/5：写回重试上限变成可配置的 ``--attempts``，并补上
+「注入点 <= 重试次数」这条可达性校验（只查拒绝预算会漏掉重试先耗尽的那
+一半）。本地新增三条时间线，全链新增 ``fetched-rejected-hook-at-4``，证明
+late injection 在下载 artifact 之后同样可达。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -94,6 +99,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import ci_reporting
+from scripts import ci_writeback_history as writeback
 from scripts import e2e_retry_history as history
 from scripts import replay_ci_writeback as replay
 
@@ -134,6 +140,16 @@ class Scenario:
       冲突（第 2 次）」把注入时机钉住。
     - rejected-hook-inject-at-3（R112）：预算与注入点都在第 3 次——注入之后
       已经没有下一次重试，冲突轮留在 origin，本轮不入库。
+    - rejected-hook-conflict-at-4（R113）：N=4、预算 4、attempts=4；四次全被
+      拒，注入在最后一次，失败类别是 rebase-conflict。
+    - rejected-hook-budget-4-at-4（R113）：同注入点、attempts=5；第 5 次
+      push 成功，净 +2。证明 late injection 不是必然失败。
+    - rejected-hook-inject-at-5（R113）：N=5、预算 5、attempts=5；五次全被
+      拒，注入在最后一次。
+
+    ``attempts`` 是写回重试上限（默认 3）。N=4/5 的场景必须显式抬到 4/5，
+    否则注入点永远到不了——``replay_ci_writeback`` 会以退出码 2 拒绝这种
+    不可达配置（R113 补的闸门）。
 
     ``injected_rounds`` 是**夹具侧**先推进 origin 的轮数（冲突注入），
     只在失败场景里参与期望轮数计算：``rounds_delta`` 描述成功场景的净变化，
@@ -148,6 +164,7 @@ class Scenario:
     reject_pushes: int = 0
     conflict: bool = False
     conflict_on_reject: int = 0
+    attempts: int = writeback.DEFAULT_ATTEMPTS
     expected_exit: int = EXIT_OK
     expected_reason: str = "written"
     expect_sandbox: bool = False
@@ -278,6 +295,52 @@ SCENARIOS: tuple[Scenario, ...] = (
         must_not_contain=("已写回",),
         output_counts=(("push 被拒（第", 3), ("simulated rejection", 3)),
     ),
+    # R113：N=4/5 需要重试上限跟着抬到 4/5。R112 只校验了「预算 >= 注入
+    # 点」，但重试循环默认只 push 3 次——预算够、次数不够时注入同样永远
+    # 到不了。--attempts 与可达性校验是本组场景存在的前提。
+    #
+    # N=4、预算 4、attempts=4：四次全被拒，注入落在最后一次，没有第 5 次
+    # 重试去消化冲突；失败类别是 rebase 冲突。
+    Scenario(
+        "rejected-hook-conflict-at-4", 0, 4, reject_pushes=4,
+        conflict_on_reject=4, attempts=4,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="rebase-conflict",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("第 4 次拒绝时注入冲突",
+                      "rebase 冲突（第 4 次）",
+                      "::error::连续 4 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 4), ("simulated rejection", 4)),
+    ),
+    # N=4、预算 4、attempts=5：第 4 次拒绝时注入，第 5 次 push 成功；
+    # 注入轮 + 本轮 = 净 +2。证明 late injection 不是必然失败。
+    Scenario(
+        "rejected-hook-budget-4-at-4", 2, 5, reject_pushes=4,
+        conflict_on_reject=4, attempts=5,
+        must_contain=("第 4 次拒绝时注入冲突",
+                      "rebase 冲突（第 4 次）",
+                      "第 5 次尝试", "已写回"),
+        output_counts=(("push 被拒（第", 4), ("simulated rejection", 4)),
+    ),
+    # N=5、预算 5、attempts=5：五次全被拒，注入在最后一次；失败类别与
+    # N=3/3 同型（rebase-conflict），但尝试次数与钩子计数都到了 5。
+    Scenario(
+        "rejected-hook-inject-at-5", 0, 5, reject_pushes=5,
+        conflict_on_reject=5, attempts=5,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="rebase-conflict",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("第 5 次拒绝时注入冲突",
+                      "rebase 冲突（第 5 次）",
+                      "::error::连续 5 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 5), ("simulated rejection", 5)),
+    ),
 )
 
 # R103：全链场景不喂本地 metrics，而是让 replay 先下载真实 artifact。
@@ -314,6 +377,22 @@ FETCH_REJECTED_CONFLICT_SCENARIO = Scenario(
                   "::error::连续 3 次写回均失败"),
     must_not_contain=("已写回",),
     output_counts=(("push 被拒（第", 3), ("simulated rejection", 2)),
+)
+
+# R113：全链 × 第 4 次拒绝注入 × 5 次重试。fetch 只换 metrics 来源，
+# 「第 4 次拒绝时注入」与「第 5 次成功」必须和本地场景同型；这条同时证明
+# --attempts 在全链子进程里真的透传到了写回重试循环。
+FETCH_REJECTED_HOOK_AT_4_SCENARIO = Scenario(
+    "fetched-rejected-hook-at-4", 2, 5, reject_pushes=4,
+    conflict_on_reject=4, attempts=5, fetch=True,
+    must_contain=("已下载 1 个文件",
+                  "metrics 内容 total=10",
+                  "metrics 语义",
+                  "第 4 次拒绝时注入冲突",
+                  "rebase 冲突（第 4 次）",
+                  "第 5 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 4), ("simulated rejection", 4)),
 )
 
 # 单个场景是 1–2 次本地 git 操作；超时保护只防止沙箱 git/钩子卡死。
@@ -457,6 +536,7 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         "--run-id", run_id,
         "--history", history_rel,
         "--branch", branch,
+        "--attempts", str(scenario.attempts),
         "--result-json", str(result_path),
     ]
     if scenario.fetch:
@@ -611,7 +691,8 @@ def run(repo: Path, branch: str, history_rel: str,
     repo = Path(repo).resolve()
     window = history.max_rounds()
     scenarios = SCENARIOS + (
-        (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO)
+        (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO,
+         FETCH_REJECTED_HOOK_AT_4_SCENARIO)
         if fetch_api_url else ())
     try:
         baseline = _baseline(repo, history_rel)

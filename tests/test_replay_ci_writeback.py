@@ -70,6 +70,45 @@ def _metrics_retry_shape(path: Path) -> Path:
     return path
 
 
+def _metrics_all_failed(path: Path) -> Path:
+    """全失败形状：3 个场景一个都没通过（R113）。"""
+    scenarios = [
+        {"name": f"fail_{index}", "passed": False, "attempts": 1,
+         "first_failure": f"全部失败：节点 {index} 未完成"}
+        for index in range(3)
+    ]
+    path.write_text(json.dumps({
+        "schema": 1, "total": 3, "passed": 0, "failed": 3, "retried": 0,
+        "scenarios": scenarios}), encoding="utf-8")
+    return path
+
+
+def _metrics_empty(path: Path) -> Path:
+    """0 场景形状：e2e 一个场景都没跑（合法，trend 用 n/a 表示）。"""
+    path.write_text(json.dumps({
+        "schema": 1, "total": 0, "passed": 0, "failed": 0, "retried": 0,
+        "scenarios": []}), encoding="utf-8")
+    return path
+
+
+def _metrics_multi_retry_failure(path: Path) -> Path:
+    """重试多次后仍失败：attempts=3 却 passed=False（R113）。
+
+    两个场景都重跑过（retried=2），其中一个重跑后通过。这条形状专门钉住
+    「重试次数」与「最终结论」不是同一件事：attempts 只说明试了几次。
+    """
+    scenarios = [
+        {"name": "never_passes", "passed": False, "attempts": 3,
+         "first_failure": "三次都失败：模拟节点崩溃"},
+        {"name": "ok_after_retry", "passed": True, "attempts": 2,
+         "first_failure": "第一次超时"},
+    ]
+    path.write_text(json.dumps({
+        "schema": 1, "total": 2, "passed": 1, "failed": 1, "retried": 2,
+        "attempts": 5, "scenarios": scenarios}), encoding="utf-8")
+    return path
+
+
 def _sandbox_from_output(output: str) -> Path:
     """从 ``--keep`` 的收尾行里取出沙箱路径。"""
     prefix = "replay：沙箱保留在 "
@@ -743,6 +782,115 @@ def test_replay_rejects_an_unreachable_injection_point(
                         "--conflict-on-reject", "--dry-run"]) == 0
 
 
+def test_replay_rejects_an_injection_point_beyond_the_attempt_budget(
+        tmp_path: Path, capsys) -> None:
+    """R113：预算够但重试次数不够，注入点同样不可达。
+
+    写回循环最多 push ``attempts`` 次（默认 3）。R112 只查了「拒绝预算 >=
+    注入点」，``--reject-pushes 4 --conflict-on-reject 4`` 因此能通过校验却
+    永远到不了第 4 次拒绝——和第 N 次注入从未发生完全一样。这条闸门必须
+    同时覆盖两个变量。
+    """
+    repo = _seed(tmp_path)
+    base = [
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+    ]
+
+    # 默认 attempts=3：预算 4/注入 4 不可达。
+    assert replay.main([*base, "--reject-pushes", "4",
+                        "--conflict-on-reject", "4"]) == 2
+    err = capsys.readouterr().err
+    assert "--attempts >= 4" in err and "当前 3" in err
+
+    assert replay.main([*base, "--attempts", "0"]) == 2
+    assert "--attempts 必须 >= 1" in capsys.readouterr().err
+
+    # 把重试上限抬到 4，同一配置就可达（dry-run 不真的 push）。
+    assert replay.main([*base, "--attempts", "4",
+                        "--reject-pushes", "4",
+                        "--conflict-on-reject", "4", "--dry-run"]) == 0
+
+
+def test_replay_hook_injects_conflict_on_the_fourth_rejection(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R113：N=4、预算 4、attempts=4——四次全被拒，注入在最后一次。
+
+    R112 的 N=1/2/3 场景都跑在默认 attempts=3 内；这条把「注入点 ==
+    重试上限」推到 4，证明 --attempts 真的作用在写回循环上，而钩子的
+    第 4 次判据也确实可达。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "4",
+        "--attempts", "4",
+        "--conflict-on-reject", "4",
+        "--result-json", str(result),
+    ]) == 1
+
+    captured = capsys.readouterr()
+    assert "第 4 次拒绝时注入冲突" in captured.out
+    assert captured.out.count("push 被拒（第") == 4
+    assert captured.out.count("rebase 冲突（第 4 次）") == 1
+    assert "::error::连续 4 次写回均失败" in captured.out
+    assert captured.err.count("simulated rejection") == 4
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "rebase-conflict"
+    assert payload["push_attempts"] == 4
+    assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "replay-conflict"
+    assert sandbox.exists(), "期望失败场景保留现场"
+    replay._remove_sandbox(sandbox)
+
+
+def test_replay_succeeds_on_the_fifth_attempt_after_late_injection(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R113：N=4、预算 4、attempts=5——第 5 次 push 成功。
+
+    与上一条只差 attempts：4 时第 4 次注入后没有重试，5 时重算后有一次
+    机会。两道结局必须可区分，否则「late injection 必然失败」会被写死。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "4",
+        "--attempts", "5",
+        "--conflict-on-reject", "4",
+        "--result-json", str(result),
+    ]) == 0
+
+    captured = capsys.readouterr()
+    assert "第 4 次拒绝时注入冲突" in captured.out
+    assert captured.out.count("push 被拒（第") == 4
+    assert captured.out.count("rebase 冲突（第 4 次）") == 1
+    assert "第 5 次尝试" in captured.out
+    assert "已写回" in captured.out
+    assert captured.err.count("simulated rejection") == 4
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "written"
+    assert payload["push_attempts"] == 5
+    # 注入轮 + 本轮都在远端。
+    assert payload["rounds"] == 2
+    assert payload["last_run_id"] == "replay-1"
+    assert not sandbox.exists(), "成功场景不应保留沙箱"
+
+
 def test_replay_reports_the_metrics_semantics(tmp_path: Path,
                                               capsys) -> None:
     """R112：语义指纹逐场景列出 name=状态/尝试次数与首次失败。"""
@@ -808,5 +956,83 @@ def test_replay_fetch_chain_carries_failure_and_retry_semantics(
         assert by_name["retry_1"]["first_failure"] == "第一次判红：模拟超睡"
         assert by_name["fail_2"]["passed"] is False
         assert by_name["fail_2"]["first_failure"] == "模拟失败：节点未完成"
+    finally:
+        replay._remove_sandbox(sandbox)
+
+
+@pytest.mark.parametrize("shape, builder, counts, expected", [
+    # 全失败：写回照常记这一轮（失败数据也是数据），计数与逐场景失败原因
+    # 必须原样落库。
+    ("all_failed", _metrics_all_failed, (3, 0, 3, 0, 3), {
+        "fail_0": {"passed": False, "attempts": 1,
+                   "first_failure": "全部失败：节点 0 未完成"},
+        "fail_1": {"passed": False, "attempts": 1,
+                   "first_failure": "全部失败：节点 1 未完成"},
+        "fail_2": {"passed": False, "attempts": 1,
+                   "first_failure": "全部失败：节点 2 未完成"},
+    }),
+    # 0 场景：合法形状，不能因为「没东西可写」就悄悄不落库。
+    ("empty", _metrics_empty, (0, 0, 0, 0, 0), {}),
+    # 重试多次后仍失败：attempts 只说明试了几次，最终结论看 passed。
+    ("multi_retry_failure", _metrics_multi_retry_failure, (2, 1, 1, 2, 5), {
+        "never_passes": {"passed": False, "attempts": 3,
+                         "first_failure": "三次都失败：模拟节点崩溃"},
+        "ok_after_retry": {"passed": True, "attempts": 2,
+                           "first_failure": "第一次超时"},
+    }),
+])
+def test_replay_fetch_chain_carries_failure_shapes(
+        tmp_path: Path, capsys, shape: str, builder, counts: tuple,
+        expected: dict) -> None:
+    """R113：全链 artifact 的三种失败形状都要原样落进历史。
+
+    生产 artifact 保持真实全过形状（不造假）；失败形状由本地 HTTP artifact
+    夹具提供，但走的仍是真实 ``fetch_ci_artifact.fetch()`` → ``writeback()``。
+    全失败、0 场景、重试多次仍失败各自钉一组计数与逐场景内容——只数 total
+    或只判断「写回成功」都区分不了它们。
+    """
+    repo = _seed(tmp_path)
+    fetched = builder(tmp_path / "artifact-metrics.json")
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": fetched.read_bytes()}))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+            "--keep",
+        ]) == 0, shape
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert f"metrics 内容 total={counts[0]}" in out
+    if shape == "empty":
+        # 空语义行看起来像「指纹没打」；0 场景要显式说出来（R113）。
+        assert "metrics 语义 （无场景）" in out
+    elif shape == "all_failed":
+        assert "fail_0=fail/1 fail_1=fail/1 fail_2=fail/1" in out
+    else:
+        assert "never_passes=fail/3 ok_after_retry=retry/2" in out
+
+    sandbox = _sandbox_from_output(out)
+    try:
+        entries = history.load_history(sandbox / "work" / HISTORY_REL)
+        last = entries[-1]
+        assert last["run_id"] == "replay-fetch"
+        assert (last["total"], last["passed"], last["failed"],
+                last["retried"], last["attempts"]) == counts
+        by_name = {item["name"]: item for item in last["scenarios"]}
+        assert set(by_name) == set(expected)
+        for name, fields in expected.items():
+            for key, value in fields.items():
+                assert by_name[name][key] == value
     finally:
         replay._remove_sandbox(sandbox)

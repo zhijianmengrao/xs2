@@ -19,7 +19,8 @@
     python scripts/replay_ci_writeback.py --repo . --run-id replay-1 \\
         --fetch-api-url http://127.0.0.1:9000 --fetch-repo owner/repo
     python scripts/replay_ci_writeback.py --repo . --metrics m.json \\
-        --run-id replay-1 --reject-pushes 2 --conflict-on-reject 2
+        --run-id replay-1 --reject-pushes 4 --attempts 5 \\
+        --conflict-on-reject 4
 """
 
 from __future__ import annotations
@@ -299,6 +300,9 @@ def _metrics_semantics(entry: dict) -> tuple[str, str]:
     """
     states: list[str] = []
     failures: list[str] = []
+    if not entry["scenarios"]:
+        # 0 场景是合法形状（例如 e2e 一个都没跑）；空行会让人以为指纹没打。
+        return "（无场景）", ""
     for item in entry["scenarios"]:
         if not item["passed"]:
             state = "fail"
@@ -323,6 +327,7 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
            artifact: str = ARTIFACT_NAME, fetch_repo: str = "",
            token: str | None = None, reject_pushes: int = 0,
            conflict: bool = False, conflict_on_reject: int = 0,
+           attempts: int = writeback.DEFAULT_ATTEMPTS,
            result_path: Path | None = None,
            fetch_run_id: str | None = None) -> int:
     repo = Path(repo).resolve()
@@ -379,7 +384,7 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
             code = writeback.writeback(
                 metrics_path, target, run_id, work, branch=branch,
                 summary_path=summary_path, dry_run=dry_run,
-                result_path=result_path)
+                attempts=attempts, result_path=result_path)
 
         after = _rounds(target)
         head = _git("log", "-1", "--format=%h %s", branch, cwd=origin)
@@ -434,6 +439,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="把源仓库已跟踪文件的未提交改动带进沙箱（R95）")
     parser.add_argument("--reject-pushes", type=int, default=0,
                         help="沙箱 origin 拒绝前 N 次 push（R99）")
+    parser.add_argument("--attempts", type=int,
+                        default=writeback.DEFAULT_ATTEMPTS,
+                        help="push 重试上限（R113；--conflict-on-reject N "
+                             "要求 attempts >= N）")
     parser.add_argument("--conflict", action="store_true",
                         help="先让 origin 前进一轮冲突历史（R99）")
     parser.add_argument("--conflict-on-reject", nargs="?", const=1, type=int,
@@ -450,6 +459,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.reject_pushes < 0:
         print("--reject-pushes 不能为负", file=sys.stderr)
         return 2
+    if args.attempts < 1:
+        print("--attempts 必须 >= 1", file=sys.stderr)
+        return 2
     if args.conflict and args.conflict_on_reject:
         print("--conflict 与 --conflict-on-reject 不能同时使用",
               file=sys.stderr)
@@ -464,6 +476,14 @@ def main(argv: list[str] | None = None) -> int:
               f"--reject-pushes >= {args.conflict_on_reject}",
               file=sys.stderr)
         return 2
+    if args.conflict_on_reject and args.attempts < args.conflict_on_reject:
+        # R113：预算够、重试次数不够，注入同样永远到不了。重试循环最多
+        # push ``attempts`` 次，第 N 次拒绝根本不会发生——只查预算会漏掉这半
+        # 条可达性判据。
+        print(f"--conflict-on-reject {args.conflict_on_reject} 需要 "
+              f"--attempts >= {args.conflict_on_reject}"
+              f"（当前 {args.attempts}）", file=sys.stderr)
+        return 2
     return replay(
         repo=args.repo, metrics=args.metrics, run_id=args.run_id,
         history_rel=args.history, branch=args.branch, keep=args.keep,
@@ -472,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
         artifact=args.artifact, fetch_repo=args.fetch_repo, token=args.token,
         reject_pushes=args.reject_pushes, conflict=args.conflict,
         conflict_on_reject=args.conflict_on_reject or 0,
+        attempts=args.attempts,
         result_path=args.result_json, fetch_run_id=args.fetch_run_id)
 
 
