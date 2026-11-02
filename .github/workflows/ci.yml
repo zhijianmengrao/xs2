@@ -470,6 +470,10 @@ jobs:
   # （happy / 被拒一次后重试 / 冲突后重算），并断言退出码、reason、rounds、
   # push_attempts 与关键输出。pytest 覆盖保留，但不再是唯一执行者。
   #
+  # R102：历史窗口 40 轮满后 `history[-40:]` 会挤掉最早一轮，rounds 会退化成
+  # 恒等式；驱动额外断言 result.last_run_id 等于本轮 run_id（满窗时这是唯一
+  # 证据），并用 rounds_clipped 明说轮数计数是否已被裁剪。
+  #
   # 只读与隔离：不声明 permissions（继承顶层 contents: read），不跑
   # pytest / e2e / npm / docker，不引 secrets——fork PR 也能跑。写回只发生在
   # replay 的临时沙箱，真实 origin 不会被推。PR 与 push 都跑：合入前就能发现

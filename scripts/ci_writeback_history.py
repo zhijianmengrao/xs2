@@ -111,11 +111,12 @@ def _rounds(history_path: Path) -> str:
         return "?"
 
 
-def _remote_rounds(repo: Path, branch: str, history_path: Path) -> int | None:
-    """机读工件的轮数：读 ``origin/<branch>`` 的**已入库**历史。
+def _remote_history(repo: Path, branch: str,
+                    history_path: Path) -> list[dict] | None:
+    """读 ``origin/<branch>`` 的**已入库**历史。
 
     push 被拒时本地文件可能已经写上这一轮；直接读本地会把「本轮未入库」
-    报成比远端多一。git 不可用/路径不在仓库内时给 null，不猜。
+    报成比远端多一。git 不可用/路径不在仓库内/内容坏掉时给 null，不猜。
     """
     try:
         relative = history_path.resolve().relative_to(Path(repo).resolve())
@@ -125,7 +126,7 @@ def _remote_rounds(repo: Path, branch: str, history_path: Path) -> int | None:
     if result.returncode != 0:
         return None
     try:
-        return len(history.validate_history(json.loads(result.stdout)))
+        return history.validate_history(json.loads(result.stdout))
     except (ValueError, history.HistoryError):
         return None
 
@@ -218,10 +219,11 @@ def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
                 "e2e 环境未启动，本轮不入库", 0)
     before = history_path.read_bytes() if history_path.is_file() else b""
     try:
-        previous = len(history.load_history(history_path)) if before else 0
+        previous_entries = history.load_history(history_path) if before else []
     except history.HistoryError as exc:
         print(str(exc), file=sys.stderr)
         return history.EXIT_META_DRIFT, REASON_RECORD_INVALID, str(exc), 0
+    previous = len(previous_entries)
 
     with tempfile.TemporaryDirectory(prefix="ci-writeback-dry-run-") as tmp:
         copy = Path(tmp) / history_path.name
@@ -238,6 +240,19 @@ def _rehearse(metrics_path: Path, history_path: Path, run_id: str,
         print(f"dry-run：history 没有变化（run_id={run_id} 已在历史里）")
         return (EXIT_OK, REASON_NO_CHANGE,
                 f"历史已含这一轮（{rounds}/{history.MAX_ROUNDS} 轮），未提交", 0)
+    # 满窗时 record 会挤压最早一轮：净轮数可以是 0 甚至负数，但「写入了」
+    # 这件事是真的。只报 +0 会让 dry-run 与「没有变化」再次同形（R102）。
+    added = 0 if any(entry["run_id"] == run_id
+                     for entry in previous_entries) else 1
+    dropped = previous + added - rounds
+    net = added - dropped
+    if dropped > 0:
+        print(f"dry-run：将记录 run_id={run_id}（来源 {source}），"
+              f"历史窗口已满 {rounds}/{history.MAX_ROUNDS} 轮"
+              f"（写入挤掉最早 {dropped} 轮，净 {net:+d}，未写入）")
+        return (EXIT_OK, REASON_DRY_RUN,
+                f"将写入历史（窗口已满 {rounds}/{history.MAX_ROUNDS} 轮，"
+                f"挤掉最早 {dropped} 轮，净 {net:+d}，未提交）", 0)
     print(f"dry-run：将记录 run_id={run_id}（来源 {source}），"
           f"历史 {rounds}/{history.MAX_ROUNDS} 轮"
           f"（+{rounds - previous}，未写入）")
@@ -261,6 +276,9 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
 
     ``result_path``（R97）写机读 JSON：与 summary 共用同一组 ``reason`` /
     ``detail``，含 ``exit_code`` / ``rounds`` / ``push_attempts`` / ``dry_run``。
+    ``last_run_id``（R102）是**远端已入库历史**的末条 run_id：窗口满 40 轮后
+    轮数恒定，只有它能证明本轮真的写进去了。dry-run 不推送，所以它仍指向
+    上一次已入库的轮次，不是本轮。
     写失败只告警，不改变退出码。
     """
     push_attempts = 0
@@ -275,6 +293,8 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
         except WritebackError as exc:
             print(f"::error::{exc}", file=sys.stderr)
             code, reason, detail = EXIT_FAILED, REASON_GIT_ERROR, str(exc)
+    remote = _remote_history(repo, branch, history_path)
+    rounds = len(remote) if remote is not None else None
     ci_reporting.emit_summary(summary_path, run_id, reason, detail)
     ci_reporting.emit_result(result_path, {
         "schema": RESULT_SCHEMA,
@@ -283,7 +303,9 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
         "reason": reason,
         "detail": detail,
         "exit_code": code,
-        "rounds": _remote_rounds(repo, branch, history_path),
+        "rounds": rounds,
+        "last_run_id": remote[-1]["run_id"] if remote else None,
+        "window_full": rounds is not None and rounds >= history.MAX_ROUNDS,
         "push_attempts": push_attempts,
         "dry_run": dry_run,
     })

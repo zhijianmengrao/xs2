@@ -32,6 +32,7 @@
 | 9 | e2e 退避幅度（单点） | `scenario_retry_backoff_is_honoured` | 偏移型（差分） | 多出 ≥ 0.7s（配置 1.2s）；同样在重跑集合里（R68） | 两次运行相减，绕开固定开销 | 只判一个值，对形状失明 | 1 |
 | 10 | 判据算术失败 | `_run_judgement`（六个派发分支） | 不是判据 | — | 捕获 `ArithmeticError` / `ValueError` | 只把「算不下去」与「判了不合格」分开 | 8 |
 | 11 | msys 传输不可用 → skip | `tests/conftest.py::_msys_skip_applies`（`_git_transport_blocked_probe` + `pytest_runtest_makereport`） | 环境型 | 无 | 失败调用含 `NtCreateDirectoryObject` 签名，**或** 模块 ∈ 6 个传输模块且探针 clone 复现同一签名 | 真实缺陷若文本里带同签名会被误归因；探针每进程只跑一次；6 个模块内无签名的失败一律转 skip（见 §8） | — |
+| 12 | 满窗时的写入身份 | `replay_ci_scenarios.py::_run_scenario`（`last_run_id`） | 环境型（身份，不是容忍量） | 无（精确相等） | `result.last_run_id == 本轮 run_id`；`rounds` 仍按 `min(before+delta, MAX_ROUNDS)` 断言并用 `rounds_clipped` 标注 | 窗口满 40 轮后 `rounds` 恒定在 40，`rounds_delta` 的 +1/+2 不可辨（39 轮 conflict 先被裁剪）；该断言不依赖窗口状态，但 `last_run_id` 由 writeback 自报（读同一 `origin/<branch>`），不是独立第二证据源 | 1 |
 
 ## 3. R63 的预算式能迁移到哪
 

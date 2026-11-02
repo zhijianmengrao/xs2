@@ -297,6 +297,7 @@ def test_replay_simulates_a_rejected_push_once(
     assert payload["reason"] == "written"
     assert payload["push_attempts"] == 2
     assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "replay-1"
 
 
 def test_replay_simulates_permanent_rejection(
@@ -322,6 +323,7 @@ def test_replay_simulates_permanent_rejection(
     assert payload["reason"] == "push-rejected"
     assert payload["push_attempts"] == 3
     assert payload["rounds"] == 0
+    assert payload["last_run_id"] is None
     assert sandbox.exists()
     replay._remove_sandbox(sandbox)
 
@@ -348,6 +350,7 @@ def test_replay_simulates_a_conflicting_history(
     assert payload["push_attempts"] == 2
     # 冲突那一轮（replay-conflict）+ 本轮（replay-1）都在远端历史里。
     assert payload["rounds"] == 2
+    assert payload["last_run_id"] == "replay-1"
 
 
 def test_replay_fetch_and_rejection_work_together(

@@ -71,7 +71,18 @@ def _write_metrics(path: Path, retried: int = 0) -> Path:
     return path
 
 
-def _seed(tmp_path: Path) -> Path:
+def _history_entry(run_id: str) -> dict:
+    return {
+        "run_id": run_id,
+        "exported_at": "2026-11-02T00:00:00+00:00",
+        "source": "local",
+        "total": 1, "passed": 1, "failed": 0, "retried": 0, "attempts": 1,
+        "scenarios": [{"name": "seed", "passed": True, "attempts": 1,
+                       "first_failure": ""}],
+    }
+
+
+def _seed(tmp_path: Path, entries: int = 0) -> Path:
     """建 bare origin 并推一次初始提交（history.json 已入库）。"""
     origin = tmp_path / "origin.git"
     _git("init", "-q", "-b", "main", "--bare", str(origin))
@@ -80,7 +91,10 @@ def _seed(tmp_path: Path) -> Path:
     target = seed / HISTORY_REL
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        json.dumps({"schema": 1, "history": []}), encoding="utf-8")
+        json.dumps({"schema": 1,
+                    "history": [_history_entry(f"seed-{index}")
+                                for index in range(entries)]}),
+        encoding="utf-8")
     _git("add", "-A", cwd=seed)
     _git("commit", "-q", "-m", "seed", cwd=seed)
     _git("push", "-q", "origin", "main", cwd=seed)
@@ -524,6 +538,8 @@ def test_result_json_reports_a_written_round(tmp_path: Path) -> None:
     assert payload["reason"] == writeback.REASON_WRITTEN
     assert payload["exit_code"] == 0
     assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "ci-1"
+    assert payload["window_full"] is False
     assert payload["push_attempts"] == 1
     assert payload["dry_run"] is False
     assert "第 1 次尝试" in payload["detail"]
@@ -563,6 +579,7 @@ def test_result_json_reports_missing_metrics_and_record_invalid(
     assert payload["exit_code"] == 0
     assert payload["push_attempts"] == 0
     assert payload["rounds"] == 0
+    assert payload["last_run_id"] is None
 
     broken = tmp_path / "broken.json"
     broken.write_text("{not json", encoding="utf-8")
@@ -592,6 +609,9 @@ def test_result_json_reports_push_rejected_after_the_cap(
     assert payload["exit_code"] == 1
     assert payload["push_attempts"] == writeback.DEFAULT_ATTEMPTS
     assert payload["rounds"] == 0
+    # 本轮没有入库：末条只能来自远端已有历史（这里是空）。
+    assert payload["last_run_id"] is None
+    assert payload["window_full"] is False
 
 
 def test_result_json_reports_no_change_on_a_rerun(tmp_path: Path) -> None:
@@ -610,6 +630,7 @@ def test_result_json_reports_no_change_on_a_rerun(tmp_path: Path) -> None:
     assert payload["exit_code"] == 0
     assert payload["push_attempts"] == 0
     assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "ci-1"
 
 
 def test_result_json_reports_dry_run_without_a_push(tmp_path: Path) -> None:
@@ -626,8 +647,57 @@ def test_result_json_reports_dry_run_without_a_push(tmp_path: Path) -> None:
     assert payload["reason"] == writeback.REASON_DRY_RUN
     assert payload["dry_run"] is True
     assert payload["push_attempts"] == 0
-    # dry-run 不落盘：rounds 是磁盘上的当前值，不是「将写入」的值。
+    # dry-run 不推送：rounds/last_run_id 都是远端已入库的值，不含本轮。
     assert payload["rounds"] == 0
+    assert payload["last_run_id"] is None
+
+
+def test_result_json_names_the_round_that_trimmed_the_window(
+        tmp_path: Path) -> None:
+    """窗口满 40 轮：轮数恒定 40，只有 last_run_id 能说出写进去的是哪一轮。"""
+    origin = _seed(tmp_path, entries=history.MAX_ROUNDS)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-new", work, result_path=result) == 0
+
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_WRITTEN
+    assert payload["rounds"] == history.MAX_ROUNDS
+    assert payload["window_full"] is True
+    assert payload["last_run_id"] == "ci-new"
+    entries = history.load_history(_history_path(work))
+    assert len(entries) == history.MAX_ROUNDS
+    assert entries[-1]["run_id"] == "ci-new"
+    # 滚动而不是拒写：最早一轮 seed-0 被挤掉。
+    assert entries[0]["run_id"] == "seed-1"
+
+
+def test_dry_run_at_the_window_reports_the_dropped_round(
+        tmp_path: Path, capsys) -> None:
+    """dry-run 在满窗时不能报「+0 / 未写入」了事：那是另一次「没有变化」。"""
+    origin = _seed(tmp_path, entries=history.MAX_ROUNDS)
+    work = _clone(tmp_path, origin, "work")
+    result = tmp_path / "result.json"
+    before = _history_path(work).read_bytes()
+
+    assert writeback.writeback(
+        _write_metrics(tmp_path / "metrics.json"),
+        _history_path(work), "ci-new", work,
+        dry_run=True, result_path=result) == 0
+
+    out = capsys.readouterr().out
+    assert "窗口已满" in out
+    assert "挤掉最早 1 轮" in out
+    payload = _result(result)
+    assert payload["reason"] == writeback.REASON_DRY_RUN
+    assert payload["rounds"] == history.MAX_ROUNDS
+    assert payload["window_full"] is True
+    # 末条来自远端已入库历史，不是还没写的 ci-new。
+    assert payload["last_run_id"] == f"seed-{history.MAX_ROUNDS - 1}"
+    assert _history_path(work).read_bytes() == before
 
 
 def test_result_json_reports_git_errors_as_git_error(tmp_path: Path) -> None:

@@ -14,6 +14,13 @@ checkout、git、shell 钩子、历史文件上，这套回放真的能跑完」
 丢弃本地提交并按最新分支重算。每个场景都从 ``--repo`` 的 HEAD 克隆出独立
 沙箱，源仓库一个字节都不该动。
 
+判定写入是否发生不能只看轮数：历史窗口 ``MAX_ROUNDS`` 满了以后
+``history[-40:]`` 会把最早一轮挤掉，happy/rejected 的净增量变成 0，conflict
+的 +2 也会被压平——``rounds`` 会退化成恒等式（R102）。因此每个场景额外断言
+``result.last_run_id`` 等于本轮的 ``run_id``：窗口状态再怎么变，末条必须
+是这一轮。``rounds`` 仍按 ``min(before + delta, MAX_ROUNDS)`` 断言，另外用
+``rounds_clipped`` 明说这一项的计数是否已被裁剪。
+
 不判：模型质量、e2e 场景通过率、真实 origin 的推送（写回只推沙箱 origin），
 以及永久拒绝（三次全拒）——那条路径按设计保留失败沙箱，pytest 已在两个
 平台覆盖，生产 job 不制造需要人工清理的现场。
@@ -210,16 +217,23 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
     output = stdout.getvalue() + stderr.getvalue()
     result = _read_result(result_path)
     expected_rounds = min(before + scenario.rounds_delta, history.MAX_ROUNDS)
+    # 窗口满时轮数会恒定在 MAX_ROUNDS：这一项只能证明「窗口没坏」，不能再
+    # 证明「本轮写进去了」。rounds_clipped 把这件事写进产物，免得看日志的人
+    # 把 40 == 40 当成强证据。
+    rounds_clipped = before + scenario.rounds_delta > history.MAX_ROUNDS
     expected = {
         "exit_code": EXIT_OK,
         "reason": "written",
         "rounds": expected_rounds,
+        "rounds_clipped": rounds_clipped,
+        "last_run_id": run_id,
         "push_attempts": scenario.push_attempts,
     }
     actual = {
         "exit_code": code,
         "reason": result.get("reason") if result else None,
         "rounds": result.get("rounds") if result else None,
+        "last_run_id": result.get("last_run_id") if result else None,
         "push_attempts": result.get("push_attempts") if result else None,
     }
 
@@ -239,6 +253,10 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         if result.get("rounds") != expected_rounds:
             problems.append(
                 f"rounds={result.get('rounds')!r}，期望 {expected_rounds}")
+        if result.get("last_run_id") != run_id:
+            problems.append(
+                f"last_run_id={result.get('last_run_id')!r}，期望 {run_id!r}"
+                f"（窗口满时这是「本轮已入库」的唯一证据）")
         if result.get("push_attempts") != scenario.push_attempts:
             problems.append(
                 f"push_attempts={result.get('push_attempts')!r}，"
@@ -264,6 +282,8 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         "name": scenario.name,
         "ok": not problems,
         "exit_code": code,
+        "run_id": run_id,
+        "rounds_clipped": rounds_clipped,
         "expected": expected,
         "actual": actual,
         "failure": "；".join(problems),
@@ -295,6 +315,13 @@ def run(repo: Path, branch: str, history_rel: str,
         f"replay-ci：源仓库 {repo} HEAD {baseline['head'][:8]}，"
         f"历史 {baseline['rounds']}/{history.MAX_ROUNDS} 轮",
         flush=True)
+    window_full = baseline["rounds"] >= history.MAX_ROUNDS
+    if window_full:
+        print(
+            f"replay-ci：注意：历史窗口已满 "
+            f"{baseline['rounds']}/{history.MAX_ROUNDS}，rounds 计数会被"
+            f"裁剪；写入判定以 result.last_run_id 为准",
+            flush=True)
 
     records: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="replay-ci-scenarios-") as tmp:
@@ -309,6 +336,7 @@ def run(repo: Path, branch: str, history_rel: str,
                 f"[replay-ci] {mark} {scenario.name}: "
                 f"exit={record['exit_code']} "
                 f"rounds={record['actual'].get('rounds')} "
+                f"last_run_id={record['actual'].get('last_run_id')} "
                 f"push_attempts={record['actual'].get('push_attempts')}",
                 flush=True)
             if record["failure"]:
@@ -329,6 +357,8 @@ def run(repo: Path, branch: str, history_rel: str,
         "branch": branch,
         "history": history_rel,
         "before": baseline["rounds"],
+        "max_rounds": history.MAX_ROUNDS,
+        "window_full": window_full,
         "source_head": baseline["head"],
         "ok": ok,
         "scenarios": records,
@@ -338,6 +368,11 @@ def run(repo: Path, branch: str, history_rel: str,
         detail = record["failure"] or (
             f"rounds={record['actual'].get('rounds')} "
             f"push_attempts={record['actual'].get('push_attempts')}")
+        if record["ok"] and record["rounds_clipped"]:
+            detail += (
+                f"（窗口已满：rounds 计数已裁剪，"
+                f"本次写入由 last_run_id="
+                f"{record['actual'].get('last_run_id')} 证明）")
         ci_reporting.emit_summary(
             summary_path, f"replay-ci-{record['name']}", reason, detail)
 
