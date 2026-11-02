@@ -1,6 +1,6 @@
 """R101/R103：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
 
-这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言四个
+这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言五个
 场景的退出码/rounds/push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch
 证明驱动不盲信子调用的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
 ``tests/test_ci_replay_wiring.py``。
@@ -132,6 +132,27 @@ def _fake_invoke(*, push_attempts: int | None = None,
             sandbox = Path(tempfile.mkdtemp(prefix="fake-replay-sandbox-"))
             lines.append(f"replay：沙箱保留在 {sandbox}（失败现场）")
             output = "\n".join(lines) + "\n"
+        elif name == "rejected-conflict":
+            payload = {
+                "schema": 1, "run_id": run_id, "source": "ci",
+                "reason": "push-rejected", "detail": "", "exit_code": 1,
+                "rounds": 1 if rounds is None else rounds,
+                "last_run_id": ("replay-conflict" if last_run_id is None
+                                else last_run_id),
+                "window_full": False, "push_attempts": 3, "dry_run": False,
+            }
+            lines = ["rebase 冲突（第 1 次）：丢弃本次写回提交，"
+                     "按最新 main 重算"]
+            for attempt in range(1, 4):
+                lines.append(f"push 被拒（第 {attempt} 次），"
+                             f"rebase 到最新 main 后重试")
+            # 第一次是非快进拒绝，钩子只拒绝后两次（与真实观测一致）。
+            lines.extend(["simulated rejection"] * max(rejection_lines - 1, 0))
+            lines.append("::error::连续 3 次写回均失败"
+                         "（最后一次：push-rejected），本轮历史未入库")
+            sandbox = Path(tempfile.mkdtemp(prefix="fake-replay-sandbox-"))
+            lines.append(f"replay：沙箱保留在 {sandbox}（失败现场）")
+            output = "\n".join(lines) + "\n"
         else:
             expected_pushes = 2 if name in ("rejected", "conflict") else 1
             payload = {
@@ -157,12 +178,13 @@ def _fake_invoke(*, push_attempts: int | None = None,
                            "已写回 main（第 2 次尝试）\n")
 
         result_path.write_text(json.dumps(payload), encoding="utf-8")
-        return (1 if name == "permanently-rejected" else 0), output
+        failed = name in ("permanently-rejected", "rejected-conflict")
+        return (1 if failed else 0), output
 
     return invoke
 
 
-def test_driver_runs_all_four_scenarios(tmp_path: Path) -> None:
+def test_driver_runs_all_five_scenarios(tmp_path: Path) -> None:
     repo = _seed(tmp_path)
     head = _git("rev-parse", "HEAD", cwd=repo)
     short = head[:8]
@@ -181,7 +203,8 @@ def test_driver_runs_all_four_scenarios(tmp_path: Path) -> None:
     assert payload["source_head"] == head
     by_name = {record["name"]: record for record in payload["scenarios"]}
     assert list(by_name) == [
-        "happy", "rejected", "conflict", "permanently-rejected"]
+        "happy", "rejected", "conflict", "permanently-rejected",
+        "rejected-conflict"]
     assert by_name["happy"]["actual"] == {
         "exit_code": 0, "reason": "written", "rounds": 1,
         "last_run_id": f"replay-ci-happy-{short}",
@@ -198,16 +221,22 @@ def test_driver_runs_all_four_scenarios(tmp_path: Path) -> None:
         "exit_code": 1, "reason": "push-rejected", "rounds": 0,
         "last_run_id": None,
         "push_attempts": 3}
+    # R105：组合场景远端只多出注入的冲突轮，本轮没有入库。
+    assert by_name["rejected-conflict"]["actual"] == {
+        "exit_code": 1, "reason": "push-rejected", "rounds": 1,
+        "last_run_id": "replay-conflict",
+        "push_attempts": 3}
     for record in payload["scenarios"]:
         assert record["ok"] is True, record["failure"]
         assert record["source_mutated"] is False
         assert record["rounds_clipped"] is False
     # 失败沙箱必须真的留下过，再被驱动清理；不能只在输出里说一句。
-    permanent = by_name["permanently-rejected"]
-    assert permanent["sandbox_cleaned"] is True
-    assert permanent["sandbox"] is not None
-    assert not Path(permanent["sandbox"]).exists(), (
-        "驱动报告已清理，但失败沙箱仍在磁盘上")
+    for name in ("permanently-rejected", "rejected-conflict"):
+        failed = by_name[name]
+        assert failed["sandbox_cleaned"] is True
+        assert failed["sandbox"] is not None
+        assert not Path(failed["sandbox"]).exists(), (
+            "驱动报告已清理，但失败沙箱仍在磁盘上")
 
     # 源仓库一个字节都不该动。
     assert _git("rev-parse", "HEAD", cwd=repo) == head
@@ -216,7 +245,7 @@ def test_driver_runs_all_four_scenarios(tmp_path: Path) -> None:
 
     # step summary 每个场景一行，reason 是 ok。
     text = summary.read_text(encoding="utf-8")
-    assert text.count("replay-ci-") == 4
+    assert text.count("replay-ci-") == 5
     assert "**ok**" in text
 
 
@@ -305,11 +334,12 @@ def test_driver_returns_3_when_history_is_unreadable(tmp_path: Path) -> None:
     assert payload["reason"] == "baseline-unavailable"
 
 
-def test_scenario_table_pins_the_r99_counts() -> None:
+def test_scenario_table_pins_the_replay_counts() -> None:
     """场景表是这张判据的唯一来源；数字漂了必须有人先改这里。"""
     by_name = {scenario.name: scenario for scenario in scenarios.SCENARIOS}
     assert list(by_name) == [
-        "happy", "rejected", "conflict", "permanently-rejected"]
+        "happy", "rejected", "conflict", "permanently-rejected",
+        "rejected-conflict"]
 
     happy = by_name["happy"]
     assert (happy.rounds_delta, happy.push_attempts) == (1, 1)
@@ -323,6 +353,7 @@ def test_scenario_table_pins_the_r99_counts() -> None:
     conflict = by_name["conflict"]
     assert (conflict.rounds_delta, conflict.push_attempts) == (2, 2)
     assert conflict.conflict is True
+    assert conflict.injected_rounds == 1
 
     permanent = by_name["permanently-rejected"]
     assert (permanent.rounds_delta, permanent.push_attempts) == (0, 3)
@@ -330,6 +361,21 @@ def test_scenario_table_pins_the_r99_counts() -> None:
     assert permanent.expected_exit == 1
     assert permanent.expected_reason == "push-rejected"
     assert permanent.expect_sandbox is True
+    assert permanent.injected_rounds == 0
+    # 失败场景的末条身份：没有注入时仍是基线那一条（None = 空历史）。
+    assert permanent.expected_last_run_id is None
+
+    # R105：三次尝试全被拒 + 冲突注入；远端只多出注入的那一轮。
+    combined = by_name["rejected-conflict"]
+    assert (combined.rounds_delta, combined.push_attempts) == (0, 3)
+    assert combined.reject_pushes == 3 and combined.conflict is True
+    assert combined.injected_rounds == 1
+    assert combined.expected_exit == 1
+    assert combined.expected_reason == "push-rejected"
+    assert combined.expect_sandbox is True
+    assert combined.expected_last_run_id == "replay-conflict"
+    assert combined.output_counts == (
+        ("push 被拒（第", 3), ("simulated rejection", 2))
 
 
 def test_driver_rejects_half_a_fetch_configuration(tmp_path: Path) -> None:
@@ -369,7 +415,8 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     payload = json.loads(result.read_text(encoding="utf-8"))
     by_name = {record["name"]: record for record in payload["scenarios"]}
     assert list(by_name) == [
-        "happy", "rejected", "conflict", "permanently-rejected", "fetched"]
+        "happy", "rejected", "conflict", "permanently-rejected",
+        "rejected-conflict", "fetched"]
     fetched = by_name["fetched"]
     assert fetched["ok"] is True, fetched["failure"]
     assert fetched["actual"] == {
@@ -396,26 +443,27 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(result.read_text(encoding="utf-8"))
     assert payload["ok"] is True
-    assert len(payload["scenarios"]) == 4
+    assert len(payload["scenarios"]) == 5
 
 
 # ------------------------------------- 窗口边界（R102：MAX_ROUNDS 耗尽防护）
 @pytest.mark.parametrize("count, expected, clipped", [
     # 38：三个成功场景的增量都没碰到窗口，rounds 仍是强证据。
     (38, {"happy": 39, "rejected": 39, "conflict": 40,
-          "permanently-rejected": 38},
+          "permanently-rejected": 38, "rejected-conflict": 39},
          {"happy": False, "rejected": False, "conflict": False,
-          "permanently-rejected": False}),
+          "permanently-rejected": False, "rejected-conflict": False}),
     # 39：conflict 的 +2 先被压成 +1（40 == 40），只有它能暴露裁剪。
     (39, {"happy": 40, "rejected": 40, "conflict": 40,
-          "permanently-rejected": 39},
+          "permanently-rejected": 39, "rejected-conflict": 40},
          {"happy": False, "rejected": False, "conflict": True,
-          "permanently-rejected": False}),
+          "permanently-rejected": False, "rejected-conflict": False}),
     # 40：三个成功场景的 rounds 全部恒定，只剩 last_run_id 能证明本轮已入库。
+    # 组合失败场景也恒定在 40——冲突注入遵守窗口，不会把远端撑到 41。
     (40, {"happy": 40, "rejected": 40, "conflict": 40,
-          "permanently-rejected": 40},
+          "permanently-rejected": 40, "rejected-conflict": 40},
          {"happy": True, "rejected": True, "conflict": True,
-          "permanently-rejected": False}),
+          "permanently-rejected": False, "rejected-conflict": False}),
 ])
 def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         tmp_path: Path, count: int, expected: dict, clipped: dict) -> None:
@@ -440,6 +488,9 @@ def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         if name == "permanently-rejected":
             # 失败场景：远端末条仍是基线那一条，不是本轮。
             assert record["actual"]["last_run_id"] == f"seed-{count - 1}"
+        elif name == "rejected-conflict":
+            # 失败场景：远端只多出注入的冲突轮，末条就是它。
+            assert record["actual"]["last_run_id"] == "replay-conflict"
         else:
             assert record["actual"]["last_run_id"] == (
                 f"replay-ci-{name}-{head[:8]}")

@@ -386,6 +386,46 @@ def test_replay_simulates_a_conflicting_history(
     assert payload["last_run_id"] == "replay-1"
 
 
+def test_replay_combines_conflict_with_permanent_rejection(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R105：冲突注入 + 三次尝试全被拒，末条仍是注入的冲突轮。
+
+    第一次 push 是被冲突注入造成的非快进拒绝（不是钩子），所以
+    ``simulated rejection`` 只能是 2 次；把它当成 3 次会掩盖「第一次其实
+    没走到钩子」这一事实。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "3",
+        "--conflict",
+        "--result-json", str(result),
+    ]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out.count("push 被拒（第") == 3
+    assert captured.out.count("rebase 冲突（第 1 次）") == 1
+    assert "::error::连续 3 次写回均失败" in captured.out
+    assert "已写回" not in captured.out
+    # git 的 push stderr 由 writeback 打到 stderr，钩子的消息也只在这里。
+    assert captured.err.count("simulated rejection") == 2
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "push-rejected"
+    assert payload["push_attempts"] == 3
+    # 远端只有注入的冲突轮；本轮写回没有入库。
+    assert payload["rounds"] == 1
+    assert payload["last_run_id"] == "replay-conflict"
+    assert sandbox.exists(), "期望失败场景保留现场"
+    replay._remove_sandbox(sandbox)
+
+
 def test_replay_fetch_and_rejection_work_together(
         tmp_path: Path, capsys) -> None:
     repo = _seed(tmp_path)

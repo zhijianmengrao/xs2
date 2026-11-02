@@ -1,4 +1,5 @@
-"""R101：在 CI 里回放写回的生产路径（happy / 被拒一次 / 冲突 / 永久拒绝）。
+"""R101：在 CI 里回放写回的生产路径（happy / 被拒一次 / 冲突 / 永久拒绝 /
+永久拒绝+冲突）。
 
 R99 已经把「在沙箱 origin 上真实制造 push 拒绝与 rebase 冲突」做成可执行
 能力，但那些场景此前只由 ``tests/test_replay_ci_writeback.py`` 在 backend
@@ -25,6 +26,13 @@ checkout、git、shell 钩子、历史文件上，这套回放真的能跑完」
 三次非零，场景会为错误的原因变绿。replay 按设计保留失败沙箱；驱动断言现场
 存在、随后清理，既证明「失败现场真的留下过」，也不让 CI runner 的临时目录
 累积（R103）。
+
+R105 的组合场景（``rejected-conflict``）把冲突注入与永久拒绝放进同一次
+回放：第一次 push 先被冲突注入造成的**非快进**拒绝挡下，钩子再拒绝第 2、3
+次，rebase 冲突后按最新分支重算，三次尝试全部失败。它的观测与纯永久拒绝
+不同——远端会多出一轮注入的冲突历史（``replay-conflict``），所以失败场景
+不能用「远端完全没变」来判，必须用 ``expected_last_run_id`` 钉住末条身份；
+``simulated rejection`` 也只应出现 **2** 次（第一次不是钩子拒绝）。
 
 ``--fetch-api-url`` 启用时追加 ``fetched`` 场景：不喂本地 metrics，而是让
 replay 先走 ``fetch_ci_artifact`` 从真实 API 下载 artifact，再走同一条写回
@@ -102,7 +110,15 @@ class Scenario:
     - conflict：origin 上预置一轮冲突历史 + 本轮，rounds +2；写回同样经历
       被拒→rebase 冲突→按最新分支重算→第 2 次 push，push_attempts=2；
     - permanently-rejected（R103）：三次全被拒，退出码 1、远端轮数不变、
-      push_attempts=3，失败沙箱保留后由驱动清理。
+      push_attempts=3，失败沙箱保留后由驱动清理；
+    - rejected-conflict（R105）：冲突注入 + 永久拒绝组合。第一次 push 被
+      非快进拒绝，钩子拒绝第 2、3 次；远端只多出注入的冲突轮，退出码 1。
+
+    ``injected_rounds`` 是**夹具侧**先推进 origin 的轮数（冲突注入），
+    只在失败场景里参与期望轮数计算：``rounds_delta`` 描述成功场景的净变化，
+    失败场景不能写回，远端的变化只可能来自注入。``expected_last_run_id``
+    用于失败场景的末条身份断言——纯永久拒绝断言「仍是基线那一条」，组合
+    场景则断言「正好是注入的 ``replay-conflict``」。
     """
 
     name: str
@@ -114,6 +130,8 @@ class Scenario:
     expected_reason: str = "written"
     expect_sandbox: bool = False
     fetch: bool = False
+    injected_rounds: int = 0
+    expected_last_run_id: str | None = None
     must_contain: tuple[str, ...] = ()
     must_not_contain: tuple[str, ...] = ()
     output_counts: tuple[tuple[str, int], ...] = ()
@@ -137,7 +155,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         output_counts=(("simulated rejection", 1),),
     ),
     Scenario(
-        "conflict", 2, 2, conflict=True,
+        "conflict", 2, 2, conflict=True, injected_rounds=1,
         must_contain=("rebase 冲突（第 1 次）", "第 2 次尝试"),
         must_not_contain=("simulated rejection",),
     ),
@@ -149,6 +167,21 @@ SCENARIOS: tuple[Scenario, ...] = (
         must_contain=("::error::连续 3 次写回均失败",),
         must_not_contain=("已写回",),
         output_counts=(("push 被拒（第", 3), ("simulated rejection", 3)),
+    ),
+    # R105：冲突注入 + 三次尝试全被拒。远端会多出注入的冲突轮（+1），
+    # 但本轮写回没有入库——末条必须正好是 replay-conflict。
+    Scenario(
+        "rejected-conflict", 0, 3, reject_pushes=3, conflict=True,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="push-rejected",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("rebase 冲突（第 1 次）",
+                      "::error::连续 3 次写回均失败"),
+        must_not_contain=("已写回",),
+        # 第 1 次是非快进拒绝（冲突注入），钩子只拒绝第 2、3 次（R105 实测）。
+        output_counts=(("push 被拒（第", 3), ("simulated rejection", 2)),
     ),
 )
 
@@ -323,9 +356,14 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         # 日志的人把 40 == 40 当成强证据。
         rounds_clipped = before + scenario.rounds_delta > history.MAX_ROUNDS
     else:
-        # 写回失败时远端没有新轮次：轮数与末条都应停在基线。
-        expected_rounds = before
-        expected_last_run_id = baseline_last_run_id
+        # 写回失败时本轮不入库，远端只会因夹具注入而变化（目前只有冲突轮）。
+        # 注入也遵守 MAX_ROUNDS：满窗时挤掉最早一轮，不会造出 41 轮。
+        expected_rounds = min(before + scenario.injected_rounds,
+                              history.MAX_ROUNDS)
+        expected_last_run_id = (
+            scenario.expected_last_run_id or baseline_last_run_id)
+        # 失败场景不宣称「本轮写入了」，所以「轮数被裁剪」不适用；末条身份
+        # 才是远端变化的唯一证据。
         rounds_clipped = False
     expected = {
         "exit_code": scenario.expected_exit,
@@ -362,9 +400,12 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
             problems.append(
                 f"rounds={result.get('rounds')!r}，期望 {expected_rounds}")
         if result.get("last_run_id") != expected_last_run_id:
-            hint = ("（窗口满时这是「本轮已入库」的唯一证据）"
-                    if scenario.succeeds
-                    else "（失败场景：远端历史不应变化）")
+            if scenario.succeeds:
+                hint = "（窗口满时这是「本轮已入库」的唯一证据）"
+            elif scenario.injected_rounds:
+                hint = "（失败场景：远端只应多出注入的冲突轮）"
+            else:
+                hint = "（失败场景：远端历史不应变化）"
             problems.append(
                 f"last_run_id={result.get('last_run_id')!r}，"
                 f"期望 {expected_last_run_id!r}{hint}")

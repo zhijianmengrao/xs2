@@ -466,9 +466,10 @@ jobs:
 
   # R101：把 R99 的拒绝/冲突回放接进生产 CI。此前这些场景只由
   # tests/test_replay_ci_writeback.py 在 backend job 里以 pytest 驱动；这个
-  # 独立 job 用 scripts/replay_ci_scenarios.py 在真实 checkout 上走三条路径
-  # （happy / 被拒一次后重试 / 冲突后重算），并断言退出码、reason、rounds、
-  # push_attempts 与关键输出。pytest 覆盖保留，但不再是唯一执行者。
+  # 独立 job 用 scripts/replay_ci_scenarios.py 在真实 checkout 上走五条路径
+  # （happy / 被拒一次后重试 / 冲突后重算 / 永久拒绝 / 永久拒绝+冲突），并
+  # 断言退出码、reason、rounds、push_attempts 与关键输出。pytest 覆盖保留，
+  # 但不再是唯一执行者。
   #
   # R102：历史窗口 40 轮满后 `history[-40:]` 会挤掉最早一轮，rounds 会退化成
   # 恒等式；驱动额外断言 result.last_run_id 等于本轮 run_id（满窗时这是唯一
@@ -481,6 +482,8 @@ jobs:
   # R103：同一套定义跑 ubuntu + windows。Git for Windows 自带 sh，拒绝钩子
   # 与沙箱 git 都能走；`shell: bash` 让两平台的退出码透传写法保持一致。
   # 失败沙箱由驱动断言存在后清理，不在 runner 的临时目录里累积。
+  # R105：场景表加「冲突注入 + 三次尝试全被拒」（rejected-conflict）；两个
+  # job 共用同一张表，所以全链 job 也会跑组合边界。
   replay-ci-writeback:
     strategy:
       fail-fast: false
@@ -491,7 +494,7 @@ jobs:
           - os: windows-latest
             python: python
     runs-on: ${{ matrix.os }}
-    # 四个场景各 1–3 次本地 git 操作，正常 < 2 分钟；卡住通常是沙箱 git 或
+    # 五个场景各 1–3 次本地 git 操作，正常 < 2 分钟；卡住通常是沙箱 git 或
     # 拒绝钩子没返回，不应拖到 GHA 的 6 小时上限。
     timeout-minutes: 15
     env:
@@ -504,8 +507,8 @@ jobs:
       - name: Materialize main for the sandbox clone
         shell: bash
         run: git checkout -B main
-      - name: Replay happy, rejected, conflicting and permanently rejected writebacks
-        # 退出码语义：0=四场景全符 1=场景断言不符 3=基线不可用（checkout/
+      - name: Replay happy, rejected, conflicting, permanently rejected and combined writebacks
+        # 退出码语义：0=五场景全符 1=场景断言不符 3=基线不可用（checkout/
         # git/history 问题）。两种非零都让这一步红；3 单独提示排查方向，
         # 不让「环境坏」冒充「回放语义坏」（R49 的同一处置）。
         shell: bash

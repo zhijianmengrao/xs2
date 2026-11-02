@@ -121,14 +121,17 @@ def _create_conflicting_round(work: Path, origin: Path, branch: str,
                               history_rel: str, sandbox: Path) -> None:
     """让 origin 先前进一轮 history.json，制造 rebase 冲突（R99）。"""
     entries = history.load_history(work / history_rel)
-    entries = entries + [{
+    # 与 record 的窗口语义一致：满 MAX_ROUNDS 时挤掉最早一轮。否则满窗
+    # 失败场景（R105 的组合场景）会把 origin 留在 41 轮——生产里 record
+    # 永远不会写出这种历史，夹具自己造出来就会让窗口断言失去意义。
+    entries = (entries + [{
         "run_id": "replay-conflict",
         "exported_at": "2026-11-02T00:00:00+00:00",
         "source": "local",
         "total": 1, "passed": 1, "failed": 0, "retried": 0, "attempts": 1,
         "scenarios": [{"name": "conflict", "passed": True, "attempts": 1,
                        "first_failure": ""}],
-    }]
+    }])[-history.MAX_ROUNDS:]
     history.validate_history({"schema": history.SCHEMA, "history": entries})
     other = sandbox / "other"
     _git("clone", "-q", str(origin), str(other))
