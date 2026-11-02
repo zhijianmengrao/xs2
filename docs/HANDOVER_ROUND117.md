@@ -63,7 +63,15 @@
 
 ## 6. CI
 
-- 待本轮代码+文档推送后触发；结果回填。
+- run **41496585289**（18:05:14→18:11:40 UTC，约 6m26s）：**10 个 job 全
+  `success`**。
+  - backend **2658/65**、windows-backend **2694/29**（均 **2723**）；
+  - `replay-ci-writeback` 两平台各 **15/15 PASS**；
+  - `replay-ci-fetch-chain` 两平台各 **19/19 PASS**（15 本地 + 4 全链）；
+    `fetched-rejected-hook-at-6` 实测 `exit=0 rounds=48 push_attempts=7`；
+  - 前端 **490 / 0**。
+- 写回历史 **46 → 47**（`ci-41496585289`、`source=ci`），bot 提交
+  `756a6c5`（`[skip ci]`，未自触发）。
 
 ## 7. 边界与下一步
 
@@ -74,4 +82,7 @@
 
 ## 8. 提交与 CI
 
-- 代码+文档提交待写；CI 结果与写回轮次待回填。
+- 代码+文档提交 **c38193d**（`test(R117): 全链注入场景扩到 N=6（含 R116
+  CI 回填）`），显式路径 add；`config/skills_config.json` 未纳入。
+- CI run **41496585289**（见 §6）；写回 bot `756a6c5`。
+- 下一轮（R118 收口 docs）预计写回 **47 → 48**。

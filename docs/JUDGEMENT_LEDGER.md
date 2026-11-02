@@ -35,8 +35,8 @@
 | 12 | 满窗时的写入身份 | `replay_ci_scenarios.py::_run_scenario`（`last_run_id`） | 环境型（身份，不是容忍量） | 无（精确相等） | `result.last_run_id == 本轮 run_id`；`rounds` 仍按 `min(before+delta, MAX_ROUNDS)` 断言并用 `rounds_clipped` 标注 | 窗口满后 `rounds` 恒定在窗口值（R112 起默认 80），`rounds_delta` 的 +1/+2 不可辨（窗口−1 轮的 +2 先被裁剪）；该断言不依赖窗口状态，但 `last_run_id` 由 writeback 自报（读同一 `origin/<branch>`），不是独立第二证据源 | 1 |
 | 13 | 期望失败场景（永久拒绝） | `replay_ci_scenarios.py::Scenario` / `_run_scenario` | 环境型（身份 + 计数） | 无（精确相等） | exit=1、reason=`push-rejected`、rounds=基线、`last_run_id`=基线末条、`push_attempts=3`；输出必须出现 3 次 `simulated rejection` 与 3 次 `push 被拒（第`；失败沙箱必须「存在过 → 清理 → 不存在」 | 传输故障也能让 push 三次非零，不数钩子签名就会为错误的原因变绿；清理只覆盖期望失败场景，意外失败仍保留现场 | 1 |
 | 14 | 全链 artifact 身份分离 | `replay_ci_scenarios.py`（fetch 场景）+ `replay_ci_writeback.py::--fetch-run-id` | 环境型（身份） | 无（精确相等） | artifact API 用 GitHub run id，历史写入用 `replay-ci-fetched-<sha>`；`result.last_run_id` 必须等于后者；输出含 `已下载 1 个文件` | 真实下载依赖 backend 同 run 上传 artifact（job 用 needs+success 门控）；缺 artifact 时 fetch 退 0、writeback 退 0（metrics-missing），必须由驱动的期望 `written` 判红 | 1 |
-| 15 | 全链 metrics 内容指纹与语义（R107/R112/R113） | `replay_ci_writeback.py::_metrics_content` / `_metrics_semantics` + `replay_ci_scenarios.py` 的 fetch 场景 | 环境型（身份） | 无（精确相等） | 写回前打印计数行 `metrics 内容 total=… passed=… failed=… retried=… attempts=…`、逐场景语义行 `name=ok/retry/fail/尝试次数` 与 `metrics 首次失败`；全链场景断 `metrics 内容 total=10` 且 `metrics 语义` 出现；失败/重试形状用例断具体场景状态与 `first_failure`，并读沙箱历史确认逐项落库；R113 再覆盖全失败 / 0 场景 / 重试多次仍失败三种形状，0 场景打印 `（无场景）`；R116 把失败形状与拒绝/注入组合（被拒一次后成功、注入冲突后第三次成功），断言重试后计数与逐场景 `first_failure` 不被重算 | 生产 artifact 的形状取值不钉死（e2e 可能真的重跑）；失败/重试形状由全链测试夹具提供——不伪造生产 artifact，避免把强制重跑写进历史污染趋势；计数行只证明「形状对」，语义行才证明「内容被读到」；生产形状的断言仍不证明来源对（M110）；0 场景是合法数据，空语义行与「指纹没打」不可区分（R113） | 1 |
-| 16 | 拒绝预算、注入时机与重试上限（R108/R112/R113/R114） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject N` / `--attempts`）+ `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第 N 次拒绝时注入冲突轮：N=1 预算 3 全失败 / 预算 2 第三次成功；N=2 预算 3 仍耗尽 / 预算 2 成功；N=3 末次注入、无重试可消化（`reason=rebase-conflict`）；R113 补 N=4/5（attempts=4/5）：N=4 预算 4 全失败、N=4 预算 4 attempts=5 第五次成功、N=5 预算 5 全失败；R114 补预算 6 / N=6：中段注入（注入 3、后面还有 3 次拒绝，reason=`push-rejected`）与末次注入后第 7 次成功；`push 被拒（第` 与 `simulated rejection` 次数逐场景钉住；N 超预算、N<1 或 N 超 attempts 退 2；表不变量 `test_hook_scenarios_are_reachable_and_consistent` 逐场景校验注入点 ≤ 预算/attempts、成功失败的 reason 来源与计数；R117 全链补 `fetched-rejected-hook-at-6`（预算/注入 6、attempts 7），并由 `test_fetch_hook_scenarios_match_the_local_formula` 断言全链与本地同用一组代数关系 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥；**可达性是两个变量**：拒绝预算 ≥ N 只保证钩子会走到第 N 次，重试循环最多 push `attempts` 次；N 超 attempts 时注入同样永远不会发生（R113）；场景表不变量是「未来加 N 时不会写出不可达组合」的唯一守卫（R114） | 1 |
+| 15 | 全链 metrics 内容指纹与语义（R107/R112/R113/R116） | `replay_ci_writeback.py::_metrics_content` / `_metrics_semantics` + `replay_ci_scenarios.py` 的 fetch 场景 | 环境型（身份） | 无（精确相等） | 写回前打印计数行 `metrics 内容 total=… passed=… failed=… retried=… attempts=…`、逐场景语义行 `name=ok/retry/fail/尝试次数` 与 `metrics 首次失败`；全链场景断 `metrics 内容 total=10` 且 `metrics 语义` 出现；失败/重试形状用例断具体场景状态与 `first_failure`，并读沙箱历史确认逐项落库；R113 再覆盖全失败 / 0 场景 / 重试多次仍失败三种形状，0 场景打印 `（无场景）`；R116 把失败形状与拒绝/注入组合（被拒一次后成功、注入冲突后第三次成功），断言重试后计数与逐场景 `first_failure` 不被重算 | 生产 artifact 的形状取值不钉死（e2e 可能真的重跑）；失败/重试形状由全链测试夹具提供——不伪造生产 artifact，避免把强制重跑写进历史污染趋势；计数行只证明「形状对」，语义行才证明「内容被读到」；生产形状的断言仍不证明来源对（M110）；0 场景是合法数据，空语义行与「指纹没打」不可区分（R113） | 1 |
+| 16 | 拒绝预算、注入时机与重试上限（R108/R112/R113/R114/R117） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject N` / `--attempts`）+ `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第 N 次拒绝时注入冲突轮：N=1 预算 3 全失败 / 预算 2 第三次成功；N=2 预算 3 仍耗尽 / 预算 2 成功；N=3 末次注入、无重试可消化（`reason=rebase-conflict`）；R113 补 N=4/5（attempts=4/5）：N=4 预算 4 全失败、N=4 预算 4 attempts=5 第五次成功、N=5 预算 5 全失败；R114 补预算 6 / N=6：中段注入（注入 3、后面还有 3 次拒绝，reason=`push-rejected`）与末次注入后第 7 次成功；`push 被拒（第` 与 `simulated rejection` 次数逐场景钉住；N 超预算、N<1 或 N 超 attempts 退 2；表不变量 `test_hook_scenarios_are_reachable_and_consistent` 逐场景校验注入点 ≤ 预算/attempts、成功失败的 reason 来源与计数；R117 全链补 `fetched-rejected-hook-at-6`（预算/注入 6、attempts 7），并由 `test_fetch_hook_scenarios_match_the_local_formula` 断言全链与本地同用一组代数关系 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥；**可达性是两个变量**：拒绝预算 ≥ N 只保证钩子会走到第 N 次，重试循环最多 push `attempts` 次；N 超 attempts 时注入同样永远不会发生（R113）；场景表不变量是「未来加 N 时不会写出不可达组合」的唯一守卫（R114） | 1 |
 | 17 | 保留期可配置（R109；R112 默认 40→80） | `e2e_retry_history.py::max_rounds`（`XS2_MAX_ROUNDS`） | 环境型（配置） | 默认 80；范围 [3, 1000]；非法值告警退回 | record 裁剪/文案、writeback `window_full`/文案、驱动期望、冲突夹具、钩子注入都从同一读取点取窗口 | R112 用户拍板 40→80：39 条历史只覆盖约 1.5 天，40 格 ≈ 13 个工作轮；旧历史条目保留原值、不改写。非法值是「出声的默认」（`::warning::`），不是静默；按天滚动未实现 | — |
 | 18 | 沙箱 GC 守卫（R110） | `replay_sandbox_gc.py::candidates` + `main` | 政策型（删除） | 默认 7 天；4 道守卫 | 直接子目录 + `replay-ci-writeback-` 前缀 + 非符号链接/junction + mtime 超龄；默认 dry-run，`--apply` 才删，删后 `exists()` 复核 | 只清本机/长期环境；runner 临时目录无需 GC；7 天是默认值，保留策略数值未拍板 | 0/1/2 |
 
@@ -1149,3 +1149,17 @@ R112 的失败/重试形状只有一个失败、一个重跑。R113 补三种边
 `record → rebase/reset → 再 push` 不得重算内容。两格用例断 `(4,3,1,1,5)`
 与逐场景 `first_failure` 原样保留。全过形状的 `failed=0` 会让「失败数被
 清零」完全隐形——组合用例的价值正在于让被重算的计数显形。
+
+### 10.7 五轮收口（R114–R118）
+
+- **R114**：场景表不变量把「注入点 ≤ 预算」与「注入点 ≤ attempts」的
+  代数关系钉住；N=6/7 两条时间线（中段注入后仍耗尽、末次注入后第 7 次
+  成功）。
+- **R115**：趋势表补 `失败` 列；0 场景与空历史分开说话。下游消费才算
+  真的记录。
+- **R116**：失败形状 × 拒绝/注入组合；重试不得重算计数或场景明细。
+- **R117**：全链 N=6；全链与本地共用同一组代数关系（公式测试）。
+- **R118**：四账收口；用例 2717 → **2723**，本机 **2695/28/0**。
+
+五轮均为测试/展示层：生产 `DEFAULT_ATTEMPTS=3`、`MAX_ROUNDS=80`、GC
+dry-run/7 天、按天滚动未实现等政策边界不变；`check` 的退出码语义不变。
