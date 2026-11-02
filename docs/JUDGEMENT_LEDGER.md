@@ -179,6 +179,8 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
 | 「本步不判趋势」必须写进输出（R78） | `test_check_says_it_has_no_judgement_power` |
+| 失败数必须显示在趋势表（R115） | `tests/test_e2e_retry_history.py::test_check_shows_failed_scenarios_in_the_trend_table` |
+| 0 场景 ≠ 空历史（R115） | `tests/test_e2e_retry_history.py::test_check_distinguishes_zero_scenarios_from_an_empty_history` |
 | 坏历史 → 4（不是 3/1/8，R78） | `test_check_exits_four_on_unparseable_history_not_eight`、`test_check_exits_four_on_contradictory_counts`、`test_check_exits_four_on_duplicate_run_ids` |
 | 跳过坏条目继续渲染会被咬住（R78） | `test_check_rejects_bad_json_even_when_one_entry_would_render` |
 | CI 只读校验**入库的**历史（R78） | `tests/test_e2e_retry_history.py::test_ci_checks_the_committed_history_file` |
@@ -1132,3 +1134,9 @@ R112 的失败/重试形状只有一个失败、一个重跑。R113 补三种边
 三种形状的逐场景 `first_failure` 都原样落库。生产 artifact 仍是真实全过
 形状（不造假），失败形状只由测试夹具提供——与 §5 的「不污染趋势」同一条
 边界。
+
+**下游消费（R115）**：历史条目从 R112 起就带 `failed`，但 `render_trend`
+的趋势表一直只显示「场景/重跑/重跑率/总尝试」——全失败轮与全通过轮在表
+里长得一样。R115 补 `失败` 列，并把「0 场景」从「历史为空」的文案里拆出
+来：前者可读、只是重跑率 n/a，后者才是没有可读轮次。**一个字段入库不等于
+它被消费；下游不显示，等于上游白记。**

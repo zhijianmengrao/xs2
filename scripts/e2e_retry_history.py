@@ -390,30 +390,41 @@ def _rate(retried: int, total: int) -> str:
 
 
 def render_trend(history: list[dict], limit: int = 5) -> str:
-    """最近 ``limit`` 轮的 markdown；``check`` 的 step summary 正文。"""
+    """最近 ``limit`` 轮的 markdown；``check`` 的 step summary 正文。
+
+    R115：表里补 ``失败`` 列——失败数从 R112 起就随条目入库，但趋势表一直
+    没显示它，等于「写了没人看」。0 场景的合法轮次与「历史为空」必须分开
+    说话：前者是可读数据、只是重跑率不可计算，后者才是没有判定力。
+    """
     rounds = history[-limit:] if limit > 0 else history
     latest_total = int(rounds[-1]["total"]) if rounds else 0
     lines = [f"**e2e 重跑趋势：最近 {len(rounds)} / {len(history)} 轮**", "",
-             "| 轮次 | 时间 | 场景 | 重跑 | 重跑率 | 总尝试 |",
-             "|---|---|---|---|---|---|"]
+             "| 轮次 | 时间 | 场景 | 失败 | 重跑 | 重跑率 | 总尝试 |",
+             "|---|---|---|---|---|---|---|"]
     for entry in rounds:
         stamp = str(entry["exported_at"])[:16].replace("T", " ")
         run_id = str(entry["run_id"])
         shown = run_id if len(run_id) <= 24 else run_id[:21] + "..."
         lines.append(
             f"| {shown} | {stamp} | {int(entry['total'])} "
+            f"| {int(entry['failed'])} "
             f"| {int(entry['retried'])} "
             f"| {_rate(int(entry['retried']), int(entry['total']))} "
             f"| {int(entry['attempts'])} |")
     lines.append("")
-    if latest_total:
+    if not rounds:
+        lines.append("_本步没有判定力：历史里没有可读的轮次。_")
+    elif latest_total:
         lines.append(
             "_本步只校验历史有效性，不判趋势好坏：最近一轮 "
             f"{latest_total} 个场景，1 次重跑 = "
             f"{100.0 / latest_total:.0f} 个百分点；样本量不足以得出"
             "「变差」的结论，退出 0 只表示数据可读。_")
     else:
-        lines.append("_本步没有判定力：历史里没有可读的轮次。_")
+        lines.append(
+            "_本步只校验历史有效性，不判趋势好坏：最近一轮 0 个场景，"
+            "重跑率不可计算（n/a）；退出 0 只表示这一轮数据可读，"
+            "不代表通过。_")
     return "\n".join(lines)
 
 

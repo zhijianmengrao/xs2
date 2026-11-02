@@ -28,33 +28,47 @@ COMMITTED = (REPO_ROOT / "tests" / "fixtures" / "e2e_retry_history"
              / "history.json")
 
 
-def _metrics(total: int = 10, retried: int = 0) -> dict:
-    """一份合法的 e2e metrics payload；``retried`` 个场景各多跑一次。"""
-    scenarios = [
-        {
-            "name": f"scenario_{index}",
-            "passed": True,
-            "attempts": 2 if index < retried else 1,
-            "first_failure": "第一次红了" if index < retried else "",
-        }
-        for index in range(total)
-    ]
+def _metrics(total: int = 10, retried: int = 0, failed: int = 0) -> dict:
+    """一份合法的 e2e metrics payload。
+
+    ``failed`` 个场景最终失败（attempts=1），``retried`` 个通过场景各多跑
+    一次；其余一次通过。重跑数只统计 attempts>1 的场景。
+    """
+    scenarios = []
+    for index in range(total):
+        if index < failed:
+            scenarios.append({
+                "name": f"scenario_{index}",
+                "passed": False,
+                "attempts": 1,
+                "first_failure": "模拟失败",
+            })
+        else:
+            scenarios.append({
+                "name": f"scenario_{index}",
+                "passed": True,
+                "attempts": 2 if index < failed + retried else 1,
+                "first_failure": ("第一次红了"
+                                  if index < failed + retried else ""),
+            })
     return {
         "schema": 1,
         "total": total,
-        "passed": total,
-        "failed": 0,
+        "passed": total - failed,
+        "failed": failed,
         "retried": retried,
         "scenarios": scenarios,
     }
 
 
 def _entry(run_id: str, total: int = 10, retried: int = 0,
+           failed: int = 0,
            exported_at: str = "2026-11-01T00:00:00+00:00") -> dict:
     return {
         "run_id": run_id,
         "exported_at": exported_at,
-        **history.entry_from_metrics(_metrics(total=total, retried=retried)),
+        **history.entry_from_metrics(
+            _metrics(total=total, retried=retried, failed=failed)),
     }
 
 
@@ -397,6 +411,40 @@ def test_check_renders_the_recent_rounds(tmp_path: Path, capsys) -> None:
     assert "最近 2 / 2 轮" in out
     assert "| r2 |" in out
     assert "10.0%" in out and "0.0%" in out
+
+
+def test_check_shows_failed_scenarios_in_the_trend_table(
+        tmp_path: Path, capsys) -> None:
+    """R115：失败数从 R112 起就入库，趋势表必须真的显示它。
+
+    全失败轮的重跑率是 0.0%（没有场景重跑），但「失败 3」与「通过 3」在
+    旧表里长得一模一样——写了没人看，等于没记。
+    """
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1", total=3, failed=3)])
+    assert history.check(target) == 0
+    out = capsys.readouterr().out
+    assert "| 失败 |" in out
+    row = next(line for line in out.splitlines()
+               if line.startswith("| r1 |"))
+    columns = [cell.strip() for cell in row.split("|")]
+    assert columns[3] == "3", row   # 场景
+    assert columns[4] == "3", row   # 失败
+    assert columns[5] == "0", row   # 重跑
+    assert columns[6] == "0.0%", row
+    assert "1 次重跑 = 33 个百分点" in out
+
+
+def test_check_distinguishes_zero_scenarios_from_an_empty_history(
+        tmp_path: Path, capsys) -> None:
+    """R115：0 场景是「可读但没有重跑率」，不是「历史里没有可读轮次」。"""
+    target = tmp_path / "history.json"
+    _write_history(target, [_entry("r1", total=0)])
+    assert history.check(target) == 0
+    out = capsys.readouterr().out
+    assert "最近一轮 0 个场景" in out
+    assert "n/a" in out
+    assert "没有可读的轮次" not in out
 
 
 def test_check_says_it_has_no_judgement_power(tmp_path: Path, capsys) -> None:
