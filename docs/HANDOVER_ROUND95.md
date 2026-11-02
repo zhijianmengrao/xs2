@@ -1,6 +1,6 @@
 # DeterminFlow (xs2) 交接报告 — Round 95（artifact 拉取脚本 + replay 未提交态）
 
-> 第 6 轮。形态：下载侧 `actions/download-artifact` → `scripts/fetch_ci_artifact.py`；
+> 第 1 轮（R100 更正：原写「第 6 轮」，与 R96 的「第 2 轮」矛盾；R90–R94 才是上一组的 1–5 轮）。形态：下载侧 `actions/download-artifact` → `scripts/fetch_ci_artifact.py`；
 > replay 增加 `--from-worktree`；沙箱失败自动保留。
 > 已拍定（用户四选四）：artifact 走脚本拉取、replay 带未提交改动、失败保留现场。
 
