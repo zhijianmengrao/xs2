@@ -18,6 +18,8 @@
         --run-id replay-1 --dry-run --keep
     python scripts/replay_ci_writeback.py --repo . --run-id replay-1 \\
         --fetch-api-url http://127.0.0.1:9000 --fetch-repo owner/repo
+    python scripts/replay_ci_writeback.py --repo . --metrics m.json \\
+        --run-id replay-1 --reject-pushes 2 --conflict-on-reject 2
 """
 
 from __future__ import annotations
@@ -96,7 +98,7 @@ def _apply_worktree_changes(source: Path, work: Path) -> None:
 
 
 def _conflict_hook_source(branch: str, history_rel: str) -> str:
-    """第一次拒绝时在 origin 上追加冲突轮（R108）。
+    """在第 N 次拒绝时在 origin 上追加冲突轮（R108/R112）。
 
     在 ``pre-receive`` 里用 plumbing 直接更新 ref：``read-tree`` 到临时
     index → 替换 history blob → ``write-tree`` → ``commit-tree`` →
@@ -164,26 +166,29 @@ git("update-ref", ref, commit, old.decode())
 
 
 def _install_rejection_hook(origin: Path, rejections: int,
-                            inject_conflict: bool = False,
+                            inject_conflict_at: int = 0,
                             branch: str = "main",
                             history_rel: str = DEFAULT_HISTORY) -> None:
     """在沙箱 origin 上装 pre-receive：前 ``rejections`` 次 push 被拒（R99）。
 
-    ``inject_conflict=True``（R108）时，**第一次拒绝**会先在 origin 上追加
-    一轮冲突历史再拒绝。因此第一次 push 真的走到了钩子（不是非快进），
-    后续 push 的重推才会撞上 rebase 冲突。
+    ``inject_conflict_at=N``（R108/R112）时，**第 N 次拒绝**会先在 origin 上
+    追加一轮冲突历史再拒绝。N=1 即 R108 的「第一次拒绝时注入」；N>1 覆盖
+    预算中途耗尽的时间线（钩子先正常拒绝几次，直到第 N 次才推进 origin）。
+    调用方必须保证 ``rejections >= N``，否则注入点永远到不了——那会静默
+    退化成「没有注入」的普通拒绝。
     """
     hook = origin / "hooks" / "pre-receive"
     hook.parent.mkdir(parents=True, exist_ok=True)
     inject = ""
-    if inject_conflict:
+    if inject_conflict_at:
         script = origin / "hooks" / "replay_conflict_inject.py"
         script.write_text(_conflict_hook_source(branch, history_rel),
                           encoding="utf-8", newline="\n")
         script.chmod(0o755)
         python = Path(sys.executable).as_posix().replace('"', '\\"')
+        # ``$n`` 是**此前**已被拒的次数（0 起算），所以第 N 次拒绝对应 n=N-1。
         inject = (
-            '  if [ "$n" -eq 0 ]; then\n'
+            f'  if [ "$n" -eq {inject_conflict_at - 1} ]; then\n'
             f'    "{python}" "$GIT_DIR/hooks/replay_conflict_inject.py"'
             ' || exit 1\n'
             '  fi\n')
@@ -203,8 +208,9 @@ def _install_rejection_hook(origin: Path, rejections: int,
         # 的 sh 对 CRLF 不该赌运气（R103）。
         newline="\n")
     hook.chmod(0o755)
-    print(f"replay：已安装拒绝钩子（前 {rejections} 次 push 被拒"
-          f"{'，首次拒绝时注入冲突' if inject_conflict else ''}）")
+    injected_at = (f"，第 {inject_conflict_at} 次拒绝时注入冲突"
+                   if inject_conflict_at else "")
+    print(f"replay：已安装拒绝钩子（前 {rejections} 次 push 被拒{injected_at}）")
 
 
 CONFLICT_RUN_ID = "replay-conflict"
@@ -278,6 +284,37 @@ def _metrics_content(metrics_path: Path) -> dict | None:
         return None
 
 
+# 首次失败文本在指纹行里的上限：CI 日志要能一眼读完，又不至于把整段
+# e2e 详情塞进一行。截断只影响展示，不参与任何判决。
+SEMANTICS_TEXT_LIMIT = 160
+
+
+def _metrics_semantics(entry: dict) -> tuple[str, str]:
+    """逐场景语义指纹：``name=ok/1``、``name=retry/2``、``name=fail/1``。
+
+    计数指纹只能证明「形状对」，不能证明「内容对」：同样 total=10、
+    passed/failed/retried 也相同的两份 metrics，场景名或首次失败可以完全
+    不同（R107 的 M110 正是这一类）。全链场景据此断言 artifact 的语义，
+    而不是只数总数（R112）。
+    """
+    states: list[str] = []
+    failures: list[str] = []
+    for item in entry["scenarios"]:
+        if not item["passed"]:
+            state = "fail"
+        elif item["attempts"] > 1:
+            state = "retry"
+        else:
+            state = "ok"
+        states.append(f"{item['name']}={state}/{item['attempts']}")
+        text = item.get("first_failure") or ""
+        if text:
+            if len(text) > SEMANTICS_TEXT_LIMIT:
+                text = text[:SEMANTICS_TEXT_LIMIT] + "…"
+            failures.append(f"{item['name']}={text}")
+    return " ".join(states), "；".join(failures)
+
+
 def replay(repo: Path, metrics: Path | None, run_id: str,
            history_rel: str = DEFAULT_HISTORY, branch: str = "main",
            keep: bool = False, summary_path: Path | None = None,
@@ -285,7 +322,7 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
            fetch_api_url: str | None = None,
            artifact: str = ARTIFACT_NAME, fetch_repo: str = "",
            token: str | None = None, reject_pushes: int = 0,
-           conflict: bool = False, conflict_on_reject: bool = False,
+           conflict: bool = False, conflict_on_reject: int = 0,
            result_path: Path | None = None,
            fetch_run_id: str | None = None) -> int:
     repo = Path(repo).resolve()
@@ -303,7 +340,7 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
             _create_conflicting_round(work, origin, branch, history_rel, sandbox)
         if reject_pushes:
             _install_rejection_hook(
-                origin, reject_pushes, inject_conflict=conflict_on_reject,
+                origin, reject_pushes, inject_conflict_at=conflict_on_reject,
                 branch=branch, history_rel=history_rel)
         target = work / history_rel
         before = _rounds(target)
@@ -335,6 +372,10 @@ def replay(repo: Path, metrics: Path | None, run_id: str,
                       f"passed={content['passed']} failed={content['failed']} "
                       f"retried={content['retried']} "
                       f"attempts={content['attempts']}")
+                semantics, first_failures = _metrics_semantics(content)
+                print(f"replay：metrics 语义 {semantics}")
+                if first_failures:
+                    print(f"replay：metrics 首次失败 {first_failures}")
             code = writeback.writeback(
                 metrics_path, target, run_id, work, branch=branch,
                 summary_path=summary_path, dry_run=dry_run,
@@ -395,8 +436,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="沙箱 origin 拒绝前 N 次 push（R99）")
     parser.add_argument("--conflict", action="store_true",
                         help="先让 origin 前进一轮冲突历史（R99）")
-    parser.add_argument("--conflict-on-reject", action="store_true",
-                        help="第一次 push 被拒时在 origin 上注入冲突轮（R108）")
+    parser.add_argument("--conflict-on-reject", nargs="?", const=1, type=int,
+                        default=None, metavar="N",
+                        help="第 N 次 push 被拒时在 origin 上注入冲突轮"
+                             "（默认 1；R112 起可指定）")
     parser.add_argument("--result-json", type=Path, default=None,
                         help="写回的机读结果工件（R99）")
     return parser
@@ -411,8 +454,14 @@ def main(argv: list[str] | None = None) -> int:
         print("--conflict 与 --conflict-on-reject 不能同时使用",
               file=sys.stderr)
         return 2
-    if args.conflict_on_reject and args.reject_pushes < 1:
-        print("--conflict-on-reject 需要 --reject-pushes >= 1",
+    if args.conflict_on_reject is not None and args.conflict_on_reject < 1:
+        print("--conflict-on-reject 的 N 必须 >= 1", file=sys.stderr)
+        return 2
+    if args.conflict_on_reject and args.reject_pushes < args.conflict_on_reject:
+        # 注入点落在预算之外 = 注入永远不会发生；那会静默退化成普通拒绝，
+        # 让人以为「第 N 次注入」被测过（R112）。
+        print(f"--conflict-on-reject {args.conflict_on_reject} 需要 "
+              f"--reject-pushes >= {args.conflict_on_reject}",
               file=sys.stderr)
         return 2
     return replay(
@@ -422,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         from_worktree=args.from_worktree, fetch_api_url=args.fetch_api_url,
         artifact=args.artifact, fetch_repo=args.fetch_repo, token=args.token,
         reject_pushes=args.reject_pushes, conflict=args.conflict,
-        conflict_on_reject=args.conflict_on_reject,
+        conflict_on_reject=args.conflict_on_reject or 0,
         result_path=args.result_json, fetch_run_id=args.fetch_run_id)
 
 

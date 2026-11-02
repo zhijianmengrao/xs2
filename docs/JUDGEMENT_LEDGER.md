@@ -32,12 +32,12 @@
 | 9 | e2e 退避幅度（单点） | `scenario_retry_backoff_is_honoured` | 偏移型（差分） | 多出 ≥ 0.7s（配置 1.2s）；同样在重跑集合里（R68） | 两次运行相减，绕开固定开销 | 只判一个值，对形状失明 | 1 |
 | 10 | 判据算术失败 | `_run_judgement`（六个派发分支） | 不是判据 | — | 捕获 `ArithmeticError` / `ValueError` | 只把「算不下去」与「判了不合格」分开 | 8 |
 | 11 | msys 传输不可用 → skip | `tests/conftest.py::_msys_skip_applies`（`_git_transport_blocked_probe` + `pytest_runtest_makereport`） | 环境型 | 无 | 失败调用含 `NtCreateDirectoryObject` 签名，**或** 模块 ∈ 6 个传输模块且探针 clone 复现同一签名 | 真实缺陷若文本里带同签名会被误归因；探针每进程只跑一次；6 个模块内无签名的失败一律转 skip（见 §8） | — |
-| 12 | 满窗时的写入身份 | `replay_ci_scenarios.py::_run_scenario`（`last_run_id`） | 环境型（身份，不是容忍量） | 无（精确相等） | `result.last_run_id == 本轮 run_id`；`rounds` 仍按 `min(before+delta, MAX_ROUNDS)` 断言并用 `rounds_clipped` 标注 | 窗口满 40 轮后 `rounds` 恒定在 40，`rounds_delta` 的 +1/+2 不可辨（39 轮 conflict 先被裁剪）；该断言不依赖窗口状态，但 `last_run_id` 由 writeback 自报（读同一 `origin/<branch>`），不是独立第二证据源 | 1 |
+| 12 | 满窗时的写入身份 | `replay_ci_scenarios.py::_run_scenario`（`last_run_id`） | 环境型（身份，不是容忍量） | 无（精确相等） | `result.last_run_id == 本轮 run_id`；`rounds` 仍按 `min(before+delta, MAX_ROUNDS)` 断言并用 `rounds_clipped` 标注 | 窗口满后 `rounds` 恒定在窗口值（R112 起默认 80），`rounds_delta` 的 +1/+2 不可辨（窗口−1 轮的 +2 先被裁剪）；该断言不依赖窗口状态，但 `last_run_id` 由 writeback 自报（读同一 `origin/<branch>`），不是独立第二证据源 | 1 |
 | 13 | 期望失败场景（永久拒绝） | `replay_ci_scenarios.py::Scenario` / `_run_scenario` | 环境型（身份 + 计数） | 无（精确相等） | exit=1、reason=`push-rejected`、rounds=基线、`last_run_id`=基线末条、`push_attempts=3`；输出必须出现 3 次 `simulated rejection` 与 3 次 `push 被拒（第`；失败沙箱必须「存在过 → 清理 → 不存在」 | 传输故障也能让 push 三次非零，不数钩子签名就会为错误的原因变绿；清理只覆盖期望失败场景，意外失败仍保留现场 | 1 |
 | 14 | 全链 artifact 身份分离 | `replay_ci_scenarios.py`（fetch 场景）+ `replay_ci_writeback.py::--fetch-run-id` | 环境型（身份） | 无（精确相等） | artifact API 用 GitHub run id，历史写入用 `replay-ci-fetched-<sha>`；`result.last_run_id` 必须等于后者；输出含 `已下载 1 个文件` | 真实下载依赖 backend 同 run 上传 artifact（job 用 needs+success 门控）；缺 artifact 时 fetch 退 0、writeback 退 0（metrics-missing），必须由驱动的期望 `written` 判红 | 1 |
-| 15 | 全链 metrics 内容指纹（R107） | `replay_ci_writeback.py::_metrics_content` + `replay_ci_scenarios.py` 的 fetch 场景 | 环境型（身份） | 无（精确相等） | 写回前打印 `replay：metrics 内容 total=… passed=… failed=… retried=… attempts=…`；全链场景断 `metrics 内容 total=10`，本地夹具故意 3 场景/1 重跑（total=3） | 只钉 `total`：`retried/attempts` 是当轮运行结果，钉死会把 e2e flake 变成 replay 回归；生产形状的断言只证明「没缺」，不证明「来源对」（M110） | 1 |
-| 16 | 拒绝预算的行为边界（R108） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject`）+ 两个 `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第一次拒绝时注入冲突轮；预算 3 → 三次全拒、`simulated rejection` 3、末条 `replay-conflict`；预算 2 → 第三次成功、净 +2、末条本轮；`push 被拒（第` 次数 3/2 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥 | 1 |
-| 17 | 保留期可配置（R109） | `e2e_retry_history.py::max_rounds`（`XS2_MAX_ROUNDS`） | 环境型（配置） | 默认 40；范围 [3, 1000]；非法值告警退回 | record 裁剪/文案、writeback `window_full`/文案、驱动期望、冲突夹具、钩子注入都从同一读取点取窗口 | 默认值仍是 40，政策没变；非法值是「出声的默认」（`::warning::`），不是静默；按天滚动未实现 | — |
+| 15 | 全链 metrics 内容指纹与语义（R107/R112） | `replay_ci_writeback.py::_metrics_content` / `_metrics_semantics` + `replay_ci_scenarios.py` 的 fetch 场景 | 环境型（身份） | 无（精确相等） | 写回前打印计数行 `metrics 内容 total=… passed=… failed=… retried=… attempts=…`、逐场景语义行 `name=ok/retry/fail/尝试次数` 与 `metrics 首次失败`；全链场景断 `metrics 内容 total=10` 且 `metrics 语义` 出现；失败/重试形状用例断具体场景状态与 `first_failure`，并读沙箱历史确认逐项落库 | 生产 artifact 的形状取值不钉死（e2e 可能真的重跑）；失败/重试形状由全链测试夹具提供——不伪造生产 artifact，避免把强制重跑写进历史污染趋势；计数行只证明「形状对」，语义行才证明「内容被读到」；生产形状的断言仍不证明来源对（M110） | 1 |
+| 16 | 拒绝预算与注入时机（R108/R112） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject N`）+ `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第 N 次拒绝时注入冲突轮：N=1 预算 3 全失败 / 预算 2 第三次成功；N=2 预算 3 仍耗尽 / 预算 2 成功；N=3 末次注入、无重试可消化（`reason=rebase-conflict`）；`push 被拒（第` 与 `simulated rejection` 次数逐场景钉住；N 超预算或 <1 退 2 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥；注入点落在预算外必须退 2（否则静默退化成普通拒绝） | 1 |
+| 17 | 保留期可配置（R109；R112 默认 40→80） | `e2e_retry_history.py::max_rounds`（`XS2_MAX_ROUNDS`） | 环境型（配置） | 默认 80；范围 [3, 1000]；非法值告警退回 | record 裁剪/文案、writeback `window_full`/文案、驱动期望、冲突夹具、钩子注入都从同一读取点取窗口 | R112 用户拍板 40→80：39 条历史只覆盖约 1.5 天，40 格 ≈ 13 个工作轮；旧历史条目保留原值、不改写。非法值是「出声的默认」（`::warning::`），不是静默；按天滚动未实现 | — |
 | 18 | 沙箱 GC 守卫（R110） | `replay_sandbox_gc.py::candidates` + `main` | 政策型（删除） | 默认 7 天；4 道守卫 | 直接子目录 + `replay-ci-writeback-` 前缀 + 非符号链接/junction + mtime 超龄；默认 dry-run，`--apply` 才删，删后 `exists()` 复核 | 只清本机/长期环境；runner 临时目录无需 GC；7 天是默认值，保留策略数值未拍板 | 0/1/2 |
 
 ## 3. R63 的预算式能迁移到哪
@@ -175,7 +175,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 条目来源 `source`（R93） | `tests/test_e2e_retry_history.py::test_record_writes_the_source`、`test_validate_history_rejects_unknown_source`、`test_check_reports_the_source_mix` |
 | 本地回放不碰源仓库（R94） | `tests/test_ci_writeback_history.py::test_dry_run_does_not_touch_the_repo`、`tests/test_replay_ci_writeback.py::test_replay_leaves_the_source_repo_untouched` |
 | p=1.0 真实数据（R84） | `tests/test_live_snapshot_gate.py::test_all_failed_fixture_is_a_real_export`、`test_all_failed_fixture_uses_the_all_failed_closed_form`、`test_real_all_failed_snapshot_is_thin_and_says_why`、`test_real_all_failed_snapshot_exceeds_the_policy_ceiling` |
-| e2e 重跑历史的窗口 **40 轮**（R78，R89 由 20 提到 40） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window`（值 + 边界行为两条一起钉） |
+| e2e 重跑历史的窗口 **80 轮**（R78；R89 20→40；R112 40→80） | `scripts/e2e_retry_history.py::MAX_ROUNDS` + `tests/test_e2e_retry_history.py::test_record_trims_to_the_window`（值 + 边界行为两条一起钉） |
 | 同一 `run_id` 覆盖而非追加（R78） | `tests/test_e2e_retry_history.py::test_record_replaces_the_same_run_id_instead_of_appending` |
 | 「1 次重跑 = 10 个百分点」是**算出来的**（R78） | `test_check_computes_the_resolution_from_the_latest_total`（20 个场景时必须是 5 个百分点） |
 | 「本步不判趋势」必须写进输出（R78） | `test_check_says_it_has_no_judgement_power` |
@@ -190,8 +190,8 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 归因用例的失败不被吞（R71） | `tests/test_msys_attribution.py::test_attribution_failures_are_never_converted_into_skips` |
 | 113 skips 的四行实测矩阵（R70 §6.1） | 本页 §8：High 2189/113 与**真降** Low 2189/113 逐字相同 |
 
-| 全链 metrics 内容指纹（R107） | `tests/test_replay_ci_writeback.py::test_replay_reports_the_metrics_content`、`test_replay_reports_the_fetched_metrics_content`、`tests/test_replay_ci_scenarios.py::test_local_metrics_shape_is_deliberately_different` |
-| 预算 2 与 3 的行为边界（R108） | `tests/test_replay_ci_writeback.py::test_replay_hook_injects_conflict_on_first_rejection`、`test_replay_rejection_budget_two_is_a_real_boundary` |
+| 全链 metrics 内容指纹与语义（R107/R112） | `tests/test_replay_ci_writeback.py::test_replay_reports_the_metrics_content`、`test_replay_reports_the_fetched_metrics_content`、`test_replay_reports_the_metrics_semantics`、`test_replay_fetch_chain_carries_failure_and_retry_semantics`、`tests/test_replay_ci_scenarios.py::test_local_metrics_shape_is_deliberately_different` |
+| 预算与注入时机（R108/R112） | `tests/test_replay_ci_writeback.py::test_replay_hook_injects_conflict_on_first_rejection`、`test_replay_rejection_budget_two_is_a_real_boundary`、`test_replay_hook_injects_conflict_on_the_second_rejection`、`test_replay_rejects_an_unreachable_injection_point`、`tests/test_replay_ci_scenarios.py::test_scenario_table_pins_the_replay_counts` |
 | `XS2_MAX_ROUNDS` 默认/范围/告警（R109） | `tests/test_e2e_retry_history.py::test_max_rounds_env_override_and_invalid`、`test_record_uses_the_configured_window`、`tests/test_ci_writeback_history.py::test_writeback_window_follows_env`、`tests/test_replay_ci_scenarios.py::test_driver_uses_the_configured_window` |
 | 沙箱 GC 四道守卫与默认 dry-run（R110） | `tests/test_replay_sandbox_gc.py::test_dry_run_lists_only_old_matching_directories`、`test_apply_removes_only_the_candidates`、`test_symlink_with_matching_name_is_skipped`、`test_negative_age_is_a_usage_error`、`test_missing_root_is_a_usage_error` |
 
@@ -723,6 +723,11 @@ R88 的重试循环只写在 `ci.yml` 里：本地跑不了，测试只能对 YA
 - **窗口 20 → 40**：R88 把「一轮 = 一次显式导出」改成「一轮 = 一次 main push」，
   doc-only 提交也占一格；R88 自己就吃掉 3 轮，20 轮只剩 6~7 个工作轮的量。
   窗口是**保留期**，不是判决门槛（趋势仍不判好坏）。
+- **窗口 40 → 80（R112，用户拍板）**：R111 时已用到 39/40，而 39 条只覆盖
+  2026-11-01 01:51 ～ 2026-11-02 13:32（约 1.5 天）——每个工作轮约 3 次 push，
+  40 格 ≈ 13 个工作轮。默认值只改 `MAX_ROUNDS`；环境变量与 [3, 1000] 校验不变；
+  `test_record_trims_to_the_window` 钉值 80 与「第 81 轮掉最老」，驱动的窗口
+  边界用例改为**显式配置 40**，不再跟默认政策走。
 - **变异验证（8/8 全咬合，还原源是当前文件快照，不用 `git checkout`）**：
   M1 `pull` 不带 `--rebase` → 1 红；M2 重试上限 3→1 → 2 红；M3 没有 metrics
   当失败 → 1 红；M4 无变化仍然提交 → 1 红；M5 默认信息丢 `[skip ci]` → 1 红；
@@ -793,7 +798,7 @@ R88 之后历史同时含本机导出与 CI 写回，此前只能靠 `run_id` �
 
 R89 §7-2 的「未在本地复现整个 writeback job」缩到只剩 artifact 传输本身：
 
-- `--dry-run`：`TemporaryDirectory` 里的历史副本上真算一遍，报告 `历史 N/40 轮（+k）`，
+- `--dry-run`：`TemporaryDirectory` 里的历史副本上真算一遍，报告 `历史 N/<保留期> 轮（+k）`，
   不写文件、不提交、不推送。
 - `scripts/replay_ci_writeback.py`：裸克隆源仓库当 origin → 克隆工作区 → 跑真实
   `writeback()`（提交/推送/重试都是真的，只是推到沙箱）；复核源仓库 HEAD 未变。
@@ -1050,7 +1055,13 @@ R36 记录的「服务进程为 Low-IL」与此一致，但本轮没有回查当
 只有变体形状（2/4 场景）的单测能咬住。**判据要证明来源，必须让错误来源
 的形状与正确来源不同。**
 
-### 10.2 预算：改时机，不改断言（R108）
+R112 把指纹从「计数」扩到「内容」：写回前逐场景打印
+`name=ok|retry|fail/尝试次数` 与 `first_failure`，全链场景断语义行出现；
+另用**失败/重试形状**（一失败、一重跑）的 artifact 走真实 fetch → writeback，
+并读沙箱历史确认 failed/retried/attempts 与逐场景 `first_failure` 原样落库。
+**总数相同、语义不同的两份数据，只有语义断言能把它们分开。**
+
+### 10.2 预算：改时机，不改断言（R108/R112）
 
 R106 的 `reject_pushes=3` 只是字面口径：冲突在 writeback 前注入，第一次
 push 被非快进挡下、根本到不了钩子，预算 2 与 3 行为等价。R108 把注入搬进
@@ -1058,15 +1069,21 @@ push 被非快进挡下、根本到不了钩子，预算 2 与 3 行为等价。
 真的到钩子；预算 3 → 三次全拒，预算 2 → 第三次成功。**一个数字要成为
 行为边界，改变的是状态/时机，不是断言里的常量。**
 
+R112 再把时机参数化到「第 N 次拒绝」：N=2 覆盖预算中途耗尽与第三次成功；
+N=3 覆盖「注入发生在最后一次拒绝」——冲突轮进了 origin，但已没有下一次
+重试去消化，最后一次失败因此是 `rebase-conflict` 而不是 `push-rejected`。
+N 落在预算之外时 CLI 退 2：**注入永远不会发生却静默退化成普通拒绝，等于
+让「第 N 次注入」从未被执行过。**
+
 钩子内写对象还有一个硬约束：`pre-receive` 失败会丢弃 quarantine，注入脚本
 必须清掉 `GIT_OBJECT_DIRECTORY` / `GIT_ALTERNATE_OBJECT_DIRECTORIES` /
 `GIT_QUARANTINE_PATH`，否则 `update-ref` 指向不存在的对象。
 
 ### 10.3 配置：一个读取点（R109）
 
-`XS2_MAX_ROUNDS`（默认 40，范围 [3, 1000]）由 `max_rounds()` 单点读取；
+`XS2_MAX_ROUNDS`（R112 起默认 80，范围 [3, 1000]）由 `max_rounds()` 单点读取；
 record、写回文案、`window_full`、驱动期望、冲突夹具、钩子注入全部走它。
-非法值不静默：`::warning::` 后退回 40。**一个配置项若有两处读取，就会
+非法值不静默：`::warning::` 后退回默认值。**一个配置项若有两处读取，就会
 出现「裁剪按 A、期望按 B」的分裂**；驱动用「窗口 8、基线 8」把这种分裂
 判红。只改文案的缺陷（M123）需要文案断言，`rounds` 全对时它完全隐形。
 

@@ -16,7 +16,7 @@ checkout、git、shell 钩子、历史文件上，这套回放真的能跑完」
 ``--repo`` 的 HEAD 克隆出独立沙箱，源仓库一个字节都不该动。
 
 判定写入是否发生不能只看轮数：历史窗口 ``MAX_ROUNDS`` 满了以后
-``history[-40:]`` 会把最早一轮挤掉，happy/rejected 的净增量变成 0，conflict
+``history[-MAX_ROUNDS:]`` 会把最早一轮挤掉，happy/rejected 的净增量变成 0，conflict
 的 +2 也会被压平——``rounds`` 会退化成恒等式（R102）。因此成功场景额外断言
 ``result.last_run_id`` 等于本轮的 ``run_id``；失败场景（永久拒绝）断言远端
 末条**仍是基线那一条**，远端轮数完全没变。
@@ -42,6 +42,12 @@ replay 先走 ``fetch_ci_artifact`` 从真实 API 下载 artifact，再走同一
 R106 在同一份全链配置上追加 ``fetched-rejected-conflict``：真实 artifact
 下载成功后再叠加三次拒绝与冲突注入，端到端证明「下载 → 非快进拒绝 →
 钩子拒绝 → 重算 → 全失败」这条链没有被 fetch 路径绕开。
+
+R112 把钩子的注入时机参数化（``--conflict-on-reject N``），并补三条时间线：
+N=2 且预算耗尽、N=2 且第三次成功、N=3（末次拒绝注入、没有下一次重试）。
+同轮把写回前的指纹扩成**语义**：除计数外逐场景打印
+``name=ok|retry|fail/尝试次数`` 与 ``first_failure``，全链场景据此断言
+artifact 的内容而不只是总数。
 
 ## 退出码
 
@@ -121,6 +127,13 @@ class Scenario:
       第一次 push 真的走到钩子；预算 3 时三次全失败。
     - rejected-hook-budget-2（R108）：同一夹具、预算 2，第三次 push 成功；
       ``reject_pushes`` 的 2 与 3 因此成为可区分的行为边界。
+    - rejected-hook-conflict-at-2（R112）：注入点移到**第 2 次拒绝**，预算 3
+      仍在中途耗尽；冲突发生在第 2 次尝试，第 3 次重算后仍被拒。
+    - rejected-hook-budget-2-at-2（R112）：注入点在第 2 次、预算 2 的变体——
+      第 2 次拒绝时注入，第三次 push 成功；最终观测与 N=1 相同，但「rebase
+      冲突（第 2 次）」把注入时机钉住。
+    - rejected-hook-inject-at-3（R112）：预算与注入点都在第 3 次——注入之后
+      已经没有下一次重试，冲突轮留在 origin，本轮不入库。
 
     ``injected_rounds`` 是**夹具侧**先推进 origin 的轮数（冲突注入），
     只在失败场景里参与期望轮数计算：``rounds_delta`` 描述成功场景的净变化，
@@ -134,7 +147,7 @@ class Scenario:
     push_attempts: int
     reject_pushes: int = 0
     conflict: bool = False
-    conflict_on_reject: bool = False
+    conflict_on_reject: int = 0
     expected_exit: int = EXIT_OK
     expected_reason: str = "written"
     expect_sandbox: bool = False
@@ -199,7 +212,7 @@ SCENARIOS: tuple[Scenario, ...] = (
     # reject_pushes 的 2/3 第一次成为可区分的**行为**边界。
     Scenario(
         "rejected-hook-conflict", 0, 3, reject_pushes=3,
-        conflict_on_reject=True,
+        conflict_on_reject=1,
         expected_exit=EXIT_MISMATCH,
         expected_reason="push-rejected",
         expect_sandbox=True,
@@ -214,9 +227,56 @@ SCENARIOS: tuple[Scenario, ...] = (
     # 远端 = 注入轮 + 本轮，净 +2。
     Scenario(
         "rejected-hook-budget-2", 2, 3, reject_pushes=2,
-        conflict_on_reject=True,
+        conflict_on_reject=1,
         must_contain=("rebase 冲突（第 1 次）", "第 3 次尝试", "已写回"),
         output_counts=(("push 被拒（第", 2), ("simulated rejection", 2)),
+    ),
+    # R112：注入点可指定到第 N 次拒绝，覆盖「预算中途耗尽 / 注入后无重试」
+    # 的时间线。N=1 的两种结局已在 R108 覆盖，这里补 N=2 与 N=3。
+    #
+    # N=2、预算 3：第 1 次普通拒绝 → 第 2 次拒绝时注入 → 重算 → 第 3 次仍被拒。
+    # 冲突轮留在远端但本轮未入库；判据必须说出冲突发生在第 2 次尝试，否则
+    # 「钩子忽略 N、仍固定第一次注入」无法与它区分。
+    Scenario(
+        "rejected-hook-conflict-at-2", 0, 3, reject_pushes=3,
+        conflict_on_reject=2,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="push-rejected",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("第 2 次拒绝时注入冲突",
+                      "rebase 冲突（第 2 次）",
+                      "::error::连续 3 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 3), ("simulated rejection", 3)),
+    ),
+    # N=2、预算 2：第 2 次拒绝时注入，第三次 push 成功；净 +2。最终观测与
+    # N=1/预算 2 相同，唯一区别是冲突发生在第 2 次尝试。
+    Scenario(
+        "rejected-hook-budget-2-at-2", 2, 3, reject_pushes=2,
+        conflict_on_reject=2,
+        must_contain=("第 2 次拒绝时注入冲突",
+                      "rebase 冲突（第 2 次）",
+                      "第 3 次尝试", "已写回"),
+        output_counts=(("push 被拒（第", 2), ("simulated rejection", 2)),
+    ),
+    # N=3、预算 3：注入发生在最后一次拒绝——冲突轮进了 origin，但已经没有
+    # 第 4 次尝试去重算。最后一次失败是 rebase 冲突（不是 push 被拒），
+    # 这条时间线证明注入不依赖「还有下一次重试」，也钉住 reason 的来源。
+    Scenario(
+        "rejected-hook-inject-at-3", 0, 3, reject_pushes=3,
+        conflict_on_reject=3,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="rebase-conflict",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("第 3 次拒绝时注入冲突",
+                      "rebase 冲突（第 3 次）",
+                      "::error::连续 3 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 3), ("simulated rejection", 3)),
     ),
 )
 
@@ -225,7 +285,10 @@ FETCH_SCENARIO = Scenario(
     "fetched", 1, 1, fetch=True,
     # total=10 只可能来自生产 artifact（本地夹具故意是 3 场景），
     # retried/attempts 不钉死：e2e 偶发重跑不应让全链 job 变红（R107）。
-    must_contain=("已下载 1 个文件", "metrics 内容 total=10", "已写回"),
+    # R112：语义行必须出现——它逐场景列出 name=状态/尝试次数，证明写回读的是
+    # 内容而不是只数了总数；具体取值仍不钉死（生产可能真的重跑）。
+    must_contain=("已下载 1 个文件", "metrics 内容 total=10",
+                  "metrics 语义", "已写回"),
 )
 
 # R106：全链 × 永久拒绝 × 冲突的三重叠加。期望与本地 metrics 的
@@ -246,6 +309,7 @@ FETCH_REJECTED_CONFLICT_SCENARIO = Scenario(
     expected_last_run_id="replay-conflict",
     must_contain=("已下载 1 个文件",
                   "metrics 内容 total=10",
+                  "metrics 语义",
                   "rebase 冲突（第 1 次）",
                   "::error::连续 3 次写回均失败"),
     must_not_contain=("已写回",),
@@ -413,7 +477,7 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
     if scenario.conflict:
         argv.append("--conflict")
     if scenario.conflict_on_reject:
-        argv.append("--conflict-on-reject")
+        argv += ["--conflict-on-reject", str(scenario.conflict_on_reject)]
 
     code, output = _invoke_replay(argv)
     result = _read_result(result_path)
@@ -422,11 +486,11 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         expected_last_run_id = run_id
         # 窗口满时轮数会恒定在 MAX_ROUNDS：这一项只能证明「窗口没坏」，不能
         # 再证明「本轮写进去了」。rounds_clipped 把这件事写进产物，免得看
-        # 日志的人把 40 == 40 当成强证据。
+        # 日志的人把满窗恒等式（window == window）当成强证据。
         rounds_clipped = before + scenario.rounds_delta > window
     else:
         # 写回失败时本轮不入库，远端只会因夹具注入而变化（目前只有冲突轮）。
-        # 注入也遵守 MAX_ROUNDS：满窗时挤掉最早一轮，不会造出 41 轮。
+        # 注入也遵守 MAX_ROUNDS：满窗时挤掉最早一轮，不会造出窗口 +1 轮。
         expected_rounds = min(before + scenario.injected_rounds, window)
         expected_last_run_id = (
             scenario.expected_last_run_id or baseline_last_run_id)

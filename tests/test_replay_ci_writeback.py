@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from artifact_api_fixture import api_path, listing, server, zip_bytes
+from scripts import e2e_retry_history as history
 from scripts import replay_ci_writeback as replay
 
 HISTORY_REL = "tests/fixtures/e2e_retry_history/history.json"
@@ -46,6 +47,36 @@ def _metrics_shape(path: Path, total: int) -> Path:
         "schema": 1, "total": total, "passed": total, "failed": 0,
         "retried": 0, "scenarios": scenarios}), encoding="utf-8")
     return path
+
+
+def _metrics_retry_shape(path: Path) -> Path:
+    """失败/重试形状的合法 metrics（R112）。
+
+    4 场景：两个一次通过、一个重跑一次后通过、一个失败；计数为
+    passed=3 / failed=1 / retried=1 / attempts=5。与生产 e2e 的 10 场景全过
+    形状不同——全链用例要证明语义（场景名、首次失败）真的被读到了。
+    """
+    scenarios = [
+        {"name": "ok_0", "passed": True, "attempts": 1, "first_failure": ""},
+        {"name": "retry_1", "passed": True, "attempts": 2,
+         "first_failure": "第一次判红：模拟超睡"},
+        {"name": "fail_2", "passed": False, "attempts": 1,
+         "first_failure": "模拟失败：节点未完成"},
+        {"name": "ok_3", "passed": True, "attempts": 1, "first_failure": ""},
+    ]
+    path.write_text(json.dumps({
+        "schema": 1, "total": 4, "passed": 3, "failed": 1, "retried": 1,
+        "scenarios": scenarios}), encoding="utf-8")
+    return path
+
+
+def _sandbox_from_output(output: str) -> Path:
+    """从 ``--keep`` 的收尾行里取出沙箱路径。"""
+    prefix = "replay：沙箱保留在 "
+    for line in reversed(output.splitlines()):
+        if line.startswith(prefix):
+            return Path(line[len(prefix):].strip())
+    raise AssertionError(f"输出里没有沙箱路径：\n{output}")
 
 
 def _entry(run_id: str) -> dict:
@@ -507,7 +538,7 @@ def test_replay_hook_injects_conflict_on_first_rejection(
     ]) == 1
 
     captured = capsys.readouterr()
-    assert "首次拒绝时注入冲突" in captured.out
+    assert "第 1 次拒绝时注入冲突" in captured.out
     assert captured.out.count("push 被拒（第") == 3
     assert captured.out.count("rebase 冲突（第 1 次）") == 1
     assert captured.err.count("simulated rejection") == 3
@@ -645,3 +676,137 @@ def test_replay_rejects_a_negative_rejection_count(tmp_path: Path) -> None:
         "--reject-pushes=-1",
     ])
     assert code == 2
+
+
+def test_replay_hook_injects_conflict_on_the_second_rejection(
+        tmp_path: Path, monkeypatch, capsys) -> None:
+    """R112：注入点可以指定到第 2 次拒绝。
+
+    预算 2：第 1 次普通拒绝，第 2 次拒绝时注入冲突，第三次 push 成功。
+    最终轮数/尝试次数与 N=1 相同，唯一可区分的是「rebase 冲突（第 2 次）」
+    ——固定第一次注入的实现会在这里判红。
+    """
+    repo = _seed(tmp_path)
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(replay.tempfile, "mkdtemp",
+                        lambda **kwargs: str(sandbox))
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+        "--reject-pushes", "2",
+        "--conflict-on-reject", "2",
+        "--result-json", str(result),
+    ]) == 0
+
+    captured = capsys.readouterr()
+    assert "第 2 次拒绝时注入冲突" in captured.out
+    assert captured.out.count("push 被拒（第") == 2
+    assert captured.out.count("rebase 冲突（第 2 次）") == 1
+    assert "rebase 冲突（第 1 次）" not in captured.out
+    assert captured.err.count("simulated rejection") == 2
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "written"
+    assert payload["push_attempts"] == 3
+    # 注入轮 + 本轮都在远端。
+    assert payload["rounds"] == 2
+    assert payload["last_run_id"] == "replay-1"
+    assert not sandbox.exists(), "成功场景不应保留沙箱"
+
+
+def test_replay_rejects_an_unreachable_injection_point(
+        tmp_path: Path, capsys) -> None:
+    """R112：注入点落在预算之外 = 注入永远不会发生，必须退 2。
+
+    静默退化成「普通拒绝」会让「第 N 次注入」看起来被测过，实际一次都没
+    执行——这正是「配置看起来生效了」的典型坑。
+    """
+    repo = _seed(tmp_path)
+    base = [
+        "--repo", str(repo),
+        "--metrics", str(_metrics(tmp_path / "metrics.json")),
+        "--run-id", "replay-1",
+    ]
+
+    assert replay.main([*base, "--reject-pushes", "2",
+                        "--conflict-on-reject", "3"]) == 2
+    assert "--reject-pushes >= 3" in capsys.readouterr().err
+
+    assert replay.main([*base, "--reject-pushes", "3",
+                        "--conflict-on-reject", "0"]) == 2
+    assert "N 必须 >= 1" in capsys.readouterr().err
+
+    # 裸开关仍是「第 1 次」，向后兼容（CI 与 R108 的调用都靠它）。
+    assert replay.main([*base, "--reject-pushes", "1",
+                        "--conflict-on-reject", "--dry-run"]) == 0
+
+
+def test_replay_reports_the_metrics_semantics(tmp_path: Path,
+                                              capsys) -> None:
+    """R112：语义指纹逐场景列出 name=状态/尝试次数与首次失败。"""
+    repo = _seed(tmp_path)
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(_metrics_retry_shape(tmp_path / "retry.json")),
+        "--run-id", "replay-1",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert ("metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5"
+            in out)
+    assert ("metrics 语义 ok_0=ok/1 retry_1=retry/2 "
+            "fail_2=fail/1 ok_3=ok/1") in out
+    assert ("metrics 首次失败 retry_1=第一次判红：模拟超睡；"
+            "fail_2=模拟失败：节点未完成") in out
+
+
+def test_replay_fetch_chain_carries_failure_and_retry_semantics(
+        tmp_path: Path, capsys) -> None:
+    """R112：全链 artifact 用失败/重试形状，语义既进指纹也进历史条目。
+
+    下载 → 写回整链走真实 ``fetch_ci_artifact.fetch()``；artifact 里有一个
+    重跑后通过、一个失败。写回成功后读沙箱里的 history，确认 failed/retried/
+    attempts 与逐场景 first_failure 都原样落库——只数 total 的指纹做不到这一点。
+    """
+    repo = _seed(tmp_path)
+    fetched = _metrics_retry_shape(tmp_path / "artifact-metrics.json")
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": fetched.read_bytes()}))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+            "--keep",
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert "metrics 语义 ok_0=ok/1 retry_1=retry/2 fail_2=fail/1" in out
+    assert "metrics 首次失败" in out
+
+    sandbox = _sandbox_from_output(out)
+    try:
+        entries = history.load_history(sandbox / "work" / HISTORY_REL)
+        last = entries[-1]
+        assert last["run_id"] == "replay-fetch"
+        assert (last["total"], last["passed"], last["failed"],
+                last["retried"], last["attempts"]) == (4, 3, 1, 1, 5)
+        by_name = {item["name"]: item for item in last["scenarios"]}
+        assert by_name["retry_1"]["attempts"] == 2
+        assert by_name["retry_1"]["first_failure"] == "第一次判红：模拟超睡"
+        assert by_name["fail_2"]["passed"] is False
+        assert by_name["fail_2"]["first_failure"] == "模拟失败：节点未完成"
+    finally:
+        replay._remove_sandbox(sandbox)

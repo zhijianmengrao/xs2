@@ -154,12 +154,12 @@ def test_record_updates_the_export_time_when_the_observation_changes(
 
 
 def test_record_trims_to_the_window(tmp_path: Path) -> None:
-    """窗口常量是 40：写入第 41 轮时最早一轮必须掉出去。
+    """窗口常量是 80：写入第 81 轮时最早一轮必须掉出去。
 
-    两条一起钉：值等于 40（改常量要改这里），以及**边界行为**（多写一轮
+    两条一起钉：值等于 80（改常量要改这里），以及**边界行为**（多写一轮
     恰好掉最老的一轮）——R69：「数等于常量」不等于「数是判决的边界」。
     """
-    assert history.MAX_ROUNDS == 40
+    assert history.MAX_ROUNDS == 80
     target = tmp_path / "history.json"
     for index in range(history.MAX_ROUNDS + 1):
         assert history.record(
@@ -175,21 +175,21 @@ def test_record_trims_to_the_window(tmp_path: Path) -> None:
 def test_max_rounds_env_override_and_invalid(monkeypatch, capsys) -> None:
     """R109：保留期可配置；非法值必须告警并退回默认，不能静默生效。"""
     monkeypatch.delenv(history.MAX_ROUNDS_ENV, raising=False)
-    assert history.max_rounds() == history.MAX_ROUNDS == 40
+    assert history.max_rounds() == history.MAX_ROUNDS == 80
 
-    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "80")
-    assert history.max_rounds() == 80
+    monkeypatch.setenv(history.MAX_ROUNDS_ENV, "120")
+    assert history.max_rounds() == 120
 
     monkeypatch.setenv(history.MAX_ROUNDS_ENV, "abc")
-    assert history.max_rounds() == 40
+    assert history.max_rounds() == 80
     assert "不是整数" in capsys.readouterr().err
 
     monkeypatch.setenv(history.MAX_ROUNDS_ENV, "2")
-    assert history.max_rounds() == 40
+    assert history.max_rounds() == 80
     assert "超出" in capsys.readouterr().err
 
     monkeypatch.setenv(history.MAX_ROUNDS_ENV, "1001")
-    assert history.max_rounds() == 40
+    assert history.max_rounds() == 80
     assert "超出" in capsys.readouterr().err
 
 

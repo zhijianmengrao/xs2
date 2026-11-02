@@ -278,7 +278,7 @@ def writeback(metrics_path: Path, history_path: Path, run_id: str,
 
     ``result_path``（R97）写机读 JSON：与 summary 共用同一组 ``reason`` /
     ``detail``，含 ``exit_code`` / ``rounds`` / ``push_attempts`` / ``dry_run``。
-    ``last_run_id``（R102）是**远端已入库历史**的末条 run_id：窗口满 40 轮后
+    ``last_run_id``（R102）是**远端已入库历史**的末条 run_id：窗口满后
     轮数恒定，只有它能证明本轮真的写进去了。dry-run 不推送，所以它仍指向
     上一次已入库的轮次，不是本轮。
     写失败只告警，不改变退出码。

@@ -654,7 +654,7 @@ def test_result_json_reports_dry_run_without_a_push(tmp_path: Path) -> None:
 
 def test_result_json_names_the_round_that_trimmed_the_window(
         tmp_path: Path) -> None:
-    """窗口满 40 轮：轮数恒定 40，只有 last_run_id 能说出写进去的是哪一轮。"""
+    """窗口满（MAX_ROUNDS 条）：轮数恒定，只有 last_run_id 能说出写进去的是哪一轮。"""
     origin = _seed(tmp_path, entries=history.MAX_ROUNDS)
     work = _clone(tmp_path, origin, "work")
     result = tmp_path / "result.json"
@@ -690,7 +690,7 @@ def test_writeback_window_follows_env(tmp_path: Path, monkeypatch) -> None:
     assert payload["rounds"] == 5
     assert payload["window_full"] is True
     assert payload["last_run_id"] == "ci-new"
-    # 文案也必须说 5 轮：否则「裁剪按 5、报告按 40」会静默分裂。
+    # 文案也必须说 5 轮：否则「裁剪按 5、报告按默认值」会静默分裂。
     assert "5/5 轮" in payload["detail"]
     entries = history.load_history(_history_path(work))
     assert len(entries) == 5
