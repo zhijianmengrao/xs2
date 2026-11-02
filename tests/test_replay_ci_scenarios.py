@@ -668,6 +668,30 @@ def test_hook_scenarios_are_reachable_and_consistent() -> None:
                 ("simulated rejection", s.attempts)), s.name
 
 
+def test_fetch_hook_scenarios_match_the_local_formula() -> None:
+    """R117：全链的 N=4/6 场景必须与本地成功场景用同一组代数关系。
+
+    全链只换 metrics 来源（真实 artifact），不换写回语义：注入点 = 预算、
+    第 attempts 次成功、净 +2。任何一处漂移都会让「全链」与「本地」在
+    同一张表里说两套话。
+    """
+    fetches = [scenarios.FETCH_REJECTED_HOOK_AT_4_SCENARIO,
+               scenarios.FETCH_REJECTED_HOOK_AT_6_SCENARIO]
+    for s in fetches:
+        assert s.fetch is True, s.name
+        assert s.conflict_on_reject == s.reject_pushes, s.name
+        assert s.attempts == s.reject_pushes + 1, s.name
+        assert s.push_attempts == s.attempts, s.name
+        assert s.rounds_delta == 2, s.name
+        assert s.expected_exit == 0, s.name
+        assert s.expected_reason == "written", s.name
+        assert s.output_counts == (
+            ("push 被拒（第", s.reject_pushes),
+            ("simulated rejection", s.reject_pushes)), s.name
+        assert "metrics 内容 total=10" in s.must_contain, s.name
+        assert "metrics 语义" in s.must_contain, s.name
+
+
 def test_local_metrics_shape_is_deliberately_different(
         tmp_path: Path) -> None:
     """R107：本地夹具与生产 artifact 形状必须不同，否则内容来源不可辨。
@@ -732,7 +756,8 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "rejected-hook-inject-at-3-budget-6",
         "rejected-hook-budget-6-at-6",
         "fetched", "fetched-rejected-conflict",
-        "fetched-rejected-hook-at-4"]
+        "fetched-rejected-hook-at-4",
+        "fetched-rejected-hook-at-6"]
     fetched = by_name["fetched"]
     assert fetched["ok"] is True, fetched["failure"]
     assert fetched["actual"] == {
@@ -770,9 +795,19 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     assert "第 4 次拒绝时注入冲突" in late["output"]
     assert "rebase 冲突（第 4 次）" in late["output"]
     assert "第 5 次尝试" in late["output"]
-    # artifact API 用的是 GitHub run id，不是历史 run id；三个全链场景
+    # R117：全链 × 第 6 次拒绝注入 × 7 次重试；与本地 N=6 场景同型。
+    at6 = by_name["fetched-rejected-hook-at-6"]
+    assert at6["ok"] is True, at6["failure"]
+    assert at6["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 2,
+        "last_run_id": f"replay-ci-fetched-rejected-hook-at-6-{short}",
+        "push_attempts": 7}
+    assert "第 6 次拒绝时注入冲突" in at6["output"]
+    assert "rebase 冲突（第 6 次）" in at6["output"]
+    assert "第 7 次尝试" in at6["output"]
+    # artifact API 用的是 GitHub run id，不是历史 run id；四个全链场景
     # 都必须真的走 API，而不是本地 metrics。
-    assert sum("/987654/" in path for path, _headers in recorded) >= 3
+    assert sum("/987654/" in path for path, _headers in recorded) >= 4
     assert not any("replay-ci-" in path for path, _headers in recorded)
 
 

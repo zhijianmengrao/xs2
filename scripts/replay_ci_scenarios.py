@@ -58,6 +58,9 @@ R114 把矩阵再抬一档到预算 6 / N=6，覆盖「注入在预算中段、�
 拒绝」与「N=6 末次注入后第 7 次成功」；同时用表不变量校验每个钩子场景的
 注入点都不超过预算与重试上限，避免未来加场景时写出不可达组合。
 
+R117 把 N=6 / attempts=7 搬进全链：``fetched-rejected-hook-at-6`` 在真实
+artifact 下载后走同样的六次拒绝、末次注入与第 7 次成功。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -432,6 +435,21 @@ FETCH_REJECTED_HOOK_AT_4_SCENARIO = Scenario(
     output_counts=(("push 被拒（第", 4), ("simulated rejection", 4)),
 )
 
+# R117：全链 × 第 6 次拒绝注入 × 7 次重试。本地矩阵已覆盖 N=6/attempts=7；
+# 这条证明生产 artifact 下载路径也能走完同样的重试上限（--attempts 透传）。
+FETCH_REJECTED_HOOK_AT_6_SCENARIO = Scenario(
+    "fetched-rejected-hook-at-6", 2, 7, reject_pushes=6,
+    conflict_on_reject=6, attempts=7, fetch=True,
+    must_contain=("已下载 1 个文件",
+                  "metrics 内容 total=10",
+                  "metrics 语义",
+                  "第 6 次拒绝时注入冲突",
+                  "rebase 冲突（第 6 次）",
+                  "第 7 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 6), ("simulated rejection", 6)),
+)
+
 # 单个场景是 1–2 次本地 git 操作；超时保护只防止沙箱 git/钩子卡死。
 SCENARIO_TIMEOUT = 180.0
 
@@ -729,7 +747,8 @@ def run(repo: Path, branch: str, history_rel: str,
     window = history.max_rounds()
     scenarios = SCENARIOS + (
         (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO,
-         FETCH_REJECTED_HOOK_AT_4_SCENARIO)
+         FETCH_REJECTED_HOOK_AT_4_SCENARIO,
+         FETCH_REJECTED_HOOK_AT_6_SCENARIO)
         if fetch_api_url else ())
     try:
         baseline = _baseline(repo, history_rel)
