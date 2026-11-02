@@ -1036,3 +1036,68 @@ def test_replay_fetch_chain_carries_failure_shapes(
                 assert by_name[name][key] == value
     finally:
         replay._remove_sandbox(sandbox)
+
+
+@pytest.mark.parametrize("extra, push_attempts, rounds, tokens", [
+    # 被拒一次后成功：retry 只影响 push，不影响本轮 metrics 的内容。
+    (["--reject-pushes", "1"], 2, 1, ("第 2 次尝试",)),
+    # 第一次拒绝时注入冲突，第三次成功：注入轮 + 本轮 = 2。
+    (["--reject-pushes", "2", "--conflict-on-reject", "1"],
+     3, 2, ("rebase 冲突（第 1 次）", "第 3 次尝试")),
+])
+def test_failure_shape_survives_retries(
+        tmp_path: Path, capsys, extra: list[str], push_attempts: int,
+        rounds: int, tokens: tuple[str, ...]) -> None:
+    """R116：失败形状 artifact 经过拒绝/注入后，内容必须原样落库。
+
+    R113 证明失败形状能走完 fetch→writeback；R112 证明拒绝/冲突能走完
+    重试循环。两者第一次组合：重试只改变 push 次数与远端轮数，不能把
+    artifact 里的 failed/retried/attempts 或逐场景 first_failure 重算掉。
+    """
+    repo = _seed(tmp_path)
+    fetched = _metrics_retry_shape(tmp_path / "artifact-metrics.json")
+    result = tmp_path / "result.json"
+    routes: dict = {}
+    with server(routes) as base:
+        routes[api_path("owner/repo", "replay-fetch", "e2e-metrics")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/archive"))
+        routes["/archive"] = (
+            200, {"Content-Type": "application/zip"},
+            zip_bytes({"e2e-metrics.json": fetched.read_bytes()}))
+
+        assert replay.main([
+            "--repo", str(repo),
+            "--run-id", "replay-fetch",
+            "--fetch-api-url", base,
+            "--fetch-repo", "owner/repo",
+            "--token", "test-token",
+            "--result-json", str(result),
+            "--keep", *extra,
+        ]) == 0
+
+    out = capsys.readouterr().out
+    assert "已下载 1 个文件" in out
+    assert "metrics 语义 ok_0=ok/1 retry_1=retry/2 fail_2=fail/1" in out
+    for token in tokens:
+        assert token in out
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "written"
+    assert payload["push_attempts"] == push_attempts
+    assert payload["rounds"] == rounds
+    assert payload["last_run_id"] == "replay-fetch"
+
+    sandbox = _sandbox_from_output(out)
+    try:
+        entries = history.load_history(sandbox / "work" / HISTORY_REL)
+        last = entries[-1]
+        assert last["run_id"] == "replay-fetch"
+        assert (last["total"], last["passed"], last["failed"],
+                last["retried"], last["attempts"]) == (4, 3, 1, 1, 5)
+        by_name = {item["name"]: item for item in last["scenarios"]}
+        assert by_name["retry_1"]["attempts"] == 2
+        assert by_name["retry_1"]["first_failure"] == "第一次判红：模拟超睡"
+        assert by_name["fail_2"]["passed"] is False
+        assert by_name["fail_2"]["first_failure"] == "模拟失败：节点未完成"
+    finally:
+        replay._remove_sandbox(sandbox)
