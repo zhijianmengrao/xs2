@@ -54,6 +54,10 @@ R113 把注入矩阵扩到 N=4/5：写回重试上限变成可配置的 ``--atte
 一半）。本地新增三条时间线，全链新增 ``fetched-rejected-hook-at-4``，证明
 late injection 在下载 artifact 之后同样可达。
 
+R114 把矩阵再抬一档到预算 6 / N=6，覆盖「注入在预算中段、后面还有多次
+拒绝」与「N=6 末次注入后第 7 次成功」；同时用表不变量校验每个钩子场景的
+注入点都不超过预算与重试上限，避免未来加场景时写出不可达组合。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -146,6 +150,10 @@ class Scenario:
       push 成功，净 +2。证明 late injection 不是必然失败。
     - rejected-hook-inject-at-5（R113）：N=5、预算 5、attempts=5；五次全被
       拒，注入在最后一次。
+    - rejected-hook-inject-at-3-budget-6（R114）：预算 6、注入 3、attempts=6；
+      注入在预算中段，后面还有三次拒绝，最后一次失败是 push 被拒。
+    - rejected-hook-budget-6-at-6（R114）：预算 6、注入 6、attempts=7；
+      第 7 次 push 成功，净 +2。
 
     ``attempts`` 是写回重试上限（默认 3）。N=4/5 的场景必须显式抬到 4/5，
     否则注入点永远到不了——``replay_ci_writeback`` 会以退出码 2 拒绝这种
@@ -340,6 +348,35 @@ SCENARIOS: tuple[Scenario, ...] = (
                       "::error::连续 5 次写回均失败"),
         must_not_contain=("已写回",),
         output_counts=(("push 被拒（第", 5), ("simulated rejection", 5)),
+    ),
+    # R114：预算与重试上限再抬一档，覆盖「注入在预算中段、后面还有多次
+    # 拒绝」与「N=6 末次注入后第 7 次成功」两条时间线。
+    #
+    # 预算 6/注入 3/attempts 6：第 3 次注入冲突后重算，第 4–6 次仍被拒；
+    # 最后一次失败是 push 被拒（不是 rebase 冲突）。
+    Scenario(
+        "rejected-hook-inject-at-3-budget-6", 0, 6, reject_pushes=6,
+        conflict_on_reject=3, attempts=6,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="push-rejected",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("第 3 次拒绝时注入冲突",
+                      "rebase 冲突（第 3 次）",
+                      "::error::连续 6 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 6), ("simulated rejection", 6)),
+    ),
+    # 预算 6/注入 6/attempts 7：注入在最后一次拒绝，第 7 次 push 成功；
+    # 注入轮 + 本轮 = 净 +2。N=6 是当前矩阵的最高注入点。
+    Scenario(
+        "rejected-hook-budget-6-at-6", 2, 7, reject_pushes=6,
+        conflict_on_reject=6, attempts=7,
+        must_contain=("第 6 次拒绝时注入冲突",
+                      "rebase 冲突（第 6 次）",
+                      "第 7 次尝试", "已写回"),
+        output_counts=(("push 被拒（第", 6), ("simulated rejection", 6)),
     ),
 )
 

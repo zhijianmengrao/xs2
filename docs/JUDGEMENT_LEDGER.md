@@ -36,7 +36,7 @@
 | 13 | 期望失败场景（永久拒绝） | `replay_ci_scenarios.py::Scenario` / `_run_scenario` | 环境型（身份 + 计数） | 无（精确相等） | exit=1、reason=`push-rejected`、rounds=基线、`last_run_id`=基线末条、`push_attempts=3`；输出必须出现 3 次 `simulated rejection` 与 3 次 `push 被拒（第`；失败沙箱必须「存在过 → 清理 → 不存在」 | 传输故障也能让 push 三次非零，不数钩子签名就会为错误的原因变绿；清理只覆盖期望失败场景，意外失败仍保留现场 | 1 |
 | 14 | 全链 artifact 身份分离 | `replay_ci_scenarios.py`（fetch 场景）+ `replay_ci_writeback.py::--fetch-run-id` | 环境型（身份） | 无（精确相等） | artifact API 用 GitHub run id，历史写入用 `replay-ci-fetched-<sha>`；`result.last_run_id` 必须等于后者；输出含 `已下载 1 个文件` | 真实下载依赖 backend 同 run 上传 artifact（job 用 needs+success 门控）；缺 artifact 时 fetch 退 0、writeback 退 0（metrics-missing），必须由驱动的期望 `written` 判红 | 1 |
 | 15 | 全链 metrics 内容指纹与语义（R107/R112/R113） | `replay_ci_writeback.py::_metrics_content` / `_metrics_semantics` + `replay_ci_scenarios.py` 的 fetch 场景 | 环境型（身份） | 无（精确相等） | 写回前打印计数行 `metrics 内容 total=… passed=… failed=… retried=… attempts=…`、逐场景语义行 `name=ok/retry/fail/尝试次数` 与 `metrics 首次失败`；全链场景断 `metrics 内容 total=10` 且 `metrics 语义` 出现；失败/重试形状用例断具体场景状态与 `first_failure`，并读沙箱历史确认逐项落库；R113 再覆盖全失败 / 0 场景 / 重试多次仍失败三种形状，0 场景打印 `（无场景）` | 生产 artifact 的形状取值不钉死（e2e 可能真的重跑）；失败/重试形状由全链测试夹具提供——不伪造生产 artifact，避免把强制重跑写进历史污染趋势；计数行只证明「形状对」，语义行才证明「内容被读到」；生产形状的断言仍不证明来源对（M110）；0 场景是合法数据，空语义行与「指纹没打」不可区分（R113） | 1 |
-| 16 | 拒绝预算、注入时机与重试上限（R108/R112/R113） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject N` / `--attempts`）+ `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第 N 次拒绝时注入冲突轮：N=1 预算 3 全失败 / 预算 2 第三次成功；N=2 预算 3 仍耗尽 / 预算 2 成功；N=3 末次注入、无重试可消化（`reason=rebase-conflict`）；R113 补 N=4/5（attempts=4/5）：N=4 预算 4 全失败、N=4 预算 4 attempts=5 第五次成功、N=5 预算 5 全失败；`push 被拒（第` 与 `simulated rejection` 次数逐场景钉住；N 超预算、N<1 或 N 超 attempts 退 2 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥；**可达性是两个变量**：拒绝预算 ≥ N 只保证钩子会走到第 N 次，重试循环最多 push `attempts` 次；N 超 attempts 时注入同样永远不会发生（R113） | 1 |
+| 16 | 拒绝预算、注入时机与重试上限（R108/R112/R113/R114） | `replay_ci_writeback.py::_install_rejection_hook`（`--conflict-on-reject N` / `--attempts`）+ `rejected-hook-*` 场景 | 环境型（身份 + 计数） | 无（精确相等） | 钩子第 N 次拒绝时注入冲突轮：N=1 预算 3 全失败 / 预算 2 第三次成功；N=2 预算 3 仍耗尽 / 预算 2 成功；N=3 末次注入、无重试可消化（`reason=rebase-conflict`）；R113 补 N=4/5（attempts=4/5）：N=4 预算 4 全失败、N=4 预算 4 attempts=5 第五次成功、N=5 预算 5 全失败；R114 补预算 6 / N=6：中段注入（注入 3、后面还有 3 次拒绝，reason=`push-rejected`）与末次注入后第 7 次成功；`push 被拒（第` 与 `simulated rejection` 次数逐场景钉住；N 超预算、N<1 或 N 超 attempts 退 2；表不变量 `test_hook_scenarios_are_reachable_and_consistent` 逐场景校验注入点 ≤ 预算/attempts、成功失败的 reason 来源与计数 | R105 的 `rejected-conflict`（writeback 前注入）第一次是非快进、到不了钩子，其预算阈值仍是 2；`--conflict` 与 `--conflict-on-reject` 互斥；**可达性是两个变量**：拒绝预算 ≥ N 只保证钩子会走到第 N 次，重试循环最多 push `attempts` 次；N 超 attempts 时注入同样永远不会发生（R113）；场景表不变量是「未来加 N 时不会写出不可达组合」的唯一守卫（R114） | 1 |
 | 17 | 保留期可配置（R109；R112 默认 40→80） | `e2e_retry_history.py::max_rounds`（`XS2_MAX_ROUNDS`） | 环境型（配置） | 默认 80；范围 [3, 1000]；非法值告警退回 | record 裁剪/文案、writeback `window_full`/文案、驱动期望、冲突夹具、钩子注入都从同一读取点取窗口 | R112 用户拍板 40→80：39 条历史只覆盖约 1.5 天，40 格 ≈ 13 个工作轮；旧历史条目保留原值、不改写。非法值是「出声的默认」（`::warning::`），不是静默；按天滚动未实现 | — |
 | 18 | 沙箱 GC 守卫（R110） | `replay_sandbox_gc.py::candidates` + `main` | 政策型（删除） | 默认 7 天；4 道守卫 | 直接子目录 + `replay-ci-writeback-` 前缀 + 非符号链接/junction + mtime 超龄；默认 dry-run，`--apply` 才删，删后 `exists()` 复核 | 只清本机/长期环境；runner 临时目录无需 GC；7 天是默认值，保留策略数值未拍板 | 0/1/2 |
 
@@ -191,7 +191,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 113 skips 的四行实测矩阵（R70 §6.1） | 本页 §8：High 2189/113 与**真降** Low 2189/113 逐字相同 |
 
 | 全链 metrics 内容指纹与语义（R107/R112/R113） | `tests/test_replay_ci_writeback.py::test_replay_reports_the_metrics_content`、`test_replay_reports_the_fetched_metrics_content`、`test_replay_reports_the_metrics_semantics`、`test_replay_fetch_chain_carries_failure_and_retry_semantics`、`test_replay_fetch_chain_carries_failure_shapes`、`tests/test_replay_ci_scenarios.py::test_local_metrics_shape_is_deliberately_different` |
-| 预算、注入时机与重试上限（R108/R112/R113） | `tests/test_replay_ci_writeback.py::test_replay_hook_injects_conflict_on_first_rejection`、`test_replay_rejection_budget_two_is_a_real_boundary`、`test_replay_hook_injects_conflict_on_the_second_rejection`、`test_replay_rejects_an_unreachable_injection_point`、`test_replay_rejects_an_injection_point_beyond_the_attempt_budget`、`test_replay_hook_injects_conflict_on_the_fourth_rejection`、`test_replay_succeeds_on_the_fifth_attempt_after_late_injection`、`tests/test_replay_ci_scenarios.py::test_scenario_table_pins_the_replay_counts` |
+| 预算、注入时机与重试上限（R108/R112/R113/R114） | `tests/test_replay_ci_writeback.py::test_replay_hook_injects_conflict_on_first_rejection`、`test_replay_rejection_budget_two_is_a_real_boundary`、`test_replay_hook_injects_conflict_on_the_second_rejection`、`test_replay_rejects_an_unreachable_injection_point`、`test_replay_rejects_an_injection_point_beyond_the_attempt_budget`、`test_replay_hook_injects_conflict_on_the_fourth_rejection`、`test_replay_succeeds_on_the_fifth_attempt_after_late_injection`、`tests/test_replay_ci_scenarios.py::test_scenario_table_pins_the_replay_counts`、`test_hook_scenarios_are_reachable_and_consistent` |
 | `XS2_MAX_ROUNDS` 默认/范围/告警（R109） | `tests/test_e2e_retry_history.py::test_max_rounds_env_override_and_invalid`、`test_record_uses_the_configured_window`、`tests/test_ci_writeback_history.py::test_writeback_window_follows_env`、`tests/test_replay_ci_scenarios.py::test_driver_uses_the_configured_window` |
 | 沙箱 GC 四道守卫与默认 dry-run（R110） | `tests/test_replay_sandbox_gc.py::test_dry_run_lists_only_old_matching_directories`、`test_apply_removes_only_the_candidates`、`test_symlink_with_matching_name_is_skipped`、`test_negative_age_is_a_usage_error`、`test_missing_root_is_a_usage_error` |
 
@@ -1108,6 +1108,13 @@ R112 的「N 落在预算之外退 2」只回答了半个问题。注入发生�
 预算 4/attempts=5（第五次成功）、N=5/预算 5/attempts=5（全失败）。
 **一条「配置生效」的判据，必须同时覆盖配置里每一个决定可达性的变量**；
 只改其中一个，另一个会让整条路径静默消失。
+
+R114 把矩阵抬到预算 6 / N=6，并新增表不变量
+`test_hook_scenarios_are_reachable_and_consistent`：对每个钩子场景校验
+`注入点 <= 预算`、`注入点 <= attempts`、成功场景 `attempts == 预算 + 1`、
+失败场景 `reason` 由「注入点是否等于 attempts」决定。**场景表是判据的
+唯一来源**——未来加 N 时，不可达组合会在表上直接判红，而不是等 CLI 退 2
+才发现「这条场景其实从未执行过」。
 
 ### 10.6 失败形状：写回记录的是数据，不是结论（R113）
 
