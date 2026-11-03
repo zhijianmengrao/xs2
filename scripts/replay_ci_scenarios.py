@@ -76,6 +76,11 @@ R121 补全链 **全失败** 形状：``e2e-metrics-all-failed`` 夹具（3 场�
 ``passed=False``）写回照常入库——失败数据也是数据；再叠一次拒绝重试，
 证明 ``failed=3`` 与逐场景 ``first_failure`` 不被重算或清零。
 
+R124 把注入矩阵抬过 R114/R117 的上限：本地补 N=7（七次全拒、末次注入）
+与 N=8/attempts=9（第 9 次成功），全链补 ``fetched-rejected-hook-at-8``。
+此前 N>6 与 attempts>7 只有启发式保证（可达性不变量），没有一条真实
+回放能证明钩子计数与重试循环真的走到第 8/9 次。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -172,6 +177,10 @@ class Scenario:
       注入在预算中段，后面还有三次拒绝，最后一次失败是 push 被拒。
     - rejected-hook-budget-6-at-6（R114）：预算 6、注入 6、attempts=7；
       第 7 次 push 成功，净 +2。
+    - rejected-hook-inject-at-7（R124）：预算 7、注入 7、attempts=7；七次
+      全被拒，注入在最后一次，失败类别是 rebase-conflict。N 首次超过 6。
+    - rejected-hook-budget-8-at-8（R124）：预算 8、注入 8、attempts=9；
+      第 9 次 push 成功，净 +2。同时覆盖 N>6 与 attempts>7。
 
     ``attempts`` 是写回重试上限（默认 3）。N=4/5 的场景必须显式抬到 4/5，
     否则注入点永远到不了——``replay_ci_writeback`` 会以退出码 2 拒绝这种
@@ -399,6 +408,32 @@ SCENARIOS: tuple[Scenario, ...] = (
                       "第 7 次尝试", "已写回"),
         output_counts=(("push 被拒（第", 6), ("simulated rejection", 6)),
     ),
+    # R124：N 首次超过 6。预算 7/注入 7/attempts=7：七次全被拒，注入落在
+    # 最后一次，没有第 8 次重试去消化冲突；失败类别是 rebase 冲突。
+    Scenario(
+        "rejected-hook-inject-at-7", 0, 7, reject_pushes=7,
+        conflict_on_reject=7, attempts=7,
+        expected_exit=EXIT_MISMATCH,
+        expected_reason="rebase-conflict",
+        expect_sandbox=True,
+        injected_rounds=1,
+        expected_last_run_id="replay-conflict",
+        must_contain=("第 7 次拒绝时注入冲突",
+                      "rebase 冲突（第 7 次）",
+                      "::error::连续 7 次写回均失败"),
+        must_not_contain=("已写回",),
+        output_counts=(("push 被拒（第", 7), ("simulated rejection", 7)),
+    ),
+    # 预算 8/注入 8/attempts 9：末次注入后第 9 次 push 成功，注入轮 + 本轮
+    # = 净 +2。attempts 首次超过 7，证明重试循环没有隐含的 7 次上限。
+    Scenario(
+        "rejected-hook-budget-8-at-8", 2, 9, reject_pushes=8,
+        conflict_on_reject=8, attempts=9,
+        must_contain=("第 8 次拒绝时注入冲突",
+                      "rebase 冲突（第 8 次）",
+                      "第 9 次尝试", "已写回"),
+        output_counts=(("push 被拒（第", 8), ("simulated rejection", 8)),
+    ),
 )
 
 # R103：全链场景不喂本地 metrics，而是让 replay 先下载真实 artifact。
@@ -466,6 +501,22 @@ FETCH_REJECTED_HOOK_AT_6_SCENARIO = Scenario(
                   "第 7 次尝试",
                   "已写回"),
     output_counts=(("push 被拒（第", 6), ("simulated rejection", 6)),
+)
+
+# R124：全链 × 第 8 次拒绝注入 × 9 次重试。本地矩阵已覆盖 N=8/attempts=9；
+# 这条证明生产 artifact 下载路径也能走完 N>6、attempts>7 的组合，且
+# --attempts 在 CLI 子进程里仍然透传。
+FETCH_REJECTED_HOOK_AT_8_SCENARIO = Scenario(
+    "fetched-rejected-hook-at-8", 2, 9, reject_pushes=8,
+    conflict_on_reject=8, attempts=9, fetch=True,
+    must_contain=("已下载 1 个文件",
+                  "metrics 内容 total=10",
+                  "metrics 语义",
+                  "第 8 次拒绝时注入冲突",
+                  "rebase 冲突（第 8 次）",
+                  "第 9 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 8), ("simulated rejection", 8)),
 )
 
 # R119：把 R116 的本地组合搬进生产全链。artifact 是 CI 单独上传的夹具
@@ -881,6 +932,7 @@ def run(repo: Path, branch: str, history_rel: str,
         (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO,
          FETCH_REJECTED_HOOK_AT_4_SCENARIO,
          FETCH_REJECTED_HOOK_AT_6_SCENARIO,
+         FETCH_REJECTED_HOOK_AT_8_SCENARIO,
          FETCH_FAILURE_SHAPE_REJECTED_SCENARIO,
          FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO,
          FETCH_EMPTY_SCENARIO,

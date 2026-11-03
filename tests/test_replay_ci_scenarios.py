@@ -1,7 +1,7 @@
 """R101/R103：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
 
-这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言十五个
-本地场景（``--fetch-api-url`` 时再追加十个全链场景）的退出码/rounds/
+这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言十七个
+本地场景（``--fetch-api-url`` 时再追加十一个全链场景）的退出码/rounds/
 push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch 证明驱动不盲信子调用
 的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
 ``tests/test_ci_replay_wiring.py``。
@@ -301,7 +301,9 @@ def test_driver_runs_all_local_scenarios(tmp_path: Path) -> None:
         "rejected-hook-conflict-at-4", "rejected-hook-budget-4-at-4",
         "rejected-hook-inject-at-5",
         "rejected-hook-inject-at-3-budget-6",
-        "rejected-hook-budget-6-at-6"]
+        "rejected-hook-budget-6-at-6",
+        "rejected-hook-inject-at-7",
+        "rejected-hook-budget-8-at-8"]
     assert by_name["happy"]["actual"] == {
         "exit_code": 0, "reason": "written", "rounds": 1,
         "last_run_id": f"replay-ci-happy-{short}",
@@ -375,6 +377,16 @@ def test_driver_runs_all_local_scenarios(tmp_path: Path) -> None:
         "exit_code": 0, "reason": "written", "rounds": 2,
         "last_run_id": f"replay-ci-rejected-hook-budget-6-at-6-{short}",
         "push_attempts": 7}
+    # R124：N=7/attempts=7 七次全被拒，注入在最后一次，最后失败是冲突。
+    assert by_name["rejected-hook-inject-at-7"]["actual"] == {
+        "exit_code": 1, "reason": "rebase-conflict", "rounds": 1,
+        "last_run_id": "replay-conflict",
+        "push_attempts": 7}
+    # R124：N=8/attempts=9 末次注入后第 9 次成功，净 +2。
+    assert by_name["rejected-hook-budget-8-at-8"]["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 2,
+        "last_run_id": f"replay-ci-rejected-hook-budget-8-at-8-{short}",
+        "push_attempts": 9}
     for record in payload["scenarios"]:
         assert record["ok"] is True, record["failure"]
         assert record["source_mutated"] is False
@@ -386,7 +398,8 @@ def test_driver_runs_all_local_scenarios(tmp_path: Path) -> None:
                  "rejected-hook-inject-at-3",
                  "rejected-hook-conflict-at-4",
                  "rejected-hook-inject-at-5",
-                 "rejected-hook-inject-at-3-budget-6"):
+                 "rejected-hook-inject-at-3-budget-6",
+                 "rejected-hook-inject-at-7"):
         failed = by_name[name]
         assert failed["sandbox_cleaned"] is True
         assert failed["sandbox"] is not None
@@ -400,7 +413,7 @@ def test_driver_runs_all_local_scenarios(tmp_path: Path) -> None:
 
     # step summary 每个场景一行，reason 是 ok。
     text = summary.read_text(encoding="utf-8")
-    assert text.count("replay-ci-") == 15
+    assert text.count("replay-ci-") == 17
     assert "**ok**" in text
 
 
@@ -500,7 +513,9 @@ def test_scenario_table_pins_the_replay_counts() -> None:
         "rejected-hook-conflict-at-4", "rejected-hook-budget-4-at-4",
         "rejected-hook-inject-at-5",
         "rejected-hook-inject-at-3-budget-6",
-        "rejected-hook-budget-6-at-6"]
+        "rejected-hook-budget-6-at-6",
+        "rejected-hook-inject-at-7",
+        "rejected-hook-budget-8-at-8"]
 
     happy = by_name["happy"]
     assert (happy.rounds_delta, happy.push_attempts) == (1, 1)
@@ -625,6 +640,25 @@ def test_scenario_table_pins_the_replay_counts() -> None:
     assert late6.expected_exit == 0
     assert "第 7 次尝试" in late6.must_contain
 
+    # R124：N>6 与 attempts>7。N=7 失败场景；N=8/attempts=9 成功场景。
+    at7 = by_name["rejected-hook-inject-at-7"]
+    assert (at7.rounds_delta, at7.push_attempts, at7.attempts) == (0, 7, 7)
+    assert at7.reject_pushes == 7 and at7.conflict_on_reject == 7
+    assert at7.injected_rounds == 1
+    assert at7.expected_exit == 1
+    assert at7.expected_reason == "rebase-conflict"
+    assert at7.expected_last_run_id == "replay-conflict"
+    assert "rebase 冲突（第 7 次）" in at7.must_contain
+
+    budget8_at8 = by_name["rejected-hook-budget-8-at-8"]
+    assert (budget8_at8.rounds_delta, budget8_at8.push_attempts,
+            budget8_at8.attempts) == (2, 9, 9)
+    assert (budget8_at8.reject_pushes == 8
+            and budget8_at8.conflict_on_reject == 8)
+    assert budget8_at8.expected_exit == 0
+    assert "rebase 冲突（第 8 次）" in budget8_at8.must_contain
+    assert "第 9 次尝试" in budget8_at8.must_contain
+
     # R106：全链版本必须与本地组合场景同语义，只多出「真的下载了」这一项。
     triple = scenarios.FETCH_REJECTED_CONFLICT_SCENARIO
     assert triple.name == "fetched-rejected-conflict"
@@ -686,7 +720,8 @@ def test_fetch_hook_scenarios_match_the_local_formula() -> None:
     同一张表里说两套话。
     """
     fetches = [scenarios.FETCH_REJECTED_HOOK_AT_4_SCENARIO,
-               scenarios.FETCH_REJECTED_HOOK_AT_6_SCENARIO]
+               scenarios.FETCH_REJECTED_HOOK_AT_6_SCENARIO,
+               scenarios.FETCH_REJECTED_HOOK_AT_8_SCENARIO]
     for s in fetches:
         assert s.fetch is True, s.name
         assert s.conflict_on_reject == s.reject_pushes, s.name
@@ -931,9 +966,12 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "rejected-hook-inject-at-5",
         "rejected-hook-inject-at-3-budget-6",
         "rejected-hook-budget-6-at-6",
+        "rejected-hook-inject-at-7",
+        "rejected-hook-budget-8-at-8",
         "fetched", "fetched-rejected-conflict",
         "fetched-rejected-hook-at-4",
         "fetched-rejected-hook-at-6",
+        "fetched-rejected-hook-at-8",
         "fetched-failure-shape-rejected",
         "fetched-failure-shape-rejected-conflict",
         "fetched-empty",
@@ -987,6 +1025,17 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     assert "第 6 次拒绝时注入冲突" in at6["output"]
     assert "rebase 冲突（第 6 次）" in at6["output"]
     assert "第 7 次尝试" in at6["output"]
+    # R124：全链 × 第 8 次拒绝注入 × 9 次重试；N>6 与 attempts>7 同时成立。
+    at8 = by_name["fetched-rejected-hook-at-8"]
+    assert at8["ok"] is True, at8["failure"]
+    assert at8["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 2,
+        "last_run_id": f"replay-ci-fetched-rejected-hook-at-8-{short}",
+        "push_attempts": 9}
+    assert "metrics 内容 total=10" in at8["output"]
+    assert "第 8 次拒绝时注入冲突" in at8["output"]
+    assert "rebase 冲突（第 8 次）" in at8["output"]
+    assert "第 9 次尝试" in at8["output"]
     # R119：全链失败形状 × 拒绝/注入。计数与逐场景语义必须来自失败形状
     # artifact；重试只改变 push 次数与轮数，不能把内容重算掉。
     failure_rejected = by_name["fetched-failure-shape-rejected"]
@@ -1061,9 +1110,9 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     assert ("metrics 内容 total=3 passed=0 failed=3 retried=0 attempts=3"
             in all_failed_rejected["output"])
     assert "第 2 次尝试" in all_failed_rejected["output"]
-    # artifact API 用的是 GitHub run id，不是历史 run id；十个全链场景
+    # artifact API 用的是 GitHub run id，不是历史 run id；十一个全链场景
     # 都必须真的走 API，而不是本地 metrics。
-    assert sum("/987654/" in path for path, _headers in recorded) >= 10
+    assert sum("/987654/" in path for path, _headers in recorded) >= 11
     assert any("e2e-metrics-failure-shape" in path
                for path, _headers in recorded)
     assert any("e2e-metrics-empty" in path
@@ -1088,7 +1137,7 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(result.read_text(encoding="utf-8"))
     assert payload["ok"] is True
-    assert len(payload["scenarios"]) == 15
+    assert len(payload["scenarios"]) == 17
 
 
 # ------------------------------------- 窗口边界（R102：MAX_ROUNDS 耗尽防护）
@@ -1105,7 +1154,9 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
           "rejected-hook-budget-4-at-4": 40,
           "rejected-hook-inject-at-5": 39,
           "rejected-hook-inject-at-3-budget-6": 39,
-          "rejected-hook-budget-6-at-6": 40},
+          "rejected-hook-budget-6-at-6": 40,
+          "rejected-hook-inject-at-7": 39,
+          "rejected-hook-budget-8-at-8": 40},
          {"happy": False, "rejected": False, "conflict": False,
           "permanently-rejected": False, "rejected-conflict": False,
           "rejected-hook-conflict": False,
@@ -1117,7 +1168,9 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
           "rejected-hook-budget-4-at-4": False,
           "rejected-hook-inject-at-5": False,
           "rejected-hook-inject-at-3-budget-6": False,
-          "rejected-hook-budget-6-at-6": False}),
+          "rejected-hook-budget-6-at-6": False,
+          "rejected-hook-inject-at-7": False,
+          "rejected-hook-budget-8-at-8": False}),
     # 39：conflict / budget-2 的 +2 先被压成 +1（40 == 40），只有它们能暴露裁剪。
     (39, {"happy": 40, "rejected": 40, "conflict": 40,
           "permanently-rejected": 39, "rejected-conflict": 40,
@@ -1130,7 +1183,9 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
           "rejected-hook-budget-4-at-4": 40,
           "rejected-hook-inject-at-5": 40,
           "rejected-hook-inject-at-3-budget-6": 40,
-          "rejected-hook-budget-6-at-6": 40},
+          "rejected-hook-budget-6-at-6": 40,
+          "rejected-hook-inject-at-7": 40,
+          "rejected-hook-budget-8-at-8": 40},
          {"happy": False, "rejected": False, "conflict": True,
           "permanently-rejected": False, "rejected-conflict": False,
           "rejected-hook-conflict": False,
@@ -1142,7 +1197,9 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
           "rejected-hook-budget-4-at-4": True,
           "rejected-hook-inject-at-5": False,
           "rejected-hook-inject-at-3-budget-6": False,
-          "rejected-hook-budget-6-at-6": True}),
+          "rejected-hook-budget-6-at-6": True,
+          "rejected-hook-inject-at-7": False,
+          "rejected-hook-budget-8-at-8": True}),
     # 40：四个成功场景的 rounds 全部恒定，只剩 last_run_id 能证明本轮已入库。
     # 失败场景也恒定在 40——冲突注入遵守窗口，不会把远端撑到 41。
     (40, {"happy": 40, "rejected": 40, "conflict": 40,
@@ -1156,7 +1213,9 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
           "rejected-hook-budget-4-at-4": 40,
           "rejected-hook-inject-at-5": 40,
           "rejected-hook-inject-at-3-budget-6": 40,
-          "rejected-hook-budget-6-at-6": 40},
+          "rejected-hook-budget-6-at-6": 40,
+          "rejected-hook-inject-at-7": 40,
+          "rejected-hook-budget-8-at-8": 40},
          {"happy": True, "rejected": True, "conflict": True,
           "permanently-rejected": False, "rejected-conflict": False,
           "rejected-hook-conflict": False,
@@ -1168,7 +1227,9 @@ def test_driver_runs_as_a_script_not_just_as_an_import(tmp_path: Path) -> None:
           "rejected-hook-budget-4-at-4": True,
           "rejected-hook-inject-at-5": False,
           "rejected-hook-inject-at-3-budget-6": False,
-          "rejected-hook-budget-6-at-6": True}),
+          "rejected-hook-budget-6-at-6": True,
+          "rejected-hook-inject-at-7": False,
+          "rejected-hook-budget-8-at-8": True}),
 ])
 def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
         tmp_path: Path, monkeypatch, count: int, expected: dict,
@@ -1207,7 +1268,8 @@ def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
                       "rejected-hook-inject-at-3",
                       "rejected-hook-conflict-at-4",
                       "rejected-hook-inject-at-5",
-                      "rejected-hook-inject-at-3-budget-6"):
+                      "rejected-hook-inject-at-3-budget-6",
+                      "rejected-hook-inject-at-7"):
             # 失败场景：远端只多出注入的冲突轮，末条就是它。
             assert record["actual"]["last_run_id"] == "replay-conflict"
         else:
