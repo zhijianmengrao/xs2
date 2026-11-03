@@ -1,7 +1,7 @@
 """R101/R103：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
 
 这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言十五个
-本地场景（``--fetch-api-url`` 时再追加八个全链场景）的退出码/rounds/
+本地场景（``--fetch-api-url`` 时再追加十个全链场景）的退出码/rounds/
 push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch 证明驱动不盲信子调用
 的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
 ``tests/test_ci_replay_wiring.py``。
@@ -27,6 +27,9 @@ FAILURE_METRICS = (
     / "e2e-metrics.json")
 EMPTY_METRICS = (
     REPO_ROOT / "tests" / "fixtures" / "e2e_metrics_empty"
+    / "e2e-metrics.json")
+ALL_FAILED_METRICS = (
+    REPO_ROOT / "tests" / "fixtures" / "e2e_metrics_all_failed"
     / "e2e-metrics.json")
 
 
@@ -794,6 +797,47 @@ def test_fetch_empty_shape_scenarios_pin_zero_counts() -> None:
         assert scenario.expected_reason == "written"
 
 
+def test_fetch_all_failed_shape_scenarios_pin_failed_counts() -> None:
+    """R121：全链全失败必须入库存档，不能被当成「写回失败」丢掉。
+
+    夹具 3 个场景全 `passed=False`；写回照常成功，`failed=3` 与逐场景
+    `first_failure` 必须原样出现。叠一次拒绝后也只改变 push 次数。
+    """
+    payload = json.loads(ALL_FAILED_METRICS.read_text(encoding="utf-8"))
+    assert (payload["total"], payload["passed"], payload["failed"],
+            payload["retried"]) == (3, 0, 3, 0)
+    assert [item["name"] for item in payload["scenarios"]] == [
+        "fail_0", "fail_1", "fail_2"]
+
+    plain = scenarios.FETCH_ALL_FAILED_SCENARIO
+    assert plain.name == "fetched-all-failed"
+    assert plain.fetch is True
+    assert plain.artifact == scenarios.ALL_FAILED_SHAPE_ARTIFACT
+    assert (plain.rounds_delta, plain.push_attempts) == (1, 1)
+    for token in (
+        "metrics 内容 total=3 passed=0 failed=3 retried=0 attempts=3",
+        "metrics 语义 fail_0=fail/1 fail_1=fail/1 fail_2=fail/1",
+        "metrics 首次失败 fail_0=全部失败：节点 0 未完成；"
+        "fail_1=全部失败：节点 1 未完成；fail_2=全部失败：节点 2 未完成",
+        "已写回",
+    ):
+        assert token in plain.must_contain
+
+    rejected = scenarios.FETCH_ALL_FAILED_REJECTED_SCENARIO
+    assert rejected.name == "fetched-all-failed-rejected"
+    assert rejected.fetch is True
+    assert rejected.artifact == scenarios.ALL_FAILED_SHAPE_ARTIFACT
+    assert (rejected.rounds_delta, rejected.push_attempts) == (1, 2)
+    assert rejected.reject_pushes == 1
+    assert "第 2 次尝试" in rejected.must_contain
+    assert rejected.output_counts == (
+        ("push 被拒（第", 1), ("simulated rejection", 1))
+
+    for scenario in (plain, rejected):
+        assert scenario.expected_exit == 0
+        assert scenario.expected_reason == "written"
+
+
 def test_local_metrics_shape_is_deliberately_different(
         tmp_path: Path) -> None:
     """R107：本地夹具与生产 artifact 形状必须不同，否则内容来源不可辨。
@@ -832,6 +876,8 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         {"e2e-metrics.json": FAILURE_METRICS.read_bytes()})
     empty_archive = zip_bytes(
         {"e2e-metrics.json": EMPTY_METRICS.read_bytes()})
+    all_failed_archive = zip_bytes(
+        {"e2e-metrics.json": ALL_FAILED_METRICS.read_bytes()})
     routes: dict = {}
     recorded: list = []
     result = tmp_path / "result.json"
@@ -858,6 +904,14 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
             listing(f"{base}/empty-archive", name="e2e-metrics-empty"))
         routes["/empty-archive"] = (
             200, {"Content-Type": "application/zip"}, empty_archive)
+        # R121：全失败夹具走第四个 artifact 名。
+        routes[api_path(
+            "owner/repo", "987654", "e2e-metrics-all-failed")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/all-failed-archive",
+                    name="e2e-metrics-all-failed"))
+        routes["/all-failed-archive"] = (
+            200, {"Content-Type": "application/zip"}, all_failed_archive)
 
         code = scenarios.main(_argv(
             repo, result,
@@ -883,7 +937,9 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "fetched-failure-shape-rejected",
         "fetched-failure-shape-rejected-conflict",
         "fetched-empty",
-        "fetched-empty-rejected"]
+        "fetched-empty-rejected",
+        "fetched-all-failed",
+        "fetched-all-failed-rejected"]
     fetched = by_name["fetched"]
     assert fetched["ok"] is True, fetched["failure"]
     assert fetched["actual"] == {
@@ -981,12 +1037,38 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
             in empty_rejected["output"])
     assert "metrics 语义 （无场景）" in empty_rejected["output"]
     assert "第 2 次尝试" in empty_rejected["output"]
-    # artifact API 用的是 GitHub run id，不是历史 run id；八个全链场景
+    # R121：全链全失败。失败数据也是数据，写回照常入库；叠一次拒绝后
+    # failed=3 与逐场景 first_failure 仍原样保留。
+    all_failed = by_name["fetched-all-failed"]
+    assert all_failed["ok"] is True, all_failed["failure"]
+    assert all_failed["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 1,
+        "last_run_id": f"replay-ci-fetched-all-failed-{short}",
+        "push_attempts": 1}
+    assert ("metrics 内容 total=3 passed=0 failed=3 retried=0 attempts=3"
+            in all_failed["output"])
+    assert ("metrics 语义 fail_0=fail/1 fail_1=fail/1 fail_2=fail/1"
+            in all_failed["output"])
+    assert ("metrics 首次失败 fail_0=全部失败：节点 0 未完成；"
+            "fail_1=全部失败：节点 1 未完成；"
+            "fail_2=全部失败：节点 2 未完成" in all_failed["output"])
+    all_failed_rejected = by_name["fetched-all-failed-rejected"]
+    assert all_failed_rejected["ok"] is True, all_failed_rejected["failure"]
+    assert all_failed_rejected["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 1,
+        "last_run_id": f"replay-ci-fetched-all-failed-rejected-{short}",
+        "push_attempts": 2}
+    assert ("metrics 内容 total=3 passed=0 failed=3 retried=0 attempts=3"
+            in all_failed_rejected["output"])
+    assert "第 2 次尝试" in all_failed_rejected["output"]
+    # artifact API 用的是 GitHub run id，不是历史 run id；十个全链场景
     # 都必须真的走 API，而不是本地 metrics。
-    assert sum("/987654/" in path for path, _headers in recorded) >= 8
+    assert sum("/987654/" in path for path, _headers in recorded) >= 10
     assert any("e2e-metrics-failure-shape" in path
                for path, _headers in recorded)
     assert any("e2e-metrics-empty" in path
+               for path, _headers in recorded)
+    assert any("e2e-metrics-all-failed" in path
                for path, _headers in recorded)
     assert not any("replay-ci-" in path for path, _headers in recorded)
 

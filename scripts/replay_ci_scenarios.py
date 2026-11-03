@@ -72,6 +72,10 @@ R120 补全链 **0 场景** 形状：``e2e-metrics-empty`` 夹具（total=0）�
 artifact 下载后写回，``（无场景）`` 必须显式出现；再叠一次拒绝重试，
 证明 0 场景经过重试循环仍不被当成「历史为空」或「指纹没打」。
 
+R121 补全链 **全失败** 形状：``e2e-metrics-all-failed`` 夹具（3 场景全
+``passed=False``）写回照常入库——失败数据也是数据；再叠一次拒绝重试，
+证明 ``failed=3`` 与逐场景 ``first_failure`` 不被重算或清零。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -540,6 +544,41 @@ FETCH_EMPTY_REJECTED_SCENARIO = Scenario(
     output_counts=(("push 被拒（第", 1), ("simulated rejection", 1)),
 )
 
+# R121：全链全失败形状。3 个场景全 passed=False；写回照常入库——失败数据
+# 也是数据。failed=3 让「失败数被清零」立刻显形。
+ALL_FAILED_SHAPE_ARTIFACT = "e2e-metrics-all-failed"
+_ALL_FAILED_METRICS = (
+    "metrics 内容 total=3 passed=0 failed=3 retried=0 attempts=3")
+_ALL_FAILED_SEMANTICS = (
+    "metrics 语义 fail_0=fail/1 fail_1=fail/1 fail_2=fail/1")
+_ALL_FAILED_FIRST_FAILURES = (
+    "metrics 首次失败 fail_0=全部失败：节点 0 未完成；"
+    "fail_1=全部失败：节点 1 未完成；fail_2=全部失败：节点 2 未完成")
+
+FETCH_ALL_FAILED_SCENARIO = Scenario(
+    "fetched-all-failed", 1, 1, fetch=True,
+    artifact=ALL_FAILED_SHAPE_ARTIFACT,
+    must_contain=("已下载 1 个文件",
+                  _ALL_FAILED_METRICS,
+                  _ALL_FAILED_SEMANTICS,
+                  _ALL_FAILED_FIRST_FAILURES,
+                  "已写回"),
+)
+
+# 全失败再叠一次拒绝：重试只影响 push 次数，failed=3 与逐场景 first_failure
+# 必须原样保留。
+FETCH_ALL_FAILED_REJECTED_SCENARIO = Scenario(
+    "fetched-all-failed-rejected", 1, 2, reject_pushes=1, fetch=True,
+    artifact=ALL_FAILED_SHAPE_ARTIFACT,
+    must_contain=("已下载 1 个文件",
+                  _ALL_FAILED_METRICS,
+                  _ALL_FAILED_SEMANTICS,
+                  _ALL_FAILED_FIRST_FAILURES,
+                  "第 2 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 1), ("simulated rejection", 1)),
+)
+
 # 单个场景是 1–2 次本地 git 操作；超时保护只防止沙箱 git/钩子卡死。
 SCENARIO_TIMEOUT = 180.0
 
@@ -845,7 +884,9 @@ def run(repo: Path, branch: str, history_rel: str,
          FETCH_FAILURE_SHAPE_REJECTED_SCENARIO,
          FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO,
          FETCH_EMPTY_SCENARIO,
-         FETCH_EMPTY_REJECTED_SCENARIO)
+         FETCH_EMPTY_REJECTED_SCENARIO,
+         FETCH_ALL_FAILED_SCENARIO,
+         FETCH_ALL_FAILED_REJECTED_SCENARIO)
         if fetch_api_url else ())
     try:
         baseline = _baseline(repo, history_rel)

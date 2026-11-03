@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "total": 3,
+  "passed": 0,
+  "failed": 3,
+  "retried": 0,
+  "scenarios": [
+    {
+      "name": "fail_0",
+      "passed": false,
+      "attempts": 1,
+      "first_failure": "全部失败：节点 0 未完成"
+    },
+    {
+      "name": "fail_1",
+      "passed": false,
+      "attempts": 1,
+      "first_failure": "全部失败：节点 1 未完成"
+    },
+    {
+      "name": "fail_2",
+      "passed": false,
+      "attempts": 1,
+      "first_failure": "全部失败：节点 2 未完成"
+    }
+  ]
+}

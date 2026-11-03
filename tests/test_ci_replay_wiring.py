@@ -270,6 +270,7 @@ def test_writeback_job_does_not_consume_the_replay_fixture() -> None:
     text = _text(_job(WRITEBACK_JOB))
     assert "e2e-metrics-failure-shape" not in text
     assert "e2e-metrics-empty" not in text
+    assert "e2e-metrics-all-failed" not in text
     assert "e2e-metrics" in text
 
 
@@ -287,6 +288,25 @@ def test_backend_uploads_the_empty_shape_fixture_for_full_chain() -> None:
     upload = matching[0]
     text = _text({"upload": upload})
     assert "tests/fixtures/e2e_metrics_empty/e2e-metrics.json" in text
+    assert upload.get("if") == (
+        "always() && github.event_name == 'push' "
+        "&& github.ref == 'refs/heads/main'")
+
+
+def test_backend_uploads_the_all_failed_shape_fixture_for_full_chain() -> None:
+    """R121：全失败夹具（3/0/3）必须有独立 artifact 来源。"""
+    uploads = [
+        step for step in _job(BACKEND_JOB)["steps"]
+        if "upload-artifact" in str(step.get("uses", ""))
+    ]
+    matching = [
+        step for step in uploads
+        if "e2e-metrics-all-failed" in _text({"upload": step})
+    ]
+    assert len(matching) == 1, matching
+    upload = matching[0]
+    text = _text({"upload": upload})
+    assert "tests/fixtures/e2e_metrics_all_failed/e2e-metrics.json" in text
     assert upload.get("if") == (
         "always() && github.event_name == 'push' "
         "&& github.ref == 'refs/heads/main'")
