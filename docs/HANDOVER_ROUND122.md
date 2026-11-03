@@ -63,8 +63,8 @@ R113 证明失败形状能入库；R115 证明趋势表有 `失败` 列；R119�
 
 ## 6. CI
 
-- 本轮尚未提交/推送（GitHub 认证待补）；测试在 backend job 的 pytest 全量里
-  执行，不新增 replay job 场景。
+- 本轮已本地提交 **`f8a83ec`**，尚未推送（GitHub 认证待补）；测试在
+  backend job 的 pytest 全量里执行，不新增 replay job 场景。
 
 ## 7. 边界与遗留
 
@@ -76,4 +76,4 @@ R113 证明失败形状能入库；R115 证明趋势表有 `失败` 列；R119�
 
 - 改动：`tests/test_replay_ci_writeback.py`、R122 文档、PROJECT_INFO、
   JUDGEMENT_LEDGER。生产代码零改动。
-- 尚未提交；`config/skills_config.json` 不纳入。
+- 本地提交 **`f8a83ec`**；尚未推送；`config/skills_config.json` 不纳入。

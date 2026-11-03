@@ -100,7 +100,7 @@ CI 的 `backend` job 在 main push 上把它上传为独立 artifact
 
 ## 6. CI
 
-- 本轮改动尚未提交/推送，CI 未触发；预计 10 个 job 全绿，
+- 本轮已本地提交 **`445e6a1`**，尚未推送（GitHub 认证待补）；预计
   `replay-ci-fetch-chain` 两平台从 **19/19** 变 **21/21**。
 - `e2e-history-writeback` 预计写回 **48→49**。
 - 夹具上传在 backend 的 main push 条件内；PR 不产生全链 job。
@@ -122,4 +122,5 @@ CI 的 `backend` job 在 main push 上把它上传为独立 artifact
   `tests/fixtures/e2e_metrics_failure_shape/e2e-metrics.json`、
   `docs/HANDOVER_ROUND118.md`、`docs/HANDOVER_ROUND119.md`、
   `docs/PROJECT_INFO.md`、`docs/JUDGEMENT_LEDGER.md`。
-- 尚未提交；`config/skills_config.json` 不纳入。
+- 本地提交 **`445e6a1`**（`feat(R119): 全链失败形状 × 拒绝/注入 + R118
+  CI 回填`）；尚未推送；`config/skills_config.json` 不纳入。

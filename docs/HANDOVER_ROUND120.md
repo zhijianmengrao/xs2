@@ -70,8 +70,8 @@
 
 ## 6. CI
 
-- 本轮尚未提交/推送（GitHub 认证待补）；预计 `replay-ci-fetch-chain`
-  两平台从 **21/21** 变 **23/23**，写回继续递增。
+- 本轮已本地提交 **`78afe48`**，尚未推送（GitHub 认证待补）；预计
+  `replay-ci-fetch-chain` 两平台从 **21/21** 变 **23/23**，写回继续递增。
 
 ## 7. 边界与遗留
 
@@ -84,4 +84,4 @@
 - 改动：`scripts/replay_ci_scenarios.py`、`tests/test_replay_ci_scenarios.py`、
   `tests/test_ci_replay_wiring.py`、`.github/workflows/ci.yml`、
   `tests/fixtures/e2e_metrics_empty/e2e-metrics.json`、R120 文档。
-- 尚未提交；`config/skills_config.json` 不纳入。
+- 本地提交 **`78afe48`**；尚未推送；`config/skills_config.json` 不纳入。
