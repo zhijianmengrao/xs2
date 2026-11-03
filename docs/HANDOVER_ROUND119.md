@@ -100,9 +100,10 @@ CI 的 `backend` job 在 main push 上把它上传为独立 artifact
 
 ## 6. CI
 
-- 本轮已本地提交 **`445e6a1`**，尚未推送（GitHub 认证待补）；预计
-  `replay-ci-fetch-chain` 两平台从 **19/19** 变 **21/21**。
-- `e2e-history-writeback` 预计写回 **48→49**。
+- 五轮提交一起推送；合并 run **41645884511**：**10 个 job 全 `success`**
+  （13:36:48→13:51:18 UTC，约 14m30s）。
+- `replay-ci-fetch-chain` 两平台 **25/25**（最终 tip 的场景表）；
+  `e2e-history-writeback` success，写回 **48→49**。
 - 夹具上传在 backend 的 main push 条件内；PR 不产生全链 job。
 
 ## 7. 边界与遗留
@@ -123,4 +124,4 @@ CI 的 `backend` job 在 main push 上把它上传为独立 artifact
   `docs/HANDOVER_ROUND118.md`、`docs/HANDOVER_ROUND119.md`、
   `docs/PROJECT_INFO.md`、`docs/JUDGEMENT_LEDGER.md`。
 - 本地提交 **`445e6a1`**（`feat(R119): 全链失败形状 × 拒绝/注入 + R118
-  CI 回填`）；尚未推送；`config/skills_config.json` 不纳入。
+  CI 回填`），随五轮一起推送至 `7d999cc`；`config/skills_config.json` 不纳入。
