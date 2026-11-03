@@ -83,11 +83,18 @@ R124 用三条时间线分别钉住这三点，代数关系与旧场景完全一
 
 ## 6. CI
 
-- 本轮**未推送**：本机没有系统 git 与 GitHub 凭据，只有项目外的便携
-  MinGit（`F:\DeterminFlow x2\_tools\mingit-2.56.0.4`）用于本地跑测试。
-- 因此 CI 未触发、写回历史未变化（仍 **50/80**）。推送后预计
-  `replay-ci-writeback` 两平台 **17/17**、`replay-ci-fetch-chain`
-  两平台 **28/28**，写回 **50→51**（bot 提交）。
+- 提交 **`b53eda3`** 推送 `main`，run **41669539258**：**10 个 job 全
+  `success`**（15:59:41→16:15:24 UTC，约 15m43s）。
+- `replay-ci-writeback` 两平台 **17/17 PASS**；新场景实测：
+  `rejected-hook-inject-at-7` exit=1 / push_attempts=7、
+  `rejected-hook-budget-8-at-8` exit=0 / push_attempts=9（第 9 次
+  成功）。
+- `replay-ci-fetch-chain` 两平台 **28/28 PASS**；`fetched-rejected-hook-at-8`
+  实测 exit=0、push_attempts=9。
+- backend（ubuntu）**2668 passed / 65 skipped**、windows-backend
+  **2704 passed / 29 skipped**（均 2733 条）。
+- 写回历史 **50→51**（`ci-41669539258`，bot 提交 `[skip ci]`，未自触发）。
+- 本文档回填提交会再触发一次 docs run，预计写回 **51→52**。
 
 ## 7. 边界与遗留
 
@@ -100,6 +107,8 @@ R124 用三条时间线分别钉住这三点，代数关系与旧场景完全一
 
 - 改动：`scripts/replay_ci_scenarios.py`、`tests/test_replay_ci_scenarios.py`、
   `.github/workflows/ci.yml`、R124 文档、PROJECT_INFO、JUDGEMENT_LEDGER。
-- **未提交、未推送**：本会话没有收到提交/推送指令；改动保留在工作区，
-  `config/skills_config.json` 不纳入。
-- 本机验证用的 MinGit 与 `_r124_*` 日志/备份均在仓库外或未跟踪，不进入改动。
+- 本地提交 **`b53eda3`**，已推送 `main`（用户拍板方案 2）；run 41651663100
+  的 bot 写回 `fe8b329` 先快进合入，无冲突。
+- 环境说明：本机无系统 git，推送与验证用项目外便携 MinGit
+  `F:\DeterminFlow x2\_tools\mingit-2.56.0.4` + Windows 凭据管理器
+  （`git-credential-wincred`）；`config/skills_config.json` 不纳入。
