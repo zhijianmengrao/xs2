@@ -71,10 +71,12 @@ def test_writeback_job_runs_no_repository_tests() -> None:
 
 
 def test_backend_uploads_the_metrics_artifact_only_on_main_pushes() -> None:
+    # R119：backend 还上传全链回放用的失败形状夹具；这里只选生产 e2e 的
+    # `e2e-metrics`，夹具单独由 test_ci_replay_wiring 钉住。
     uploads = [
         step for step in _job("backend")["steps"]
         if "upload-artifact" in str(step.get("uses", ""))
-        and "e2e-metrics" in json.dumps(step, ensure_ascii=False)
+        and (step.get("with") or {}).get("name") == "e2e-metrics"
     ]
     assert len(uploads) == 1, uploads
     condition = str(uploads[0].get("if", ""))
@@ -146,7 +148,7 @@ def test_upload_fetch_and_writeback_agree_on_the_metrics_filename() -> None:
     uploads = [
         step for step in _job("backend")["steps"]
         if "upload-artifact" in str(step.get("uses", ""))
-        and "e2e-metrics" in json.dumps(step, ensure_ascii=False)
+        and (step.get("with") or {}).get("name") == "e2e-metrics"
     ]
     assert len(uploads) == 1, uploads
     assert uploads[0]["with"]["name"] == "e2e-metrics"

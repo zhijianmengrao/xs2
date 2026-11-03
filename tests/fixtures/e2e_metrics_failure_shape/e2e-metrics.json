@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "total": 4,
+  "passed": 3,
+  "failed": 1,
+  "retried": 1,
+  "scenarios": [
+    {
+      "name": "ok_0",
+      "passed": true,
+      "attempts": 1,
+      "first_failure": ""
+    },
+    {
+      "name": "retry_1",
+      "passed": true,
+      "attempts": 2,
+      "first_failure": "第一次判红：模拟超睡"
+    },
+    {
+      "name": "fail_2",
+      "passed": false,
+      "attempts": 1,
+      "first_failure": "模拟失败：节点未完成"
+    },
+    {
+      "name": "ok_3",
+      "passed": true,
+      "attempts": 1,
+      "first_failure": ""
+    }
+  ]
+}

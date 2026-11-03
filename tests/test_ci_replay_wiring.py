@@ -21,6 +21,7 @@ CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 JOB = "replay-ci-writeback"
 WRITEBACK_JOB = "e2e-history-writeback"
 FETCH_JOB = "replay-ci-fetch-chain"
+BACKEND_JOB = "backend"
 
 
 def _load() -> dict:
@@ -237,3 +238,35 @@ def test_fetch_chain_job_uploads_its_result_even_on_failure() -> None:
         "两条矩阵腿的上传名会撞车")
     assert upload.get("if") == "always()", (
         "失败时不上传全链 result 工件，现场只能靠翻日志")
+
+
+# ------------------------------------------- 全链失败形状夹具（R119）
+def test_backend_uploads_the_failure_shape_fixture_for_full_chain() -> None:
+    """R119：全链失败形状场景必须有 artifact 来源，且不能借用生产 e2e 输出。
+
+    夹具是固定 4 场景文件；上传条件与生产 `e2e-metrics` 相同（main push），
+    否则全链 job 下载不到它，场景会以 artifact-missing 静默回退。
+    """
+    uploads = [
+        step for step in _job(BACKEND_JOB)["steps"]
+        if "upload-artifact" in str(step.get("uses", ""))
+    ]
+    matching = [
+        step for step in uploads
+        if "e2e-metrics-failure-shape" in _text({"upload": step})
+    ]
+    assert len(matching) == 1, matching
+    upload = matching[0]
+    text = _text({"upload": upload})
+    assert "tests/fixtures/e2e_metrics_failure_shape/e2e-metrics.json" in text
+    assert upload.get("if") == (
+        "always() && github.event_name == 'push' "
+        "&& github.ref == 'refs/heads/main'"), (
+        "夹具只在 main push 上传；PR 不产生全链 job")
+
+
+def test_writeback_job_does_not_consume_the_replay_fixture() -> None:
+    """生产写回只能读 e2e-metrics；夹具进历史会直接污染趋势。"""
+    text = _text(_job(WRITEBACK_JOB))
+    assert "e2e-metrics-failure-shape" not in text
+    assert "e2e-metrics" in text

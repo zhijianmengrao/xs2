@@ -353,6 +353,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+      # R119：全链回放的失败形状夹具。**不是**生产 e2e 输出：固定 4 场景、
+      # 1 失败、1 重跑，只供 replay-ci-fetch-chain 下载，用来证明失败形状经
+      # 拒绝/注入后内容不被重算。它单独命名，e2e-history-writeback 仍只读
+      # e2e-metrics，不会把夹具写进历史、污染趋势。
+      - name: Upload failure-shape metrics fixture for full-chain replay
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-metrics-failure-shape
+          path: tests/fixtures/e2e_metrics_failure_shape/e2e-metrics.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: e2e retry summary (observability)
         # 重跑频率此前只能 grep 日志（R68 §7-4）。metrics 缺失/损坏时脚本打印
         # 可见说明并退出 0，不让「没有数据」冒充「0 次重跑」。
@@ -546,6 +559,8 @@ jobs:
   # R104：与 replay 主 job 同平台矩阵。下载/解压的路径规则（反斜杠、驱动器
   # 相对路径）只在 Windows 上才走得到；`shell: bash` + `$PYTHON` 让两平台的
   # 退出码透传与解释器名一致，artifact 名带 os 避免两条腿撞名。
+  # R119：全链新增失败形状 × 拒绝/注入两场景；失败形状 artifact 由 backend
+  # 单独上传（`e2e-metrics-failure-shape`），与生产 `e2e-metrics` 分开。
   replay-ci-fetch-chain:
     needs: backend
     if: "always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.backend.result == 'success'"

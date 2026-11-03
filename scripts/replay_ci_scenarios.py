@@ -61,6 +61,13 @@ R114 把矩阵再抬一档到预算 6 / N=6，覆盖「注入在预算中段、�
 R117 把 N=6 / attempts=7 搬进全链：``fetched-rejected-hook-at-6`` 在真实
 artifact 下载后走同样的六次拒绝、末次注入与第 7 次成功。
 
+R119 把 R116 的本地组合搬进全链：全链新增两份失败形状场景，使用 CI 里
+单独上传的 ``e2e-metrics-failure-shape`` 夹具 artifact（4 场景、1 失败、
+1 重跑），分别叠加「被拒一次后成功」与「第 1 次拒绝注入冲突、第 3 次
+成功」。重试只改变 push 次数与远端轮数，artifact 里的 failed/retried/
+attempts 与逐场景 ``first_failure`` 必须原样落库。夹具 artifact 只供回放
+使用，不进入生产写回（``e2e-history-writeback`` 仍只读 ``e2e-metrics``）。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -180,6 +187,9 @@ class Scenario:
     expected_reason: str = "written"
     expect_sandbox: bool = False
     fetch: bool = False
+    # 全链场景的 artifact 名。None 表示用驱动级 ``--artifact``（默认
+    # ``e2e-metrics``）；失败形状场景固定指向 CI 单独上传的夹具 artifact。
+    artifact: str | None = None
     injected_rounds: int = 0
     expected_last_run_id: str | None = None
     must_contain: tuple[str, ...] = ()
@@ -450,6 +460,50 @@ FETCH_REJECTED_HOOK_AT_6_SCENARIO = Scenario(
     output_counts=(("push 被拒（第", 6), ("simulated rejection", 6)),
 )
 
+# R119：把 R116 的本地组合搬进生产全链。artifact 是 CI 单独上传的夹具
+# （4 场景、1 失败、1 重跑，total=4 passed=3 failed=1 retried=1 attempts=5），
+# 不是生产的 10 场景全过 artifact；它只供 replay 下载，不进入 e2e 写回历史。
+# 重试只改变 push 次数与远端轮数，计数与逐场景 first_failure 必须原样落库。
+_FAILURE_SHAPE_METRICS = (
+    "metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5")
+_FAILURE_SHAPE_SEMANTICS = (
+    "metrics 语义 ok_0=ok/1 retry_1=retry/2 fail_2=fail/1 ok_3=ok/1")
+_FAILURE_SHAPE_FIRST_FAILURES = (
+    "metrics 首次失败 retry_1=第一次判红：模拟超睡；"
+    "fail_2=模拟失败：节点未完成")
+FAILURE_SHAPE_ARTIFACT = "e2e-metrics-failure-shape"
+
+# 被拒一次后成功：push 2 次，净 +1。失败形状的 failed>0 让「计数被清零」
+# 立刻显形——全过形状的 failed=0 会让这类缺陷完全隐形（R116）。
+FETCH_FAILURE_SHAPE_REJECTED_SCENARIO = Scenario(
+    "fetched-failure-shape-rejected", 1, 2, reject_pushes=1, fetch=True,
+    artifact=FAILURE_SHAPE_ARTIFACT,
+    must_contain=("已下载 1 个文件",
+                  _FAILURE_SHAPE_METRICS,
+                  _FAILURE_SHAPE_SEMANTICS,
+                  _FAILURE_SHAPE_FIRST_FAILURES,
+                  "第 2 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 1), ("simulated rejection", 1)),
+)
+
+# 第 1 次拒绝时注入冲突、第 3 次 push 成功：注入轮 + 本轮 = 净 +2。
+# 与本地 R116 的第二格同型；「rebase 冲突（第 1 次）」钉住注入真的发生。
+FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO = Scenario(
+    "fetched-failure-shape-rejected-conflict", 2, 3, reject_pushes=2,
+    conflict_on_reject=1, fetch=True,
+    artifact=FAILURE_SHAPE_ARTIFACT,
+    must_contain=("已下载 1 个文件",
+                  _FAILURE_SHAPE_METRICS,
+                  _FAILURE_SHAPE_SEMANTICS,
+                  _FAILURE_SHAPE_FIRST_FAILURES,
+                  "第 1 次拒绝时注入冲突",
+                  "rebase 冲突（第 1 次）",
+                  "第 3 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 2), ("simulated rejection", 2)),
+)
+
 # 单个场景是 1–2 次本地 git 操作；超时保护只防止沙箱 git/钩子卡死。
 SCENARIO_TIMEOUT = 180.0
 
@@ -602,8 +656,11 @@ def _run_scenario(scenario: Scenario, repo: Path, branch: str,
         ]
         if fetch_repo:
             argv += ["--fetch-repo", fetch_repo]
-        if artifact:
-            argv += ["--artifact", artifact]
+        # 失败形状场景自带 artifact 名（R119）；其余全链场景用调用方的
+        # 默认值。两者都不能让场景悄悄回退到本地 metrics。
+        chosen_artifact = scenario.artifact or artifact
+        if chosen_artifact:
+            argv += ["--artifact", chosen_artifact]
     else:
         metrics = _metrics(workdir / f"{scenario.name}-metrics.json")
         argv += ["--metrics", str(metrics)]
@@ -748,7 +805,9 @@ def run(repo: Path, branch: str, history_rel: str,
     scenarios = SCENARIOS + (
         (FETCH_SCENARIO, FETCH_REJECTED_CONFLICT_SCENARIO,
          FETCH_REJECTED_HOOK_AT_4_SCENARIO,
-         FETCH_REJECTED_HOOK_AT_6_SCENARIO)
+         FETCH_REJECTED_HOOK_AT_6_SCENARIO,
+         FETCH_FAILURE_SHAPE_REJECTED_SCENARIO,
+         FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO)
         if fetch_api_url else ())
     try:
         baseline = _baseline(repo, history_rel)

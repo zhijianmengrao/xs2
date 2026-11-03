@@ -1,7 +1,7 @@
 """R101/R103：生产回放驱动 ``scripts/replay_ci_scenarios.py`` 的行为用例。
 
 这里驱动的是**真实** ``replay_ci_writeback`` 子进程（临时 git 仓），断言十五个
-本地场景（``--fetch-api-url`` 时再追加三个全链场景）的退出码/rounds/
+本地场景（``--fetch-api-url`` 时再追加六个全链场景）的退出码/rounds/
 push_attempts/失败沙箱与源仓库只读；另外用 monkeypatch 证明驱动不盲信子调用
 的退出码、且能发现源仓库被改动。CI job 本身的接线契约在
 ``tests/test_ci_replay_wiring.py``。
@@ -21,6 +21,10 @@ from scripts import replay_ci_scenarios as scenarios
 from artifact_api_fixture import api_path, listing, server, zip_bytes
 
 HISTORY_REL = "tests/fixtures/e2e_retry_history/history.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FAILURE_METRICS = (
+    REPO_ROOT / "tests" / "fixtures" / "e2e_metrics_failure_shape"
+    / "e2e-metrics.json")
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
@@ -692,6 +696,61 @@ def test_fetch_hook_scenarios_match_the_local_formula() -> None:
         assert "metrics 语义" in s.must_contain, s.name
 
 
+def test_fetch_failure_shape_scenarios_pin_content_and_retry() -> None:
+    """R119：全链失败形状 × 拒绝/注入必须原样保留 artifact 内容。
+
+    夹具是 CI 单独上传的 ``e2e-metrics-failure-shape``（4 场景 / 1 失败 /
+    1 重跑），不是生产全过 artifact。两个场景分别覆盖「被拒一次后成功」与
+    「第 1 次拒绝注入冲突、第 3 次成功」；计数、逐场景语义与 first_failure
+    都要在输出里出现，否则「写回成功」会掩盖内容被重算。
+    """
+    payload = json.loads(FAILURE_METRICS.read_text(encoding="utf-8"))
+    assert (payload["total"], payload["passed"], payload["failed"],
+            payload["retried"]) == (4, 3, 1, 1)
+    assert sum(item["attempts"] for item in payload["scenarios"]) == 5
+    assert [item["name"] for item in payload["scenarios"]] == [
+        "ok_0", "retry_1", "fail_2", "ok_3"]
+
+    rejected = scenarios.FETCH_FAILURE_SHAPE_REJECTED_SCENARIO
+    assert rejected.name == "fetched-failure-shape-rejected"
+    assert rejected.fetch is True
+    assert rejected.artifact == scenarios.FAILURE_SHAPE_ARTIFACT
+    assert (rejected.rounds_delta, rejected.push_attempts) == (1, 2)
+    assert rejected.reject_pushes == 1
+    for token in (
+        "metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5",
+        "metrics 语义 ok_0=ok/1 retry_1=retry/2 fail_2=fail/1 ok_3=ok/1",
+        "metrics 首次失败 retry_1=第一次判红：模拟超睡；"
+        "fail_2=模拟失败：节点未完成",
+    ):
+        assert token in rejected.must_contain
+
+    conflict = scenarios.FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO
+    assert conflict.name == "fetched-failure-shape-rejected-conflict"
+    assert conflict.fetch is True
+    assert conflict.artifact == scenarios.FAILURE_SHAPE_ARTIFACT
+    assert (conflict.rounds_delta, conflict.push_attempts) == (2, 3)
+    assert conflict.reject_pushes == 2
+    assert conflict.conflict_on_reject == 1
+    for token in (
+        "第 1 次拒绝时注入冲突",
+        "rebase 冲突（第 1 次）",
+        "第 3 次尝试",
+        "metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5",
+    ):
+        assert token in conflict.must_contain
+
+    # artifact 只允许出现在全链场景；本地场景必须继续喂本地 metrics。
+    for scenario in scenarios.SCENARIOS:
+        assert scenario.artifact is None, scenario.name
+    for scenario in (rejected, conflict):
+        assert scenario.expected_exit == 0
+        assert scenario.expected_reason == "written"
+        assert scenario.output_counts == (
+            ("push 被拒（第", scenario.reject_pushes),
+            ("simulated rejection", scenario.reject_pushes))
+
+
 def test_local_metrics_shape_is_deliberately_different(
         tmp_path: Path) -> None:
     """R107：本地夹具与生产 artifact 形状必须不同，否则内容来源不可辨。
@@ -726,6 +785,8 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     head = _git("rev-parse", "HEAD", cwd=repo)
     short = head[:8]
     archive = zip_bytes({"e2e-metrics.json": _metrics_file(tmp_path).read_bytes()})
+    failure_archive = zip_bytes(
+        {"e2e-metrics.json": FAILURE_METRICS.read_bytes()})
     routes: dict = {}
     recorded: list = []
     result = tmp_path / "result.json"
@@ -736,6 +797,15 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
             listing(f"{base}/archive"))
         routes["/archive"] = (
             200, {"Content-Type": "application/zip"}, archive)
+        # R119：失败形状夹具走另一个 artifact 名；场景表按名字取，不能把
+        # 全过 artifact 当成失败形状来断言。
+        routes[api_path(
+            "owner/repo", "987654", "e2e-metrics-failure-shape")] = (
+            200, {"Content-Type": "application/json"},
+            listing(f"{base}/failure-archive",
+                    name="e2e-metrics-failure-shape"))
+        routes["/failure-archive"] = (
+            200, {"Content-Type": "application/zip"}, failure_archive)
 
         code = scenarios.main(_argv(
             repo, result,
@@ -757,7 +827,9 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "rejected-hook-budget-6-at-6",
         "fetched", "fetched-rejected-conflict",
         "fetched-rejected-hook-at-4",
-        "fetched-rejected-hook-at-6"]
+        "fetched-rejected-hook-at-6",
+        "fetched-failure-shape-rejected",
+        "fetched-failure-shape-rejected-conflict"]
     fetched = by_name["fetched"]
     assert fetched["ok"] is True, fetched["failure"]
     assert fetched["actual"] == {
@@ -805,9 +877,39 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     assert "第 6 次拒绝时注入冲突" in at6["output"]
     assert "rebase 冲突（第 6 次）" in at6["output"]
     assert "第 7 次尝试" in at6["output"]
-    # artifact API 用的是 GitHub run id，不是历史 run id；四个全链场景
+    # R119：全链失败形状 × 拒绝/注入。计数与逐场景语义必须来自失败形状
+    # artifact；重试只改变 push 次数与轮数，不能把内容重算掉。
+    failure_rejected = by_name["fetched-failure-shape-rejected"]
+    assert failure_rejected["ok"] is True, failure_rejected["failure"]
+    assert failure_rejected["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 1,
+        "last_run_id": (
+            f"replay-ci-fetched-failure-shape-rejected-{short}"),
+        "push_attempts": 2}
+    assert ("metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5"
+            in failure_rejected["output"])
+    assert ("metrics 语义 ok_0=ok/1 retry_1=retry/2 fail_2=fail/1 "
+            "ok_3=ok/1" in failure_rejected["output"])
+    assert ("metrics 首次失败 retry_1=第一次判红：模拟超睡；"
+            "fail_2=模拟失败：节点未完成" in failure_rejected["output"])
+    assert "第 2 次尝试" in failure_rejected["output"]
+    failure_conflict = by_name["fetched-failure-shape-rejected-conflict"]
+    assert failure_conflict["ok"] is True, failure_conflict["failure"]
+    assert failure_conflict["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 2,
+        "last_run_id": (
+            f"replay-ci-fetched-failure-shape-rejected-conflict-{short}"),
+        "push_attempts": 3}
+    assert "第 1 次拒绝时注入冲突" in failure_conflict["output"]
+    assert "rebase 冲突（第 1 次）" in failure_conflict["output"]
+    assert "第 3 次尝试" in failure_conflict["output"]
+    assert ("metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5"
+            in failure_conflict["output"])
+    # artifact API 用的是 GitHub run id，不是历史 run id；六个全链场景
     # 都必须真的走 API，而不是本地 metrics。
-    assert sum("/987654/" in path for path, _headers in recorded) >= 4
+    assert sum("/987654/" in path for path, _headers in recorded) >= 6
+    assert any("e2e-metrics-failure-shape" in path
+               for path, _headers in recorded)
     assert not any("replay-ci-" in path for path, _headers in recorded)
 
 
