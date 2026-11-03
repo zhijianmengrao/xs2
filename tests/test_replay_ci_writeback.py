@@ -13,6 +13,15 @@ from scripts import e2e_retry_history as history
 from scripts import replay_ci_writeback as replay
 
 HISTORY_REL = "tests/fixtures/e2e_retry_history/history.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SHAPE_FIXTURES = (
+    ("failure", "e2e_metrics_failure_shape", ("4", "1", "1", "25.0%", "5"),
+     None),
+    ("empty", "e2e_metrics_empty", ("0", "0", "0", "n/a", "0"),
+     "最近一轮 0 个场景"),
+    ("all_failed", "e2e_metrics_all_failed", ("3", "3", "0", "0.0%", "3"),
+     None),
+)
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
@@ -1099,5 +1108,41 @@ def test_failure_shape_survives_retries(
         assert by_name["retry_1"]["first_failure"] == "第一次判红：模拟超睡"
         assert by_name["fail_2"]["passed"] is False
         assert by_name["fail_2"]["first_failure"] == "模拟失败：节点未完成"
+    finally:
+        replay._remove_sandbox(sandbox)
+
+
+@pytest.mark.parametrize("shape, directory, expected, note", SHAPE_FIXTURES)
+def test_trend_table_consumes_the_replayed_shapes(
+        tmp_path: Path, capsys, shape: str, directory: str,
+        expected: tuple[str, ...], note: str | None) -> None:
+    """R122：写回产生的失败形状必须被趋势表真的消费。
+
+    R113/R119–R121 证明形状能入库；R115 证明趋势表有失败列。这里把两段
+    接起来：用同一组夹具走真实 replay 写回，再从沙箱 history 渲染趋势表，
+    断 `场景/失败/重跑/重跑率/总尝试` 五列与 0 场景文案。只断言「写回成功」
+    或只断言「表里有失败列」都发现不了「入库的形状在展示层被读错」。
+    """
+    repo = _seed(tmp_path)
+    metrics = REPO_ROOT / "tests" / "fixtures" / directory / "e2e-metrics.json"
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(metrics),
+        "--run-id", "shape",
+        "--keep",
+    ]) == 0
+    out = capsys.readouterr().out
+    sandbox = _sandbox_from_output(out)
+    try:
+        entries = history.load_history(sandbox / "work" / HISTORY_REL)
+        assert entries[-1]["run_id"] == "shape"
+        trend = history.render_trend(entries)
+        assert "| 失败 |" in trend, trend
+        row = next(line for line in trend.splitlines()
+                   if line.startswith("| shape |"))
+        columns = [cell.strip() for cell in row.split("|")]
+        assert tuple(columns[3:8]) == expected, row
+        if note is not None:
+            assert note in trend, trend
     finally:
         replay._remove_sandbox(sandbox)
