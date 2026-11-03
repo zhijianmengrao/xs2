@@ -400,6 +400,75 @@ def test_replay_requires_a_metrics_source(tmp_path: Path) -> None:
     assert exc.value.code == 2
 
 
+# ------------------------------------------------- 写回幂等（R127）
+def test_replay_same_run_id_rerun_is_a_no_change(
+        tmp_path: Path, capsys) -> None:
+    """已入库 run_id 的重放必须是无害的 no-change：退 0、不 push、不重写。
+
+    replay 每次都从源仓克隆全新沙箱，所以「同 run_id 重跑」发生在**源仓
+    历史里已有这一轮**时（驱动重跑、CI 重放同一 commit）。record 对同键
+    且同观测覆盖并保留原条目——历史字节不变 → 「history 没有变化」。
+    这条在真实 replay CLI 上钉住该路径（此前只有 writeback() 层的用例），
+    防止回放链路单独退化成重复入库。
+    """
+    repo = _seed(tmp_path)
+    metrics = _metrics(tmp_path / "metrics.json")
+    # 种子条目必须由 record 自己写出：格式与观测都与回放一致，差异只剩
+    # exported_at——而 _same_observation 恰好忽略它。
+    assert history.record(
+        metrics, repo / HISTORY_REL, run_id="replay-dup",
+        source="ci") == history.EXIT_OK
+    _git("add", "-A", cwd=repo)
+    _git("-c", "user.name=test", "-c", "user.email=test@example.com",
+         "commit", "-q", "-m", "seed replay-dup", cwd=repo)
+
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(metrics),
+        "--run-id", "replay-dup",
+        "--result-json", str(result),
+    ]) == 0
+
+    data = json.loads(result.read_text(encoding="utf-8"))
+    assert data["reason"] == "no-change"
+    assert data["exit_code"] == 0
+    assert data["push_attempts"] == 0
+    assert data["rounds"] == 1
+    assert data["last_run_id"] == "replay-dup"
+    assert data["window_full"] is False
+    out = capsys.readouterr().out
+    assert "history 没有变化" in out
+
+
+def test_replay_missing_metrics_file_reports_metrics_missing(
+        tmp_path: Path, capsys) -> None:
+    """--metrics 指向不存在的文件：退 0、metrics-missing、一个字都不写。
+
+    PR 上没有 e2e metrics 是常态（e2e 环境未启动）；这一路径在回放链路
+    必须是「静默跳过」而不是失败，也不能碰远端历史。
+    """
+    repo = _seed(tmp_path)
+    result = tmp_path / "result.json"
+
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(tmp_path / "no-such-metrics.json"),
+        "--run-id", "replay-missing",
+        "--result-json", str(result),
+    ]) == 0
+
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["reason"] == "metrics-missing"
+    assert payload["exit_code"] == 0
+    assert payload["push_attempts"] == 0
+    assert payload["rounds"] == 0
+    assert payload["last_run_id"] is None
+    out = capsys.readouterr().out
+    assert "e2e 环境未启动" in out
+
+
 # ------------------------------------------------- 拒绝/冲突演练（R99）
 def test_replay_simulates_a_rejected_push_once(
         tmp_path: Path, capsys) -> None:
@@ -1144,5 +1213,54 @@ def test_trend_table_consumes_the_replayed_shapes(
         assert tuple(columns[3:8]) == expected, row
         if note is not None:
             assert note in trend, trend
+    finally:
+        replay._remove_sandbox(sandbox)
+
+
+# ------------------------------------------------- 语义指纹截断（R128）
+def test_semantics_line_truncates_display_but_not_the_record(
+        tmp_path: Path, capsys) -> None:
+    """first_failure 超 160 字符：展示行截断加省略号，history 留全文。
+
+    截断只影响 CI 日志里的一行展示（``SEMANTICS_TEXT_LIMIT=160``），不参与
+    判决、更不能改写入库内容——两半都要钉住，否则「为了日志好看」会悄悄
+    把数据截了。
+    """
+    long_text = "模拟失败：" + "超" * 200  # 205 字符，超过 160
+    metrics = tmp_path / "long.json"
+    metrics.write_text(json.dumps({
+        "schema": 1, "total": 2, "passed": 1, "failed": 1, "retried": 0,
+        "scenarios": [
+            {"name": "ok_0", "passed": True, "attempts": 1,
+             "first_failure": ""},
+            {"name": "fail_1", "passed": False, "attempts": 1,
+             "first_failure": long_text},
+        ]}), encoding="utf-8")
+
+    # 展示半边：单元级断言截断形状（前 160 字符 + 省略号，全文不出现）。
+    # 期望钉死字面 160：展示参数是政策，漂移必须先改这里（自引用常量
+    # 会让「LIMIT 改小」这类变异静默通过，R128 变异 M3 实测踩中）。
+    entry = history.entry_from_metrics(
+        json.loads(metrics.read_text(encoding="utf-8")))
+    semantics, failures = replay._metrics_semantics(entry)
+    assert "fail_1=fail/1" in semantics
+    assert failures == f"fail_1={long_text[:160]}…"
+
+    # 入库半边：真实写回后 history 里的 first_failure 仍是全文。
+    repo = _seed(tmp_path)
+    assert replay.main([
+        "--repo", str(repo),
+        "--metrics", str(metrics),
+        "--run-id", "long-failure",
+        "--keep",
+    ]) == 0
+    out = capsys.readouterr().out
+    assert f"fail_1={long_text[:160]}…" in out
+    assert long_text not in out
+    sandbox = _sandbox_from_output(out)
+    try:
+        entries = history.load_history(sandbox / "work" / HISTORY_REL)
+        by_name = {item["name"]: item for item in entries[-1]["scenarios"]}
+        assert by_name["fail_1"]["first_failure"] == long_text
     finally:
         replay._remove_sandbox(sandbox)
