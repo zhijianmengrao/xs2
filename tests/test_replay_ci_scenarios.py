@@ -25,6 +25,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FAILURE_METRICS = (
     REPO_ROOT / "tests" / "fixtures" / "e2e_metrics_failure_shape"
     / "e2e-metrics.json")
+FAILURE_SHAPE_METRICS_LINE = (
+    "metrics 内容 total=4 passed=3 failed=1 retried=1 attempts=5")
+FAILURE_SHAPE_SEMANTICS_LINE = (
+    "metrics 语义 ok_0=ok/1 retry_1=retry/2 fail_2=fail/1 ok_3=ok/1")
+FAILURE_SHAPE_FIRST_FAILURES_LINE = (
+    "metrics 首次失败 retry_1=第一次判红：模拟超睡；"
+    "fail_2=模拟失败：节点未完成")
 EMPTY_METRICS = (
     REPO_ROOT / "tests" / "fixtures" / "e2e_metrics_empty"
     / "e2e-metrics.json")
@@ -781,6 +788,30 @@ def test_fetch_failure_shape_scenarios_pin_content_and_retry() -> None:
     ):
         assert token in conflict.must_contain
 
+    # R126：失败形状 × 大预算（N=8/attempts=9）。与全链 N=8 同一条重试链，
+    # 只是 metrics 来源换成夹具——代数关系不变，内容指纹换成失败形状。
+    late = scenarios.FETCH_FAILURE_SHAPE_HOOK_AT_8_SCENARIO
+    assert late.name == "fetched-failure-shape-hook-at-8"
+    assert late.fetch is True
+    assert late.artifact == scenarios.FAILURE_SHAPE_ARTIFACT
+    assert late.conflict_on_reject == late.reject_pushes == 8
+    assert late.attempts == late.reject_pushes + 1 == 9
+    assert late.push_attempts == late.attempts
+    assert late.rounds_delta == 2
+    assert late.expected_exit == 0
+    assert late.expected_reason == "written"
+    for token in (
+        "第 8 次拒绝时注入冲突",
+        "rebase 冲突（第 8 次）",
+        "第 9 次尝试",
+        FAILURE_SHAPE_METRICS_LINE,
+        FAILURE_SHAPE_SEMANTICS_LINE,
+        FAILURE_SHAPE_FIRST_FAILURES_LINE,
+    ):
+        assert token in late.must_contain, token
+    assert late.output_counts == (
+        ("push 被拒（第", 8), ("simulated rejection", 8))
+
     # artifact 只允许出现在全链场景；本地场景必须继续喂本地 metrics。
     for scenario in scenarios.SCENARIOS:
         assert scenario.artifact is None, scenario.name
@@ -974,6 +1005,7 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
         "fetched-rejected-hook-at-8",
         "fetched-failure-shape-rejected",
         "fetched-failure-shape-rejected-conflict",
+        "fetched-failure-shape-hook-at-8",
         "fetched-empty",
         "fetched-empty-rejected",
         "fetched-all-failed",
@@ -1036,6 +1068,21 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     assert "第 8 次拒绝时注入冲突" in at8["output"]
     assert "rebase 冲突（第 8 次）" in at8["output"]
     assert "第 9 次尝试" in at8["output"]
+    # R126：失败形状 × 大预算。同一条 9 次尝试链，metrics 来源换成夹具；
+    # 失败计数与逐场景 first_failure 必须原样出现，不被长路径重算。
+    shape_late = by_name["fetched-failure-shape-hook-at-8"]
+    assert shape_late["ok"] is True, shape_late["failure"]
+    assert shape_late["actual"] == {
+        "exit_code": 0, "reason": "written", "rounds": 2,
+        "last_run_id": (
+            f"replay-ci-fetched-failure-shape-hook-at-8-{short}"),
+        "push_attempts": 9}
+    assert FAILURE_SHAPE_METRICS_LINE in shape_late["output"]
+    assert FAILURE_SHAPE_SEMANTICS_LINE in shape_late["output"]
+    assert FAILURE_SHAPE_FIRST_FAILURES_LINE in shape_late["output"]
+    assert "第 8 次拒绝时注入冲突" in shape_late["output"]
+    assert "rebase 冲突（第 8 次）" in shape_late["output"]
+    assert "第 9 次尝试" in shape_late["output"]
     # R119：全链失败形状 × 拒绝/注入。计数与逐场景语义必须来自失败形状
     # artifact；重试只改变 push 次数与轮数，不能把内容重算掉。
     failure_rejected = by_name["fetched-failure-shape-rejected"]
@@ -1110,9 +1157,9 @@ def test_driver_runs_the_fetch_chain_end_to_end(tmp_path: Path) -> None:
     assert ("metrics 内容 total=3 passed=0 failed=3 retried=0 attempts=3"
             in all_failed_rejected["output"])
     assert "第 2 次尝试" in all_failed_rejected["output"]
-    # artifact API 用的是 GitHub run id，不是历史 run id；十一个全链场景
+    # artifact API 用的是 GitHub run id，不是历史 run id；十二个全链场景
     # 都必须真的走 API，而不是本地 metrics。
-    assert sum("/987654/" in path for path, _headers in recorded) >= 11
+    assert sum("/987654/" in path for path, _headers in recorded) >= 12
     assert any("e2e-metrics-failure-shape" in path
                for path, _headers in recorded)
     assert any("e2e-metrics-empty" in path
@@ -1278,6 +1325,67 @@ def test_driver_keeps_the_written_round_witness_at_the_window_boundary(
     # 摘要必须自己说出「这一项的轮数已被裁剪」，不能只留一个恒等式。
     text = summary.read_text(encoding="utf-8")
     assert text.count("窗口已满") == sum(clipped.values())
+
+
+# ------------------------------------- 满窗实战（R125：默认窗口 80）
+@pytest.mark.parametrize("offset", [0, 1], ids=["full", "one-before"])
+def test_driver_keeps_witnesses_at_the_default_window(
+        tmp_path: Path, offset: int) -> None:
+    """R125：真实默认窗口（80）下满窗 / 满窗前 1 轮的几何必须成立。
+
+    R102 的边界用显式窗口 40 钉相对几何（不跟默认值走）；但生产 history
+    终将走到 80——那时 CI 的 replay job 会在满窗下跑：成功场景的 rounds
+    断言退化成恒等式，唯一写入证据是 last_run_id。本组用例**不设**
+    ``XS2_MAX_ROUNDS``，直接用默认窗口预演那一幕；期望值从场景表现算，
+    表加了场景这里自动跟着覆盖。
+    """
+    count = scenarios.history.MAX_ROUNDS - offset
+    repo = _seed_with_rounds(tmp_path, count)
+    head = _git("rev-parse", "HEAD", cwd=repo)
+    result = tmp_path / "result.json"
+    summary = tmp_path / "summary.md"
+
+    code = scenarios.main(_argv(repo, result, summary))
+
+    assert code == 0
+    window = scenarios.history.max_rounds()
+    assert window == scenarios.history.MAX_ROUNDS, (
+        "默认窗口被改或被环境覆盖：满窗预演必须跟生产默认走")
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["before"] == count
+    assert payload["window_full"] is (count >= window)
+    by_name = {record["name"]: record for record in payload["scenarios"]}
+    clipped_witnesses = 0
+    for scenario in scenarios.SCENARIOS:
+        record = by_name[scenario.name]
+        assert record["ok"] is True, record["failure"]
+        # 期望值与驱动同式：成功场景按 rounds_delta，失败场景按注入轮数；
+        # 失败场景不宣称「本轮写入」，裁剪标记恒为 False（末条身份才是证据）。
+        if scenario.succeeds:
+            expected_rounds = min(count + scenario.rounds_delta, window)
+            clipped = count + scenario.rounds_delta > window
+        else:
+            expected_rounds = min(count + scenario.injected_rounds, window)
+            clipped = False
+        assert record["rounds_clipped"] is clipped, scenario.name
+        assert record["expected"]["rounds"] == expected_rounds, scenario.name
+        assert record["actual"]["rounds"] == expected_rounds, scenario.name
+        if scenario.succeeds:
+            expected_last = f"replay-ci-{scenario.name}-{head[:8]}"
+        elif scenario.injected_rounds:
+            expected_last = "replay-conflict"
+        else:
+            # 纯永久拒绝：远端末条仍是基线那一条。
+            expected_last = f"seed-{count - 1}"
+        assert record["actual"]["last_run_id"] == expected_last, scenario.name
+        if clipped:
+            clipped_witnesses += 1
+    # 满窗（offset=0）时所有成功场景的 rounds 都是恒等式，摘要里必须逐条
+    # 写出「窗口已满」；满窗前 1 轮时只有 +2 场景被裁。
+    text = summary.read_text(encoding="utf-8")
+    assert text.count("窗口已满") == clipped_witnesses
+    assert clipped_witnesses == (8 if offset == 0 else 6), (
+        "满窗几何漂移：成功场景数或 +1/+2 增量分布变了，先改这里再改表")
 
 
 def test_driver_uses_the_configured_window(

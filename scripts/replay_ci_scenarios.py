@@ -81,6 +81,14 @@ R124 把注入矩阵抬过 R114/R117 的上限：本地补 N=7（七次全拒、
 此前 N>6 与 attempts>7 只有启发式保证（可达性不变量），没有一条真实
 回放能证明钩子计数与重试循环真的走到第 8/9 次。
 
+R125 用默认窗口（80）预演满窗：不设 ``XS2_MAX_ROUNDS``，种子历史直接
+顶满/差一轮，证明满窗时 rounds 断言退化为恒等式后，``rounds_clipped``
+标记与 ``last_run_id`` 仍是有效写入证据。
+
+R126 把失败形状夹具放进大预算链（N=8/attempts=9）：``fetched-failure-
+shape-hook-at-8`` 证明重试循环放大 push 次数时，artifact 的失败计数与
+逐场景 ``first_failure`` 原样落库。
+
 ## 退出码
 
 - 0：所有场景符合预期
@@ -563,6 +571,25 @@ FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO = Scenario(
     output_counts=(("push 被拒（第", 2), ("simulated rejection", 2)),
 )
 
+# R126：失败形状 × 大预算（N=8/attempts=9）。R124 证明大预算在生产
+# artifact（全过形状）上可达；这条把失败形状夹具放进同一条 9 次尝试链
+# ——重试循环放大的是 push 次数，artifact 的 failed/retried/attempts 与
+# 逐场景 first_failure 必须原样落库，不能因为路径变长被重算。
+FETCH_FAILURE_SHAPE_HOOK_AT_8_SCENARIO = Scenario(
+    "fetched-failure-shape-hook-at-8", 2, 9, reject_pushes=8,
+    conflict_on_reject=8, attempts=9, fetch=True,
+    artifact=FAILURE_SHAPE_ARTIFACT,
+    must_contain=("已下载 1 个文件",
+                  _FAILURE_SHAPE_METRICS,
+                  _FAILURE_SHAPE_SEMANTICS,
+                  _FAILURE_SHAPE_FIRST_FAILURES,
+                  "第 8 次拒绝时注入冲突",
+                  "rebase 冲突（第 8 次）",
+                  "第 9 次尝试",
+                  "已写回"),
+    output_counts=(("push 被拒（第", 8), ("simulated rejection", 8)),
+)
+
 # R120：全链 0 场景形状。0 场景是合法数据（例如 e2e 一个都没跑），写回要
 # 照常入库；语义行必须显式打印「（无场景）」，否则空行与「指纹没打」不可区分。
 EMPTY_SHAPE_ARTIFACT = "e2e-metrics-empty"
@@ -935,6 +962,7 @@ def run(repo: Path, branch: str, history_rel: str,
          FETCH_REJECTED_HOOK_AT_8_SCENARIO,
          FETCH_FAILURE_SHAPE_REJECTED_SCENARIO,
          FETCH_FAILURE_SHAPE_REJECTED_CONFLICT_SCENARIO,
+         FETCH_FAILURE_SHAPE_HOOK_AT_8_SCENARIO,
          FETCH_EMPTY_SCENARIO,
          FETCH_EMPTY_REJECTED_SCENARIO,
          FETCH_ALL_FAILED_SCENARIO,
