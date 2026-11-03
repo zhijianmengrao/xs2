@@ -48,7 +48,11 @@
 
 ## 6. CI
 
-随五轮合并推送（run 待回填）。
+随五轮一起推送 tip **`c9710a0`**，合并 run **41686188378**：10 job 全
+`success`（17:38:24→17:53:44 UTC）。两平台 `replay-ci-fetch-chain`
+**29/29 PASS**；新场景 `fetched-failure-shape-hook-at-8` 实测 exit=0、
+push_attempts=9。写回 **52→53**（`ci-41686188378`）；docs 回填预计
+**53→54**。
 
 ## 7. 边界与遗留
 

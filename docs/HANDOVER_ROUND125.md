@@ -52,7 +52,11 @@ R102 证明满窗时「rounds 恒等、last_run_id 是唯一证据」，但那�
 
 ## 6. CI
 
-随五轮合并推送（run 待回填）。
+随五轮一起推送 tip **`c9710a0`**，合并 run **41686188378**：10 个 job 全
+`success`（17:38:24→17:53:44 UTC，约 15m20s）。两平台
+`replay-ci-writeback` **17/17 PASS**、`replay-ci-fetch-chain` **29/29
+PASS**；backend **2673/65**、windows-backend **2709/29**（均 2738）。
+写回历史 **52→53**（`ci-41686188378`）；本文档回填提交预计 **53→54**。
 
 ## 7. 边界与遗留
 
