@@ -366,6 +366,16 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # R120：0 场景形状夹具（total=0）。同样只供全链回放，不进生产写回。
+      - name: Upload empty-shape metrics fixture for full-chain replay
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-metrics-empty
+          path: tests/fixtures/e2e_metrics_empty/e2e-metrics.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: e2e retry summary (observability)
         # 重跑频率此前只能 grep 日志（R68 §7-4）。metrics 缺失/损坏时脚本打印
         # 可见说明并退出 0，不让「没有数据」冒充「0 次重跑」。
