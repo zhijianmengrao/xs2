@@ -1379,3 +1379,7 @@ docstring 里有 skip 字样，自扫自咬是 R141 首跑实测。
 R142 的 B 系判据把 PROJECT_INFO 叙事账钉住：每轮专述 bullet（B1，豁免
 {33,34,35}）与分节账本段单调（B2，floor 23/41/112）。章节结构（叙事
 三层 + 历史锚）由实测得出并写进判据 docstring——改章节结构必须连动。
+
+R143 的 W 系判据把依赖双源钉住：requirements.txt 每包（extras 剥离）
+必须在 requirements-dev.lock（W1），`==` 钉版逐字同账（W2）。闭包超集
+与范围规格不在射程；一边升版另一边没跟会当场红。
