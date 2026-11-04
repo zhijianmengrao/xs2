@@ -9,10 +9,10 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **116 份**（`docs/HANDOVER_ROUND24..141.md`；R34/R35 从未有文档） |
+| 交接文档 | **117 份**（`docs/HANDOVER_ROUND24..142.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,978**（R140 树 2897 passed / 1 S3 中途入树红 / 28 skipped，R140 §5；R141 树 +52；本行由 S3 机判） |
-| CI 写回历史 | **70 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41902407692`；R141 跑预计 71） |
+| 当前用例 | **2,981**（R141 树 2950 passed / 28 skipped / 0 failed，R141 §5；R142 树 +3；本行由 S3 机判） |
+| CI 写回历史 | **71 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41905045492`；R142 跑预计 72） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
@@ -175,6 +175,7 @@ N3 防复发）。
 | R139 | 2026-11-05 | 收口轮：R135–R139 四账 + R140–R143 登记 | [md](HANDOVER_ROUND139.md) |
 | R140 | 2026-11-05 | scripts/ 引用面：孤儿清零 + CI 引用可解析 | [md](HANDOVER_ROUND140.md) |
 | R141 | 2026-11-05 | skip 分类：每条 skip 必须自述 | [md](HANDOVER_ROUND141.md) |
+| R142 | 2026-11-05 | PROJECT_INFO 专述 bullet 覆盖与顺序单调 | [md](HANDOVER_ROUND142.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 

@@ -1375,3 +1375,7 @@ R141 把 skip 自述钉成判据：tests/ 的每个 `pytest.mark.skip[if]` 标�
 必须带非空 reason、每个 `pytest.skip()/fail()` 调用必须带非空消息
 （平衡括号提取，无参调用不逃逸）。扫描器语料排除自身文件——扫描器的
 docstring 里有 skip 字样，自扫自咬是 R141 首跑实测。
+
+R142 的 B 系判据把 PROJECT_INFO 叙事账钉住：每轮专述 bullet（B1，豁免
+{33,34,35}）与分节账本段单调（B2，floor 23/41/112）。章节结构（叙事
+三层 + 历史锚）由实测得出并写进判据 docstring——改章节结构必须连动。
