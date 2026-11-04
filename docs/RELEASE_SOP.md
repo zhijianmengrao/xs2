@@ -55,6 +55,18 @@ tauri.conf 版本与公钥一致性 / latest.json 端点三项（version、URL �
 signature 与 .sig 一致）/ tauri.conf endpoints 与 updater.rs
 GITHUB_UPDATE_ENDPOINT 单源一致。
 
+**退出码判决表**（R132 分类；常量以 `scripts/verify_release.py` 为准，
+两侧由 `tests/test_release_sop_contract.py` 钉成同账）：
+
+| 退出码 | 脚本输出 | 含义 | 处置 |
+|---|---|---|---|
+| 0 | `ALL CHECKS PASSED` | 全部判决通过 | 可发版 |
+| 1 | `[fail]` | **判了不合格**：sha256 / key id / 验签 / 版本 / 公钥 / latest.json 三项任一不符 | 停发，逐项核对资产与 manifest 后重验 |
+| 2 | `[error]` | 环境或用法，**未作判定**：缺资产文件、公钥读不开、latest.json 不可达 | 修环境（补文件 / 重联网）后重跑 |
+| 4 | `[shape]` | 资产形状无效，**未作判定**：空 .sha256、坏 base64、blob 长度不对、manifest 结构不对 | 检查下载完整性（断点续传重下）后重跑 |
+
+`python -O` 不影响任何判决（R132：判决不是 `assert`）。
+
 ## 6. 注意事项
 
 - 更新通道 = **Core 安装器**（上游既有决策）；Full 用户检查更新会被引到 Core。

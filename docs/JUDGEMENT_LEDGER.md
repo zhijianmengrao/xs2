@@ -1352,3 +1352,8 @@ R137 的 S 系判据把索引 §1 三行快照钉到磁盘实况：交接文档�
 --collect-only` 确定性导出（前提：无模块级 importorskip，实测为零）。
 backend job 在自己的提交树上跑测试，bot 写回提交不改已检出树——严格
 恰等成立，无需竞态余量。
+
+R138 补一行（§10.12 同账延伸）：RELEASE_SOP §5 的退出码判决表与
+`verify_release.py` 的 `EXIT_*` 常量由 `test_release_sop_contract.py`
+钉成同账，锚点是脚本输出字面前缀（`[fail]`/`[error]`/`[shape]`/
+`ALL CHECKS PASSED`）——改任何一侧，另一侧判红。
