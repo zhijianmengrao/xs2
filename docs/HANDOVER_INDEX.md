@@ -12,8 +12,8 @@
 | 交接文档 | **107 份**（`docs/HANDOVER_ROUND24..132.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
 | 当前用例 | **2,792**（本机 2764 passed / 28 skipped / 0 failed，2026-11-04） |
-| CI 写回历史 | **59 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41826379385`） |
-| 代码基线 | `main` = `ddfb55b`（R131 后 docs 回写；R132 见 `HANDOVER_ROUND132.md` §6） |
+| CI 写回历史 | **60 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41832975143`） |
+| 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -258,8 +258,8 @@ R28 当时在 handover 里写过取回方式，但 R28 已不是入口；本索�
 
 1. **R133 开工前**：把 R133–R134 的主题写进 `PROJECT_INFO.md` 或 R133 引言，
    否则「五轮连推」只剩 1 轮可查。
-2. **回填已完成**（§6.2 四行）：R130/R131 文档 + PROJECT_INFO 已写入实测 run
-   与写回序号；R132 的 docs 回填待推送后补（预计 60→61）。
+2. **回填已完成**：R130/R131 的 CI 实测已写回正文；R132 代码 run
+   `41832975143` 十 job 全绿、写回 59→60，docs 回填后到 61。
 3. **补索引入口**：在 `PROJECT_INFO.md` §项目状态开头加一行指向本文件，
    顺带修掉 `HANDOVER_ROUND15..22.md` 的失效引用（§6.3）。
 4. **可选**：给 R112–R131 的 18 份文档补标题副标题（纯展示，风险为零）。
