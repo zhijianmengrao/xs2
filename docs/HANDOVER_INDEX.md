@@ -9,10 +9,10 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **114 份**（`docs/HANDOVER_ROUND24..139.md`；R34/R35 从未有文档） |
+| 交接文档 | **115 份**（`docs/HANDOVER_ROUND24..140.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,922**（本机 2893 passed / 28 skipped / 0 failed，R138 树；本行由 S3 机判） |
-| CI 写回历史 | **68 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41893454306`；R139 跑预计 69） |
+| 当前用例 | **2,926**（本机 2896 passed / 2 S 判据按流程延后红 / 28 skipped → 行修正后复跑见 R140 §5；本行由 S3 机判） |
+| CI 写回历史 | **69 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41896959067`；R140 跑预计 70） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
@@ -173,6 +173,7 @@ N3 防复发）。
 | R137 | 2026-11-05 | 索引 §1 快照数字机械化 | [md](HANDOVER_ROUND137.md) |
 | R138 | 2026-11-05 | RELEASE_SOP ↔ verify_release 退出码契约 | [md](HANDOVER_ROUND138.md) |
 | R139 | 2026-11-05 | 收口轮：R135–R139 四账 + R140–R143 登记 | [md](HANDOVER_ROUND139.md) |
+| R140 | 2026-11-05 | scripts/ 引用面：孤儿清零 + CI 引用可解析 | [md](HANDOVER_ROUND140.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
