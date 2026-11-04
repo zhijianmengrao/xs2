@@ -90,8 +90,10 @@ CI 里这一步是 `if: always()`：e2e 判红后，summary 仍要执行。如�
   `replay-ci-writeback` 两平台 **17/17 PASS**（`inject-at-7` exit=1/push=7、
   `budget-8-at-8` exit=0/push=9）；`replay-ci-fetch-chain` 两平台
   **29/29 PASS**。
-- 写回历史 **54→55**（`ci-41789989192`，bot 提交 `2b4bef0`）；本文档回填
-  提交预计 **55→56**。
+- 写回历史 **54→55**（`ci-41789989192`，bot 提交 `2b4bef0`）；本篇 docs 回填
+  提交 `313315a` 触发 run **41793979222**，**10 个 job 全 `success`**
+  （07:41:06→07:59:21 UTC，约 18m15s），写回 **55→56**
+  （`ci-41793979222`，bot 提交 `b962da3`）。
 
 ## 7. 边界与遗留
 
