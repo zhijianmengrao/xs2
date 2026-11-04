@@ -11,8 +11,8 @@
 |---|---|
 | 交接文档 | **109 份**（`docs/HANDOVER_ROUND24..134.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,901**（本机 2873 passed / 28 skipped / 0 failed，2026-11-04，R133） |
-| CI 写回历史 | **63 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41867789932`；R134 收口跑预计 64） |
+| 当前用例 | **2,909**（本机实测见 R135 §5） |
+| CI 写回历史 | **64 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41874905795`；R135 跑预计 65） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
@@ -167,6 +167,7 @@ N3 防复发）。
 | R132 | 2026-11-04 | 发版验收：判决不得是 `assert` | [md](HANDOVER_ROUND132.md) |
 | R133 | 2026-11-04 | 交接文档引用完整性：导航层防复发 | [md](HANDOVER_ROUND133.md) |
 | R134 | 2026-11-05 | 收口轮：R130–R134 五轮连推四账 | [md](HANDOVER_ROUND134.md) |
+| R135 | 2026-11-05 | CI 闸门形状：job 清单恰等 | [md](HANDOVER_ROUND135.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
