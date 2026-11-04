@@ -1340,3 +1340,9 @@ R135 把 §10.13 的导航层判据扩到 CI 闸门本身：ci.yml 顶层 job �
 尺），欠引用 job（frontend 零测试引用、windows-backend 引用最少）的
 runs-on 与关键步骤在场。新增 job 必须显式改清单并在 handover 记账——
 名单判据的「改清单要走明路」是特性，不是负担。
+
+R136 把导航层判据扩到账本之间：history.json 与 git bot 提交双向恰等
+（按 run_id 形状取集合，R93 前无 source 标注的 legacy 条目也在账），
+逐条形状（计数 int、passed+failed==total）与账序（唯一、exported_at 单调）
+一并钉住；时间戳形状 run_id 恰好 1 条（第 1 条 legacy 种子）。浅检出下
+判据显式红而非 skip——CI 两 backend 已 fetch-depth: 0。
