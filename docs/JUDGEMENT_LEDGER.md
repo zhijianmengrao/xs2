@@ -199,6 +199,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 写回幂等在回放链路成立（R127） | `tests/test_replay_ci_writeback.py::test_replay_same_run_id_rerun_is_a_no_change`、`test_replay_missing_metrics_file_reports_metrics_missing` |
 | 语义指纹截断只影响展示（R128） | `tests/test_replay_ci_writeback.py::test_semantics_line_truncates_display_but_not_the_record` |
 | e2e step summary 的坏形状只可见、不判死（R130） | `tests/test_e2e_retry_summary.py::test_malformed_scenarios_are_visible_and_not_fatal`、`test_malformed_counts_are_visible_and_not_fatal`、`test_render_raises_the_shape_error_instead_of_a_partial_table`、`test_render_escapes_pipes_and_newlines_in_table_cells`、`test_unparseable_payload_is_visible_and_not_fatal`、`test_non_object_payload_is_visible_and_not_fatal`、`test_usage_requires_exactly_one_path` |
+| CI 报告层：summary 单行、写失败只告警（R131） | `tests/test_ci_reporting.py::test_summary_appends_one_exact_bullet`、`test_summary_flattens_newlines_in_every_field`、`test_result_keeps_the_raw_multiline_detail`、`test_summary_write_failure_only_warns`、`test_summary_encoding_failure_only_warns`、`test_result_writes_exact_bytes_and_replaces_atomically`、`test_result_write_failure_only_warns_and_leaves_no_tmp`、`test_result_encoding_failure_only_warns_and_leaves_no_tmp`、`test_result_serialization_failure_only_warns`、`test_default_summary_path_reads_the_ci_environment`、`test_none_paths_are_no_ops` |
 | 沙箱 GC 四道守卫与默认 dry-run（R110） | `tests/test_replay_sandbox_gc.py::test_dry_run_lists_only_old_matching_directories`、`test_apply_removes_only_the_candidates`、`test_symlink_with_matching_name_is_skipped`、`test_negative_age_is_a_usage_error`、`test_missing_root_is_a_usage_error` |
 
 ## 7. 翻转点（R69）
@@ -1251,3 +1252,25 @@ R130 把同一契约补到内层：`render` 先过 `_count` / `_scenarios`，坏
 仍按 0 渲染（保留 R74 的兼容行为）。`_cell` 的竖线/换行转义同时补上首个
 用例。这里**不判 metrics 的业务有效性**——计数矛盾仍由 `record`/`check`
 在写回侧以退出 4 处置；摘要只保证「不崩、不静默」。
+
+### 10.11 报告层：单行与写失败不得判死（R131）
+
+`ci_reporting.py` 是 R98 集中出来的唯一实现：三个 CI 脚本共用「一行
+summary + 一份机读 JSON，且写失败只告警、不改判决」。它此前零直接用例，
+现有覆盖都从 `writeback()` / `fetch()` / `replay` 间接经过，只走单行
+detail 的 happy path。
+
+两处会把展示层变成判决层。第一，`_git_checked` 把 git stderr 整段塞进
+`WritebackError`，`fetch_ci_artifact` 把 HTTP body 截 300 字符塞进
+`detail`——二者都可能是多行；直接拼进 summary 会伪造出新的列表项/段落，
+读者分不清哪条是脚本写的结论。第二，payload 一旦混入 `Path` 等不可
+序列化对象，`json.dumps` 的 `TypeError` 会逃出 `emit_result`，让已经
+成功的主判决以 traceback 收场。孤立代理字符还会让 `write_text` 抛
+`UnicodeEncodeError`，两条写路径此前都未接住。
+
+R131 的处置：`_one_line` 把 summary 三个字段的 CR/LF 压成空格（机读 JSON
+的 `detail` 保持原文）；`emit_result` 先序列化再开临时文件，`TypeError` /
+`ValueError` 转成 `结果工件序列化失败（path）：…` 后返回；`emit_summary`
+与 `emit_result` 的写块都补 `UnicodeError` 降级。空 `GITHUB_STEP_SUMMARY`
+仍按「没有 summary」处理，不是当前目录。这里不转义 Markdown 元字符——
+`run_id` / `reason` 是固定类别与数字 run id；本轮只保证结构不被换行破坏。
