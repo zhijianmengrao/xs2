@@ -9,12 +9,12 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **107 份**（`docs/HANDOVER_ROUND24..132.md`；R34/R35 从未有文档） |
+| 交接文档 | **108 份**（`docs/HANDOVER_ROUND24..133.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,792**（本机 2764 passed / 28 skipped / 0 failed，2026-11-04） |
-| CI 写回历史 | **60 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41832975143`） |
+| 当前用例 | **2,901**（本机 2873 passed / 28 skipped / 0 failed，2026-11-04，R133） |
+| CI 写回历史 | **61 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41835904060`；R133 代码跑预计 62） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
-| 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
+| 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
 ## 2. 三层读法
@@ -48,12 +48,13 @@
 | 五轮连推（二） | R119–R123 | 5 | 失败 / 0 场景 / 全失败进生产全链、趋势表消费 |
 | 单轮 | R124 | 1 | 注入矩阵 N=7/8、attempts=9 |
 | 五轮连推（三） | R125–R129 | 5 | 满窗 80、大预算、写回幂等、语义指纹截断 |
-| 五轮连推（四，进行中） | R130–R132 | 3 | 展示层坏数据边界、CI 报告层降级、发版验收判决；**R133–R134 未做** |
+| 五轮连推（四，进行中） | R130–R133 | 4 | 展示层坏数据边界、CI 报告层降级、发版验收判决、交接文档引用完整性；R134 收口待做（主题已登记） |
 
-## 4. 全量索引（R24–R131）
+## 4. 全量索引（R24–R133）
 
 日期取文档首次入库的提交日期；主题取标题副标题（R112 起 18 份无副标题，
-按引言首句补）。
+按引言首句补；R133 已补齐 19 份含 R129/R132，钉测 `test_docs_navigation.py`
+N3 防复发）。
 
 | 轮次 | 日期 | 主题 | 文档 |
 |---|---|---|---|
@@ -164,6 +165,7 @@
 | R130 | 2026-11-04 | e2e step summary 的坏数据边界 | [md](HANDOVER_ROUND130.md) |
 | R131 | 2026-11-04 | CI 报告层单行与降级边界 | [md](HANDOVER_ROUND131.md) |
 | R132 | 2026-11-04 | 发版验收：判决不得是 `assert` | [md](HANDOVER_ROUND132.md) |
+| R133 | 2026-11-04 | 交接文档引用完整性：导航层防复发 | [md](HANDOVER_ROUND133.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
@@ -184,7 +186,7 @@ R10–R12 的副本含 BOM 与「〔待补〕」乱码占位符；若从 git 恢
 
 按 §5：**R4–R9 完全无记录；R1–R3 仅合并记录；R10–R23 只剩 git 历史；
 R34/R35 从未有文档**。现行维护入口从 R24 起，R36 已把 R34/R35 的可溯源部分
-补进正文。除此之外，R24–R131 每轮恰好一份，无缺号、无重号。
+补进正文。除此之外，R24–R133 每轮恰好一份，无缺号、无重号。
 
 ### 6.2 回填缺口（CI 写回 run 未记账）——**已在本轮补正文的 4 处**
 
@@ -213,28 +215,33 @@ R28 删除 R10–R23 后，以下位置仍在引用它们：
 
 | 位置 | 引用 | 处置建议 |
 |---|---|---|
-| `docs/PROJECT_INFO.md` §项目状态 | 「逐轮记录见 `docs/HANDOVER_ROUND15..22.md`」、`HANDOVER_ROUND21 §9`、`HANDOVER_ROUND23.md` | 加一行「R15–R23 已归档删除，见本索引 §5」 |
-| `docs/PROJECT_INFO.md` 平台注意事项 | `HANDOVER_ROUND18 §4` | 同上 |
+| `docs/PROJECT_INFO.md` §项目状态 | 「逐轮记录见 `docs/HANDOVER_ROUND15..22.md`」、`HANDOVER_ROUND21 §9`、`HANDOVER_ROUND23.md` | ✅ R133 已修（死链改指 §5 / 补归档取回标注） |
+| `docs/PROJECT_INFO.md` 平台注意事项 | `HANDOVER_ROUND18 §4` | ✅ R133 已修（R18 引用即 §5 取回指引，带标记） |
 | `docs/HANDOVER_ROUND32.md` §6 | `docs/HANDOVER_ROUND15..32.md` | 历史文档，不改 |
-| `docs/humanware-helper-contract.md` | `docs/HANDOVER_ROUND20.md`（B11–B13）、`HANDOVER_ROUND21.md` | 同上 |
-| `src/core/win_names.py`、`src/workflow/executor_supervisor.py`、`scripts/audit_storage_names.py`、`tests/test_executor_runtime_dir.py` 等注释 | R18/R20/R21 文档 | 同上 |
+| `docs/humanware-helper-contract.md` | `docs/HANDOVER_ROUND20.md`（B11–B13）、`HANDOVER_ROUND21.md` | ✅ R133 已加归档取回标注（原建议「不改」，因它是 v3.4 活契约而推翻，见 R133 §3.1） |
+| `src/core/win_names.py`、`src/workflow/executor_supervisor.py`、`scripts/audit_storage_names.py`、`tests/test_executor_runtime_dir.py` 等注释 | R18/R20/R21 文档 | 不改（注释性散文，历史轮次号仍可经索引 §5 取回） |
 
 R28 当时在 handover 里写过取回方式，但 R28 已不是入口；本索引 §5 提供统一口径。
+R133 起失效引用有钉测把守（`tests/test_docs_navigation.py` N1：可解析或带
+归档标记；台账 §10.13）。
 
 ### 6.4 结构与编号
 
 1. **`PROJECT_INFO.md` 标题陈旧**：仍写「项目状态（2026-10-24 完结）」，
    内容已续写到 R131（完结后又跑了 108 轮）。建议改为「R22 完结 → R24 起
-   维护迭代（至 R131）」。
+   维护迭代（至 R131）」。✅ R133 已改为「至 R133」并逐轮跟进。
 2. **`PROJECT_INFO.md` 轮次顺序错位**：`R39` 排在 `R40` 之后，`R32` 排在
    `R39/R40` 之后（§项目状态的 bullet 顺序）。只影响阅读，不影响事实。
    R112 起 20 条 bullet 此前直接挂在 §平台注意事项 末尾，R132 已补
-   「§迭代记录续记（R112 起）」分节，内容未改。
+   「§迭代记录续记（R112 起）」分节，内容未改。✅ R133 已重排为单调
+   （R32→R31 之后；R39→R40 之前）。
 3. **38 / 107 份没有「下一轮候选 / 后续」章节**：R28、R32、R33、R88–R101、R132、
    R112–R131。规划只能从下一轮的引言倒推；R130/R131 只写了「R130–R134
-   五轮连推」，**R132–R134 的主题未登记**。
+   五轮连推」，**R132–R134 的主题未登记**。✅ 主题部分 R133 已登记
+   （R133=引用完整性，R134=收口轮），候选章节缺口仍在。
 4. **18 份 R112 起的文档标题没有主题副标题**，需读引言才知道本轮做什么
-   （本索引 §4 已补主题列）。
+   （本索引 §4 已补主题列）。✅ R133 已补齐 19 份（含 R129/R132），
+   N3 钉测防复发。
 5. **记忆不在仓库内**：收口轮的「四账」含会话记忆
    （`~/.zcode/.../memory/xs2-round-status.md`），外部接手者读不到；
    §1 的数字已按仓库内可核对的口径重述。
@@ -252,16 +259,16 @@ R28 当时在 handover 里写过取回方式，但 R28 已不是入口；本索�
 | `config/skills_config.json` 保持未提交（C1） | 多轮 | 外来改动，勿提交 |
 | 两个 flake 家族：e2e 形状判据（R65 已修）、executor pool `node_control_conflict`（R66 已结构化修复） | R65 / R66 | 已闭环，保留为回归 |
 | POSIX 真跑、macOS 签名、HumanwareScoreCard 三笔早期遗留 | R21 §9 | 分别由 CI ubuntu、R44 核对、R25–R27 接线闭环 |
-| R133–R134 主题未定 | R130/R131 引言 | **下一轮先做这件事** |
+| R133–R134 主题未定 | R130/R131 引言 | ✅ R133 已登记（R133=交接文档引用完整性；R134=收口轮 R130–R134 四账） |
 
 ## 8. 建议动作（按优先级）
 
-1. **R133 开工前**：把 R133–R134 的主题写进 `PROJECT_INFO.md` 或 R133 引言，
-   否则「五轮连推」只剩 1 轮可查。
+1. ✅ **R133 已办**（原「R133 开工前」）：R133–R134 主题已写进
+   `PROJECT_INFO.md` 尾段与 R133 引言。
 2. **回填已完成**：R130/R131 的 CI 实测已写回正文；R132 代码 run
    `41832975143` 十 job 全绿、写回 59→60，docs 回填后到 61。
-3. **补索引入口**：在 `PROJECT_INFO.md` §项目状态开头加一行指向本文件，
-   顺带修掉 `HANDOVER_ROUND15..22.md` 的失效引用（§6.3）。
+3. ✅ **R133 已办**（原「补索引入口」）：索引指针 R132 已加；失效引用
+   R133 已修清并有钉测把守（N1）。
 4. **可选**：给 R112–R131 的 18 份文档补标题副标题（纯展示，风险为零）。
 5. **不要做**：回改 R101–R111 的 12 个写回 run id（权威在 `history.json`，
    回改只会制造第二份账）。

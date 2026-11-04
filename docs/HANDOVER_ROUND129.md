@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 129
+# DeterminFlow (xs2) 交接报告 — Round 129（收口轮：R125–R129 四账）
 
 > 单 profile。五轮连推（R125–R129）收口轮：零代码改动，只做四账审计与
 > 判据台账收口。R125–R128 的代码/测试已随五轮合并推送，CI 结果见回填。

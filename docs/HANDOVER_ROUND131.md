@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 131
+# DeterminFlow (xs2) 交接报告 — Round 131（CI 报告层单行与降级边界）
 
 > 单 profile。新五轮连推（R130–R134）第 2 轮：**CI 报告层的单行与降级边
 > 界**。`ci_reporting.py` 自 R98 起是「一行 summary + 一份机读 JSON，且写

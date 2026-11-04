@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 121
+# DeterminFlow (xs2) 交接报告 — Round 121（全链全失败形状 + 拒绝重试）
 
 > 单 profile。五轮连推第 3 轮：把 R113 的 **全失败** 形状搬进生产
 > fetch-chain——3 个场景全部失败也照常入库，失败数据也是数据；再叠一次

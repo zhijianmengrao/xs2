@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 130
+# DeterminFlow (xs2) 交接报告 — Round 130（e2e step summary 的坏数据边界）
 
 > 单 profile。新五轮连推（R130–R134）第 1 轮：**e2e step summary 的坏数据
 > 边界**。`e2e_retry_summary.py` 的说明承诺「metrics 缺失或损坏 → 可见说明 +

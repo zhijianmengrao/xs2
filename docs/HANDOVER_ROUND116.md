@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 116
+# DeterminFlow (xs2) 交接报告 — Round 116（失败形状 × 拒绝/注入：内容不被重算）
 
 > 单 profile。五轮连续推进的第 3 轮：把「失败形状 artifact」与「拒绝/冲突
 > 重试」组合起来——重试只应改变 push 次数与远端轮数，不能把 artifact 里的

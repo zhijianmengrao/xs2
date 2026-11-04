@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 126
+# DeterminFlow (xs2) 交接报告 — Round 126（失败形状 × 大预算 attempts=9）
 
 > 单 profile。五轮连推第 2 轮：**失败形状 × 大预算**——把 R119 的失败形状
 > 夹具放进 R124 的 9 次尝试链。R124 证明大预算在生产 artifact（全过形状）

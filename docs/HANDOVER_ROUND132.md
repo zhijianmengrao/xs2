@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 132
+# DeterminFlow (xs2) 交接报告 — Round 132（发版验收：判决不得是 assert）
 
 > 单 profile。新五轮连推（R130–R134）第 3 轮：**发版验收脚本的判决与降级
 > 边界**。`scripts/verify_release.py` 是发版前的判决脚本，此前零用例，且十处

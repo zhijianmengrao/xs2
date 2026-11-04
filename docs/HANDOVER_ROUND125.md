@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 125
+# DeterminFlow (xs2) 交接报告 — Round 125（满窗实战：默认窗口 80）
 
 > 单 profile。五轮连推（R125–R129）第 1 轮：**满窗实战**——用真实默认窗口
 > （80）预演「历史顶满时 CI replay 怎么活」。R102 的边界几何用显式窗口 40

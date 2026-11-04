@@ -99,8 +99,9 @@ CLI 侧参数值为 `-` 即读 stdin（`humanware_helper._arg_or_stdin`）。
     并写进 `plugins.lock.json` / `skills_config.json` 等**跨平台共享键**，故判定
     `win_names.unsafe_device_name` **平台无关**（条件式校验会让同一份配置在 POSIX
     有效、在 Windows 永久损坏）。历史数据可用 `python scripts/audit_storage_names.py`
-    只读体检（exit 0 clean / 1 有发现）。缺陷细节见 docs/HANDOVER_ROUND20.md
-    （B11/B12/B13）与 docs/HANDOVER_ROUND21.md；回归锚定在
+    只读体检（exit 0 clean / 1 有发现）。缺陷细节见 docs/HANDOVER_ROUND20.md（B11/B12/B13，已归档，取回见
+    docs/HANDOVER_INDEX.md §5）
+    与 docs/HANDOVER_ROUND21.md（已归档）；回归锚定在
     `tests/test_plugin_name_guard.py`（60）、`tests/test_marketplace_skill_id_guard.py`（33）、
     `tests/test_storage_name_audit.py`（5）等。
 

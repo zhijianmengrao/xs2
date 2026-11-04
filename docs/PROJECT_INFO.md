@@ -6,14 +6,14 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R131）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R133）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
 > `git show a249e17^:docs/HANDOVER_ROUND18.md` 取回；本段仍保留当时的结论。
 
 - **迭代完结于 Round 22（完结轮，纯终验+文档定稿）**（R15–R22 共 8 轮「审计→修复→
-  回归→交接」循环，逐轮记录见 docs/HANDOVER_ROUND15..22.md）；全部提交已推送
+  回归→交接」循环，逐轮记录已随 R28 归档删除，取回方式见 docs/HANDOVER_INDEX.md §5）；全部提交已推送
   （`origin/main..main` = 0）。
 - **交付摘要**：修复 13 个编号缺陷（B1–B13，涵盖 HTTP 500 逃逸、幻影目录数据损坏、
   内容静默丢失、409 谎报占用等类别）；「名字面」安全治理全线闭环（路径面 +
@@ -223,7 +223,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   状态悬挂 `starting`（移入 try 块，状态复位 stopped）；③O-a 审计脚本挂进
   CI windows-backend job；④O-b 活体 e2e F5–F7 探测公共管线去重。双基线
   **1735/96/0（Low-IL）、1820/11/0（High-IL 权威）**，总用例 1828→1831。
-  详见 docs/HANDOVER_ROUND23.md。
+  详见 docs/HANDOVER_ROUND23.md（已随 R28 归档删除，`git show a249e17^:docs/HANDOVER_ROUND23.md` 取回）。
 - **R24 维护轮（2026-10-24，维护态第二轮）**：R23 §9 候选落地——①修复
   **B15**：活体 e2e `_get`/`_post` 补 URLError/OSError 分支（服务中途宕机返回
   -1 而非未捕获异常；F5–F7 探测的「-1→诚实 skip」路径此前是死代码）；
@@ -319,6 +319,20 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   版本线说明：1.0.0 低于上游 1.1.1 属 fork 自有起点，上游客户端需全新
   安装；大陆直连下载慢（33MB 实测 ~30KB/s），痛点成真时按 R28 §6 选项 B
   迁移。详见 docs/HANDOVER_ROUND31.md。
+- **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
+  评分/检查历史持久化（`web/src/lib/humanwareHistory.ts`，localStorage 按
+  工作区隔离/20 条/受限降级 + 两组件接线 + 8 测试，活体验证含跨刷新）；
+  发版固化（`scripts/verify_release.py` 参数化验收 + `docs/RELEASE_SOP.md`）；
+  死通道清理因无 cargo 无法本地验证记有意遗留。②**小说创作全流程实测**：
+  10 页面走查全绿；build 工作流实跑（世界观管线多 agent 真实 LLM 产出
+  7,749 字世界观，首次因第三方模型跑飞失败【completion 打满 65536 截断，
+  非代码缺陷】重试成功，进度 11%→22%）；reader-sim 实跑 30 秒出报告
+  （25 分/3 问题/返修入口）。③无产品缺陷、无新增优化项 → **v1.0.1 定为
+  暂定最终版**（六处 bump + notes + tag + 流水线 + 验收全过）。
+  本轮基线：前端 **8 组 447 条 0 fail**（净增 8）、Low-IL 1741/96/0、
+  High-IL 1826/11/0（一次 3-fail 为服务重启竞态自证非缺陷）、审计 clean、
+  活体 e2e 17 passed。项目就此收官，维护入口与遗留清单见
+  docs/HANDOVER_ROUND32.md §6。
 - **R36 收编轮（2026-10-26）**：R34/R35 两轮未提交工作全部落地并补齐文档（此前
   无交接文档）——①**B20**（R34）：清单损坏不再静默重置整书（损坏判定 + `_corrupt`
   标记 + 保存前隔离备份 + 38 条 round34 回归，`553c249`）；②**B21**（R35）：未知
@@ -377,24 +391,6 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   一次（character `agent_deep`）——供应商分钟级流式停摆，属质量面非代码缺陷。
   ⑤`nope_missing` 残留清理。基线：Low-IL **1803/96/0**、High-IL **1888/11/0（权威）**、
   插件 98/0、前端 447/0（零改动）、审计 [clean]。详见 docs/HANDOVER_ROUND38.md。
-- **R40 维护轮（2026-10-28，R39 §6 三候选全落地）**：①契约 §6.1 常驻回归
-  基线 R25 起首次专项复跑，四层全绿零未解释差异（L1 24 / L2 活体 17/0
-  双轮 / L3 106+1skip / L4 插件 98/0 双 CWD / 审计 [clean]×2）。②
-  **B26/B28 同族机械化终局**：`test_read_endpoints_static_guard.py` 以纯
-  AST 扫描全部 14 个路由模块（119 GET 处理器、9 resolver 调用点），断言
-  GET 处理链可达的 `resolve_workflow_workspace` 必显式 `create=False`
-  （含 `_console_root` 参数化传播），防空转下限防改名空转，双变异咬合
-  验证零误报。③**供应商失败率画像**（R38 §7.4 落地）：`run_profile.py`
-  纯函数聚合 + 只读端点 `GET …/tasks/{id}/run-profile` + 挖矿脚本
-  `provider_failure_profile.py`；历史数据复现 R38 §2.0 的 agent_deep
-  629.7s timeout；r38-flow 两次 export 实跑产出画像（30s 内完成）。
-  ④修复 **B31**——run 记录 `completed_at` 恒空（两条执行路径只给 task
-  盖章），`_finalize_run_artifacts` 终态盖章（retry_waiting 不盖），
-  画像 wall_seconds 从此可算。基线：Low-IL **1826/96/0**、High-IL
-  **1911/11/0（权威）**（对账 1811+15、1896+15）、前端 447/0（零改动）、
-  索引 59 条零变化；8021 重启两次均 4/4 ready。运维注意：ZCode 后台
-  shell 启动的服务会被连带回收，须 PowerShell Start-Process 脱离启动。
-  详见 docs/HANDOVER_ROUND40.md。
 - **R39 维护轮（2026-10-28，R38 §7 候选落地 + B26 家族全面收口）**：①修复
   **B28**——B26 的 workflow 面残留：`GET workspace-files`、
   `GET workspace-files/content`、`GET tasks/{id}/workspace-file` 与
@@ -416,20 +412,24 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
   插件 **98/0（双 CWD 口径）**、前端 447/0（零改动）、审计 [clean]、
   索引零污染；8021 服务重启加载全部 R39 代码，4/4 执行器 ready、活体
   探针复验通过。详见 docs/HANDOVER_ROUND39.md。
-- **R32 收官轮（2026-10-25，项目暂定最终版 v1.0.1）**：①R31 建议落地——
-  评分/检查历史持久化（`web/src/lib/humanwareHistory.ts`，localStorage 按
-  工作区隔离/20 条/受限降级 + 两组件接线 + 8 测试，活体验证含跨刷新）；
-  发版固化（`scripts/verify_release.py` 参数化验收 + `docs/RELEASE_SOP.md`）；
-  死通道清理因无 cargo 无法本地验证记有意遗留。②**小说创作全流程实测**：
-  10 页面走查全绿；build 工作流实跑（世界观管线多 agent 真实 LLM 产出
-  7,749 字世界观，首次因第三方模型跑飞失败【completion 打满 65536 截断，
-  非代码缺陷】重试成功，进度 11%→22%）；reader-sim 实跑 30 秒出报告
-  （25 分/3 问题/返修入口）。③无产品缺陷、无新增优化项 → **v1.0.1 定为
-  暂定最终版**（六处 bump + notes + tag + 流水线 + 验收全过）。
-  本轮基线：前端 **8 组 447 条 0 fail**（净增 8）、Low-IL 1741/96/0、
-  High-IL 1826/11/0（一次 3-fail 为服务重启竞态自证非缺陷）、审计 clean、
-  活体 e2e 17 passed。项目就此收官，维护入口与遗留清单见
-  docs/HANDOVER_ROUND32.md §6。
+- **R40 维护轮（2026-10-28，R39 §6 三候选全落地）**：①契约 §6.1 常驻回归
+  基线 R25 起首次专项复跑，四层全绿零未解释差异（L1 24 / L2 活体 17/0
+  双轮 / L3 106+1skip / L4 插件 98/0 双 CWD / 审计 [clean]×2）。②
+  **B26/B28 同族机械化终局**：`test_read_endpoints_static_guard.py` 以纯
+  AST 扫描全部 14 个路由模块（119 GET 处理器、9 resolver 调用点），断言
+  GET 处理链可达的 `resolve_workflow_workspace` 必显式 `create=False`
+  （含 `_console_root` 参数化传播），防空转下限防改名空转，双变异咬合
+  验证零误报。③**供应商失败率画像**（R38 §7.4 落地）：`run_profile.py`
+  纯函数聚合 + 只读端点 `GET …/tasks/{id}/run-profile` + 挖矿脚本
+  `provider_failure_profile.py`；历史数据复现 R38 §2.0 的 agent_deep
+  629.7s timeout；r38-flow 两次 export 实跑产出画像（30s 内完成）。
+  ④修复 **B31**——run 记录 `completed_at` 恒空（两条执行路径只给 task
+  盖章），`_finalize_run_artifacts` 终态盖章（retry_waiting 不盖），
+  画像 wall_seconds 从此可算。基线：Low-IL **1826/96/0**、High-IL
+  **1911/11/0（权威）**（对账 1811+15、1896+15）、前端 447/0（零改动）、
+  索引 59 条零变化；8021 重启两次均 4/4 ready。运维注意：ZCode 后台
+  shell 启动的服务会被连带回收，须 PowerShell Start-Process 脱离启动。
+  详见 docs/HANDOVER_ROUND40.md。
 
 ## 技术栈与运行方式
 
@@ -802,3 +802,4 @@ xs2/
 - 2026-11-04 R130 单 profile（**e2e step summary 的坏数据边界**）：新五轮连推（R130–R134）第 1 轮。`e2e_retry_summary.py` 的说明承诺「metrics 缺失或损坏 → 可见说明 + 退出 0」，但 R74 只守住缺文件/JSON 坏/顶层非对象；内层坏形状此前会以 traceback 把 `if: always()` 的可观测性步骤判红：`scenarios` 为对象/字符串（AttributeError）、条目为 `None`（AttributeError）、`attempts` 为 `"2"`（ValueError）、计数为 `"10"`（ValueError），并且 `passed: true` 会被静默渲染成「通过 1」。本轮新增 `SummaryShapeError` + `_count`/`_scenarios`：渲染前只校验真正要读的字段（bool/负数/非整数拒绝，缺省仍按 0），`main` 捕获后打印 `_e2e metrics 形状无效（path）：…_` 并退出 0；`_cell` 的竖线/换行转义补上首个用例。新增 `tests/test_e2e_retry_summary.py`（9 个函数 / 17 条）。**+17 → 总用例 2755**，定向 **88 passed**（4.13s）；本机全量 **2727 passed / 28 skipped / 0 failed**（2755 条，484.40s）；首跑曾因系统 git `core.symlinks=false` 单红 `test_plugin_store.py::test_symlink_cannot_escape_checked_out_package`，加回 R124/R129 口径 `core.symlinks=true` 后全绿（非回归）。变异 **M1–M6 6/6**（非列表静默按空 2 红、不转义 1 红、坏形状退 1 共 10 红、bool 冒充 1 红、负数 attempts 1 红、条目不查对象 1 红），`cp` 还原后 sha256 逐字节相同。判据台账 §6 补一行、§10.10 新增一段。**CI**：提交 **`17f8014`**，run **41789989192** 十 job 全 `success`（07:06:43→07:24:40 UTC，约 17m57s）：backend **2690/65**、windows-backend **2726/29**（均 2755）；`replay-ci-writeback` 两平台 **17/17 PASS**、`replay-ci-fetch-chain` 两平台 **29/29 PASS**；写回 **54→55**（`ci-41789989192`），本篇回填提交 `313315a` 触发 run **41793979222** 十 job 全 `success`（07:41:06→07:59:21 UTC，约 18m15s）、写回 **55→56**（bot `b962da3`）。**边界**：生产 e2e 判定与 metrics 生成零改动；摘要仍不判业务有效性（计数矛盾由 record/check 退 4）；`config/skills_config.json` 保持未提交。详见 HANDOVER_ROUND130.md。
 - 2026-11-04 R131 单 profile（**CI 报告层的单行与降级边界**）：新五轮连推（R130–R134）第 2 轮。`scripts/ci_reporting.py` 自 R98 起是「一行 summary + 一份机读 JSON，且写失败只告警、不改判决」的唯一实现，三个 CI 脚本依赖但此前零用例。两条真实缺口：git stderr / HTTP body 的 detail 常带换行，直接拼进 step summary 会伪造列表项；payload 混入 `Path` 等不可序列化对象时 `json.dumps` 的 TypeError 逃出 `emit_result`，让已成功的主判决以 traceback 收场；孤立代理字符还会让写文件抛 UnicodeEncodeError。本轮新增 `_one_line`（run_id/reason/detail 的 CR/LF 压成空格；机读 JSON 的 detail 保留原文），`emit_result` 先序列化再开临时文件并捕获 TypeError/ValueError → `结果工件序列化失败（path）：…`，两条写路径补 UnicodeError 降级；空 `GITHUB_STEP_SUMMARY` 仍按「没有 summary」。新增 `tests/test_ci_reporting.py`（11 个函数 / 12 条）。**+12 → 总用例 2767**，定向 **83 passed**（39.32s）；本机全量 **2739 passed / 28 skipped / 0 failed**（2767 条，489.75s）；变异 **M1–M8 8/8**（不压平换行 1 红、序列化不降级 2 红、不清理 tmp 2 红、缩进漂移 1 红、覆盖 summary 1 红、空环境变量 1 红、两处编码降级各 1 红），`cp` 还原后 sha256 逐字节相同。判据台账 §6 补一行、§10.11 新增一段。**CI**：提交 **`eba19e3`**，run **41800285110** 十 job 全 `success`（08:32:27→08:49:34 UTC，约 17m07s）：backend **2702/65**、windows-backend **2738/29**（均 2767）；`replay-ci-writeback` 两平台 **17/17 PASS**（`inject-at-7` exit=1/push=7、`budget-8-at-8` exit=0/push=9）、`replay-ci-fetch-chain` 两平台 **29/29 PASS**；写回 **56→57**（`ci-41800285110`，bot `59f6281`），本篇回填提交 `a9bb275` 触发 run **41805112750** 十 job 全 `success`（09:09:21→09:26:13 UTC，约 16m52s）、写回 **57→58**（bot `4645763`）。**边界**：压平只影响人读 summary，机读 JSON 保持原文；不转义 Markdown 元字符；三个调用方与生产判决零改动；`config/skills_config.json` 保持未提交。详见 HANDOVER_ROUND131.md。
 - 2026-11-04 R132 单 profile（**发版验收：判决不得是 assert**）：新五轮连推（R130–R134）第 3 轮。`scripts/verify_release.py` 是发版前的判决脚本（sha256 / minisign key id / ed25519 验签 / tauri.conf 版本与公钥 / latest.json 三项），此前零用例且十处判断全是裸 `assert`——`python -O` 会整段删除判断，脚本仍打印 `ALL CHECKS PASSED` 并退 0（实测复现：`.sha256` 换成全 0 仍退 0）。坏输入也各有 traceback：空 `.sha256` → IndexError、坏 base64 → binascii.Error、manifest 缺键 → KeyError、断网 → URLError，且退出码同为 1，与「判了不合格」无法区分。本轮改为显式判决：`VerificationFailure` / `AssetShapeError` / `EnvironmentProblem` 三类收口到 **1 判了不合格 / 4 形状无效 / 2 环境或用法**（没有 8，也没有 3）；`_require` 取代全部 assert，`_sha256_expected` 先判 64 位十六进制再比较，`_minisign_blob` 钉注释行/74B/42B，`_load_manifest` 校验 version/url/signature 类型。行为不变（四阶段输出、`ALL CHECKS PASSED`、`--full/--repo/--pubkey/--skip-manifest`）。新增 `tests/test_verify_release.py`（25 个函数 / 25 条）。**+25 → 总用例 2792**，定向 **25 passed**（0.71s），本机全量 **2764 passed / 28 skipped / 0 failed**（561.93s）。变异 **M1–M6 6/6**（判决恒通过 8 红、sha256 校验失效 1 红、blob 长度失效 2 红、注释行失效 1 红、验签失败被吞 1 红、判决退回 assert 8 红），`cp` 还原后 sha256 逐字节相同。判据台账 §6 补一行、§10.12 新增一段。**CI**：提交 **`2668236`**，run **41832975143** 十 job 全 `success`（12:52:03→13:09:04 UTC，约 17m01s），写回 **59→60**（`ci-41832975143`，bot `096ff16`），本篇回填预计 **60→61**。**边界**：验收仍不判上传者身份与传输来源；仍是发版时手工执行的闸门（需真实产物，不进 CI）；`--skip-manifest` 是已知离线盲区。详见 HANDOVER_ROUND132.md。
+- 2026-11-04 R133 单 profile（**交接文档引用完整性：导航层防复发**）：新五轮连推（R130–R134）第 4 轮。主题登记（HANDOVER_INDEX §8.1 落实）：R133 = 交接文档引用完整性——活文档（`docs/PROJECT_INFO.md` / `docs/HANDOVER_INDEX.md` / `docs/humanware-helper-contract.md`）里对已归档 HANDOVER 文档的具体引用必须可解析或带归档取回标记。本轮实测修 PROJECT_INFO 两处失效引用（`HANDOVER_ROUND15..22.md` 区间写法、`HANDOVER_ROUND23.md`）与 helper-contract 两处（`HANDOVER_ROUND20/21.md`）、§项目状态 R32/R39/R40 bullet 顺序错位（R32 排在 R39/R40 之后、R40 排在 R39 之前）、19 份 R112–R132 标题补主题副标题（索引 §6.4.4）。新增 `tests/test_docs_navigation.py` 钉测：活文档失效引用（归档标记豁免）、索引 §4 覆盖完整性（新交接文档必须登记）、H1 标题含副标题不变量。**R134 主题：收口轮（R130–R134 五轮连推四账）**。

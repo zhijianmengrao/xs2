@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 128
+# DeterminFlow (xs2) 交接报告 — Round 128（语义指纹截断边界）
 
 > 单 profile。五轮连推第 4 轮：**语义指纹截断边界**。`SEMANTICS_TEXT_LIMIT=160`
 > 自 R112 存在至今零覆盖——「截断只影响展示，不参与任何判决」这句注释

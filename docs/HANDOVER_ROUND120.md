@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 120
+# DeterminFlow (xs2) 交接报告 — Round 120（全链 0 场景形状 + 拒绝重试）
 
 > 单 profile。五轮连推第 2 轮：把 R113 的 **0 场景** 形状搬进生产
 > fetch-chain——0 场景是合法数据，写回照常入库，语义行必须显式打印

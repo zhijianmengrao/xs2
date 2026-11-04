@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 122
+# DeterminFlow (xs2) 交接报告 — Round 122（失败形状的下游趋势消费）
 
 > 单 profile。五轮连推第 4 轮：把「失败形状入库」与「趋势表展示」接起来——
 > 用 R119–R121 的同一组夹具走真实 replay 写回，再从沙箱 history 渲染趋势

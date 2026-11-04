@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 117
+# DeterminFlow (xs2) 交接报告 — Round 117（全链注入 N=6 · fetch-chain）
 
 > 单 profile。五轮连续推进的第 4 轮：把本地矩阵的 **N=6 / attempts=7**
 > 搬进全链——真实 artifact 下载后再走六次拒绝、末次注入、第 7 次成功。

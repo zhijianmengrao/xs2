@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 115
+# DeterminFlow (xs2) 交接报告 — Round 115（趋势表显示失败列 + 0 场景文案拆分）
 
 > 单 profile。五轮连续推进的第 2 轮：失败形状的**下游消费**——历史条目从
 > R112 起就记录 `failed`，但 `render_trend` 的趋势表一直没显示它；合法的

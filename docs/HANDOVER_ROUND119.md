@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 119
+# DeterminFlow (xs2) 交接报告 — Round 119（失败形状 × 拒绝/注入进生产全链 + R118 CI 回填）
 
 > 单 profile。收口轮之后的下一轮：**A1** 回填 R118 的 CI 实测结果；
 > **B1** 把 R116 的「失败形状 × 拒绝/注入」组合搬进生产 fetch-chain；

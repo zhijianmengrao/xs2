@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 113
+# DeterminFlow (xs2) 交接报告 — Round 113（注入矩阵 N=4/5 + 全链失败形状）
 
 > 单 profile。用户拍板 **1C+2A**：注入矩阵与全链失败形状两条边界合并成一轮；
 > `config/skills_config.json` 外来改动保持未提交。生产行为改动只涉及

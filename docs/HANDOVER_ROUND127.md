@@ -1,4 +1,4 @@
-# DeterminFlow (xs2) 交接报告 — Round 127
+# DeterminFlow (xs2) 交接报告 — Round 127（写回幂等 replay 层）
 
 > 单 profile。五轮连推第 3 轮：**写回幂等在回放链路成立**。no-change 与
 > metrics-missing 此前只有 writeback() 层用例（`test_ci_writeback_history.py`）；
