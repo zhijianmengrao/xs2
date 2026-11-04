@@ -9,10 +9,10 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **113 份**（`docs/HANDOVER_ROUND24..138.md`；R34/R35 从未有文档） |
+| 交接文档 | **114 份**（`docs/HANDOVER_ROUND24..139.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,921**（本机 2893 passed / 28 skipped / 0 failed，R138；本行由 S3 机判） |
-| CI 写回历史 | **67 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41888611769`；R138 跑预计 68） |
+| 当前用例 | **2,922**（本机 2893 passed / 28 skipped / 0 failed，R138 树；本行由 S3 机判） |
+| CI 写回历史 | **68 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41893454306`；R139 跑预计 69） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
@@ -48,7 +48,8 @@
 | 五轮连推（二） | R119–R123 | 5 | 失败 / 0 场景 / 全失败进生产全链、趋势表消费 |
 | 单轮 | R124 | 1 | 注入矩阵 N=7/8、attempts=9 |
 | 五轮连推（三） | R125–R129 | 5 | 满窗 80、大预算、写回幂等、语义指纹截断 |
-| 五轮连推（四） | R130–R134 | 5 | 展示层坏数据边界、CI 报告层降级、发版验收判决、交接文档引用完整性、收口；R135–R139「流程资产自描述」已登记（R134 §9） |
+| 五轮连推（四） | R130–R134 | 5 | 展示层坏数据边界、CI 报告层降级、发版验收判决、交接文档引用完整性、收口 |
+| 五轮连推（五） | R135–R139 | 5 | 流程资产自描述：CI job 清单恰等、history↔git 双账、索引快照机械化、SOP↔判决脚本同账、收口；R140–R143 已登记（R139 §7） |
 
 ## 4. 全量索引（R24–R134）
 
@@ -171,6 +172,7 @@ N3 防复发）。
 | R136 | 2026-11-05 | history.json ↔ git 双账核对 | [md](HANDOVER_ROUND136.md) |
 | R137 | 2026-11-05 | 索引 §1 快照数字机械化 | [md](HANDOVER_ROUND137.md) |
 | R138 | 2026-11-05 | RELEASE_SOP ↔ verify_release 退出码契约 | [md](HANDOVER_ROUND138.md) |
+| R139 | 2026-11-05 | 收口轮：R135–R139 四账 + R140–R143 登记 | [md](HANDOVER_ROUND139.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
