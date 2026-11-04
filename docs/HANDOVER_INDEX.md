@@ -12,7 +12,7 @@
 | 交接文档 | **108 份**（`docs/HANDOVER_ROUND24..133.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
 | 当前用例 | **2,901**（本机 2873 passed / 28 skipped / 0 failed，2026-11-04，R133） |
-| CI 写回历史 | **61 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41835904060`；R133 代码跑预计 62） |
+| CI 写回历史 | **62 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41861139324`；R133 docs 跑预计 63） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
@@ -266,7 +266,8 @@ R133 起失效引用有钉测把守（`tests/test_docs_navigation.py` N1：可�
 1. ✅ **R133 已办**（原「R133 开工前」）：R133–R134 主题已写进
    `PROJECT_INFO.md` 尾段与 R133 引言。
 2. **回填已完成**：R130/R131 的 CI 实测已写回正文；R132 代码 run
-   `41832975143` 十 job 全绿、写回 59→60，docs 回填后到 61。
+   `41832975143` 十 job 全绿、写回 59→60，docs 回填后到 61；R133 代码 run
+   `41861139324` 十 job 全绿、写回 61→62。
 3. ✅ **R133 已办**（原「补索引入口」）：索引指针 R132 已加；失效引用
    R133 已修清并有钉测把守（N1）。
 4. **可选**：给 R112–R131 的 18 份文档补标题副标题（纯展示，风险为零）。
