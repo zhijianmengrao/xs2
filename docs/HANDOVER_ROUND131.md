@@ -94,7 +94,14 @@ traceback 淹没真正的结论。
 
 ## 6. CI
 
-- （待回填）
+- 提交 **`eba19e3`** 推送后 run **41800285110**：**10 个 job 全 `success`**
+  （08:32:27→08:49:34 UTC，约 17m07s）。
+- backend **2702/65**、windows-backend **2738/29**（均 2767）；
+  `replay-ci-writeback` 两平台 **17/17 PASS**（`inject-at-7` exit=1/push=7、
+  `budget-8-at-8` exit=0/push=9）；`replay-ci-fetch-chain` 两平台
+  **29/29 PASS**。
+- 写回历史 **56→57**（`ci-41800285110`，bot 提交 `59f6281`）；本文档回填
+  提交预计 **57→58**。
 
 ## 7. 边界与遗留
 
