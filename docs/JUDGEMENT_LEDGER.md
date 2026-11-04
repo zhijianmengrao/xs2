@@ -1346,3 +1346,9 @@ R136 把导航层判据扩到账本之间：history.json 与 git bot 提交双�
 逐条形状（计数 int、passed+failed==total）与账序（唯一、exported_at 单调）
 一并钉住；时间戳形状 run_id 恰好 1 条（第 1 条 legacy 种子）。浅检出下
 判据显式红而非 skip——CI 两 backend 已 fetch-depth: 0。
+
+R137 的 S 系判据把索引 §1 三行快照钉到磁盘实况：交接文档份数与轮次区间、
+写回 K 与末条 id（与 R136 的 H3 双账恰等互补）、用例数用 `pytest
+--collect-only` 确定性导出（前提：无模块级 importorskip，实测为零）。
+backend job 在自己的提交树上跑测试，bot 写回提交不改已检出树——严格
+恰等成立，无需竞态余量。

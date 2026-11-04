@@ -9,10 +9,10 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **109 份**（`docs/HANDOVER_ROUND24..134.md`；R34/R35 从未有文档） |
+| 交接文档 | **112 份**（`docs/HANDOVER_ROUND24..137.md`；R34/R35 从未有文档） |
 | 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,913**（本机 2885 passed / 28 skipped / 0 failed，R136） |
-| CI 写回历史 | **65 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41879474719`；R136 跑预计 66） |
+| 当前用例 | **2,917**（本机 2885 passed / 28 skipped / 0 failed，R136；R137 起本行数字由 `test_index_snapshot.py` S3 机判） |
+| CI 写回历史 | **66 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41883326948`；R137 跑预计 67） |
 | 代码基线 | `main` = `096ff16`（R132 代码 + CI 回写；docs 回填见 R132 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
@@ -169,6 +169,7 @@ N3 防复发）。
 | R134 | 2026-11-05 | 收口轮：R130–R134 五轮连推四账 | [md](HANDOVER_ROUND134.md) |
 | R135 | 2026-11-05 | CI 闸门形状：job 清单恰等 | [md](HANDOVER_ROUND135.md) |
 | R136 | 2026-11-05 | history.json ↔ git 双账核对 | [md](HANDOVER_ROUND136.md) |
+| R137 | 2026-11-05 | 索引 §1 快照数字机械化 | [md](HANDOVER_ROUND137.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
