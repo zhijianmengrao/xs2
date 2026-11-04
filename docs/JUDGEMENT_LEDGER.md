@@ -198,6 +198,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 满窗实战：默认窗口 80 的 rounds/last_run_id 双证据（R125） | `tests/test_replay_ci_scenarios.py::test_driver_keeps_witnesses_at_the_default_window` |
 | 写回幂等在回放链路成立（R127） | `tests/test_replay_ci_writeback.py::test_replay_same_run_id_rerun_is_a_no_change`、`test_replay_missing_metrics_file_reports_metrics_missing` |
 | 语义指纹截断只影响展示（R128） | `tests/test_replay_ci_writeback.py::test_semantics_line_truncates_display_but_not_the_record` |
+| e2e step summary 的坏形状只可见、不判死（R130） | `tests/test_e2e_retry_summary.py::test_malformed_scenarios_are_visible_and_not_fatal`、`test_malformed_counts_are_visible_and_not_fatal`、`test_render_raises_the_shape_error_instead_of_a_partial_table`、`test_render_escapes_pipes_and_newlines_in_table_cells`、`test_unparseable_payload_is_visible_and_not_fatal`、`test_non_object_payload_is_visible_and_not_fatal`、`test_usage_requires_exactly_one_path` |
 | 沙箱 GC 四道守卫与默认 dry-run（R110） | `tests/test_replay_sandbox_gc.py::test_dry_run_lists_only_old_matching_directories`、`test_apply_removes_only_the_candidates`、`test_symlink_with_matching_name_is_skipped`、`test_negative_age_is_a_usage_error`、`test_missing_root_is_a_usage_error` |
 
 ## 7. 翻转点（R69）
@@ -1234,3 +1235,19 @@ e2e 全红」当成「写回失败」会让趋势永远看不到质量事故。
   两半各钉一边：展示行截到 160+`…` 且全文不进日志；history 里的
   `first_failure` 保留全文。期望钉死字面 160——变异 M3 实测：自引用
   常量会让「LIMIT 改小」静默通过，展示参数漂移必须先改用例。
+
+### 10.10 可观测性不得被坏数据判死（R130）
+
+`e2e_retry_summary.py` 的契约是「metrics 缺失或损坏 → 可见说明 + 退出 0」，
+但 R74 只守住了缺文件 / JSON 坏 / 顶层非对象三种异常。内层字段坏会抛
+`AttributeError`/`ValueError`：`scenarios` 是对象会迭代出字符串键、条目是
+`None` 会调用 `.get`、`attempts` 是 `"2"` 会让 `int()` 抛错；`passed: true`
+还会被静默渲染成「通过 1」。CI 里该步骤是 `if: always()`——e2e 判红后
+summary 再以 traceback 失败，真正的 e2e 结论会被第二层错误淹没。
+
+R130 把同一契约补到内层：`render` 先过 `_count` / `_scenarios`，坏形状抛
+`SummaryShapeError`，`main` 转成一条 `_e2e metrics 形状无效（path）：…_`
+并退出 0。`bool` 与负数都被拒绝（`True` 不能冒充一次通过/重跑），缺省字段
+仍按 0 渲染（保留 R74 的兼容行为）。`_cell` 的竖线/换行转义同时补上首个
+用例。这里**不判 metrics 的业务有效性**——计数矛盾仍由 `record`/`check`
+在写回侧以退出 4 处置；摘要只保证「不崩、不静默」。
