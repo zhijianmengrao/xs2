@@ -200,6 +200,7 @@ python scripts/check_live_snapshot_gate.py --calibrate-lead-time \
 | 语义指纹截断只影响展示（R128） | `tests/test_replay_ci_writeback.py::test_semantics_line_truncates_display_but_not_the_record` |
 | e2e step summary 的坏形状只可见、不判死（R130） | `tests/test_e2e_retry_summary.py::test_malformed_scenarios_are_visible_and_not_fatal`、`test_malformed_counts_are_visible_and_not_fatal`、`test_render_raises_the_shape_error_instead_of_a_partial_table`、`test_render_escapes_pipes_and_newlines_in_table_cells`、`test_unparseable_payload_is_visible_and_not_fatal`、`test_non_object_payload_is_visible_and_not_fatal`、`test_usage_requires_exactly_one_path` |
 | CI 报告层：summary 单行、写失败只告警（R131） | `tests/test_ci_reporting.py::test_summary_appends_one_exact_bullet`、`test_summary_flattens_newlines_in_every_field`、`test_result_keeps_the_raw_multiline_detail`、`test_summary_write_failure_only_warns`、`test_summary_encoding_failure_only_warns`、`test_result_writes_exact_bytes_and_replaces_atomically`、`test_result_write_failure_only_warns_and_leaves_no_tmp`、`test_result_encoding_failure_only_warns_and_leaves_no_tmp`、`test_result_serialization_failure_only_warns`、`test_default_summary_path_reads_the_ci_environment`、`test_none_paths_are_no_ops` |
+| 发版验收：判决不依赖 assert、四类退出码（R132） | `tests/test_verify_release.py::test_optimized_mode_still_rejects_a_bad_sha256`、`test_sha256_mismatch_fails`、`test_keynum_mismatch_fails`、`test_invalid_signature_fails`、`test_empty_sha256_asset_is_shape`、`test_bad_outer_base64_is_shape`、`test_sig_blob_length_is_shape`、`test_comment_line_is_required`、`test_manifest_missing_platform_is_shape`、`test_missing_asset_is_environment`、`test_network_failure_is_environment` |
 | 沙箱 GC 四道守卫与默认 dry-run（R110） | `tests/test_replay_sandbox_gc.py::test_dry_run_lists_only_old_matching_directories`、`test_apply_removes_only_the_candidates`、`test_symlink_with_matching_name_is_skipped`、`test_negative_age_is_a_usage_error`、`test_missing_root_is_a_usage_error` |
 
 ## 7. 翻转点（R69）
@@ -1274,3 +1275,29 @@ R131 的处置：`_one_line` 把 summary 三个字段的 CR/LF 压成空格（�
 与 `emit_result` 的写块都补 `UnicodeError` 降级。空 `GITHUB_STEP_SUMMARY`
 仍按「没有 summary」处理，不是当前目录。这里不转义 Markdown 元字符——
 `run_id` / `reason` 是固定类别与数字 run id；本轮只保证结构不被换行破坏。
+
+### 10.12 发版验收：判决不得是 assert（R132）
+
+`verify_release.py` 是发版前的判决脚本：产物 sha256、minisign key id、
+ed25519 验签（blake2b-512 预哈希）、`tauri.conf` 版本与 updater 公钥、
+`latest.json` 的 version/url/signature 三项。它此前**十处判断全是裸
+`assert`**——`python -O` 会把整段删掉，脚本仍打印 `ALL CHECKS PASSED`
+并退 0。这不是风格问题：`assert` 是调试断言，解释器有权在优化模式下移除，
+而发版验收的结论必须无条件执行。R132 起判断一律走 `_require`（显式抛
+`VerificationFailure`），`-O` 下同一份坏产物仍退 1。
+
+坏输入按「有没有作判定」分类，互不冒充：
+
+- **4 形状无效**（能读到，但结构不对，没能比较）：空 `.sha256`、首列不是
+  64 位十六进制、外层/内层不是合法 base64、minisign 首行不是注释、
+  sig blob 不是 74B、pubkey blob 不是 42B、`tauri.conf` 不是 JSON、
+  `latest.json` 顶层/`platforms`/`windows-x86_64` 结构不对；
+- **2 环境或用法**（没作判定）：缺资产文件、公钥读不开、`--tag` 为空、
+  `latest.json` 网络不可达/读不出；
+- **1 判了不合格**：sha256 不符、key id 不符、验签失败、`tauri.conf`
+  版本或公钥不符、`latest.json` 三项任一不符。
+
+**没有 8**：这里没有判据算术，算不下去的形态都归 4；**也没有 3**：
+发版验收不存在「样本不足」。与 #10 的分界是：`_require` 只表达「判决为
+假」，不捕获 `ArithmeticError`；没预料到的异常仍以 traceback 退出，
+不会被误分类成 2/4。
