@@ -1548,3 +1548,30 @@ dev 独有 3 包（`pytest` / `pluggy` / `iniconfig`）。没有现行漂移，
 边界：只对账交集，不要求 dev 独有集合等于登记表（它随 pyproject dev
 extra 变）；环境标记行整行接受，标记不参与钉版比较；不判锁的生成命令
 与 `--python-version`（生成参数同账留作候选）；不判 `uv.lock`。
+
+### 10.23 Python 支持面同账（R151）
+
+`tests/test_python_support_surface.py` 把 Python 支持面的四处声明钉成
+P 系判据（P1–P4）：
+
+- **P1 语料守卫**：requires-python 有 `>=X.Y` 下限、classifiers 至少
+  一个 X.Y、CI 至少一个 `python-version`、Dockerfile 有
+  `FROM python:X.Y…`、两份 README 各有一个「Python X.Y+」。任一处
+  解析为空都在此红，防止 P2–P4 空转；`python-version-file` 显式红。
+- **P2 CI → 声明面**：每个 workflow 的每个 `python-version` 都必须
+  ∈ requires-python 范围且 ∈ classifiers。replay 矩阵里的
+  `python: python3` / `python` 是解释器名，不是版本声明，不参与。
+- **P3 Dockerfile → 声明面**：基础镜像的 X.Y 同样 ∈ 范围与 classifiers。
+- **P4 README → 下限**：README.md 与 README.en.md 的「Python X.Y+」
+  下限 == requires-python 下限。
+
+R151 实测：requires-python `>=3.11`；classifiers 3.11/3.12；CI 3.11
+（ubuntu backend 与三个桌面 workflow）与 **3.14**（windows-backend，
+Windows 权威基线）；Dockerfile 3.12；README 3.11+。**3.14 是权威 CI
+却不在 classifiers**——P2 首跑当场红在 `ci.yml: 3.14 不在
+classifiers`；补一条元数据后四条全绿。判据只保证「跑过的版本都声明
+了」，不要求每个 classifier 都被 CI 覆盖（3.12 由 Dockerfile 覆盖）。
+
+边界：只判声明面（版本字符串），不判 runner 上解释器的实际版本；不判
+requires-python 的上界（当前没有）；不判 README 徽章与 Node 版本
+（Node 下限 == web/package.json engines 留作候选）。
