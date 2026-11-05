@@ -1403,3 +1403,35 @@ R139 回填未提交；三处均已按 history + GitHub API 双证回填。首�
 一个正则边界：耗时区间 `18:04:03→18:25:43` 被误读为写回区间，修复为
 冒号邻接排除。锚点仍是「改了就必须连动」的 run id 字面：§6 写错 id、
 写错序号、或忘了回填，三者都红。
+
+### 10.17 依赖四源同账（R145）
+
+`tests/test_dependency_sources.py` 把依赖账的四条边钉成 W3–W9（续 R143
+的 W1/W2）：
+
+- **W3 语料守卫**：pyproject 运行时/dev extra、requirements、
+  requirements-dev（`-r` 展开）、双锁六份语料必须非空且每项 `==` 钉版；
+  `-r` 按文件所在目录递归展开，同名异版当场红——范围规格无法逐字比对，
+  重复声明会把冲突吞掉。
+- **W4/W5 pyproject → requirements**：名字覆盖（extras 剥离、
+  `canonicalize_name` 归一）与钉版逐字同账，两条分开报红。
+- **W6 允许集**：`requirements.txt − pyproject` **恰等于**
+  `REQUIREMENTS_ONLY`（`tzdata==2026.3`、`uvicorn-worker==0.4.0`，服务 /
+  Windows 运行时补充）；双向恰等，新增与删除都必须连动登记表。
+- **W7 dev 展开**：`-r` 展开后的 requirements-dev 恰等于
+  requirements.txt ∪ pyproject dev extra。
+- **W8 dev → CI 锁**：requirements-dev 每包都在 requirements-dev.lock
+  且钉版同账（CI 的实际安装源）。
+- **W9 runtime → 运行时锁**：requirements 每包都在 requirements.lock
+  且钉版同账（Dockerfile 与桌面管线直接安装它）。
+
+上线实测六份语料 17 / 1 / 19 / 20 / 81 / 84 项，四条边全部成立
+（17/17、2/2、19+1、20/20、19/19）——本轮补的是「没有判据」本身，不是
+现行漂移。变异 5/5 且相互隔离：pyproject 钉版漂移只红 W5、三源补未登记
+包只红 W6、删 `-r` 只红 W7、dev 锁钉版漂移只红 W8、runtime 锁漏包只红
+W9。M2 首版选 `six` 撞上锁文件里的传递依赖（W3 先红），改用 `tabulate`
+后隔离——变异选名字也要避开闭包。
+
+边界：锁文件是闭包，超集是常态，不反向要求锁 ⊆ 顶层声明；不判
+`build-system.requires`（构建隔离环境自管）与 `uv.lock`（仓库内零引用，
+R148 收口决定删除或接入）；环境标记行按整行接受。

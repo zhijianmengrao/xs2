@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **119 份**（`docs/HANDOVER_ROUND24..144.md`；R34/R35 从未有文档） |
-| 文档体量 | 17,768 行 / 约 2.1 MB |
-| 当前用例 | **2,995**（R144 树 2967 passed / 28 skipped / 0 failed；R142 +3、R143 +2、R144 +10、N3 逐篇 +1；本行由 S3 机判） |
-| CI 写回历史 | **73 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41909830139`；R144 跑预计 74） |
-| 代码基线 | `main` = `e217624`（R143 代码 + CI 回写；docs 回填见 R143 §6） |
+| 交接文档 | **120 份**（`docs/HANDOVER_ROUND24..145.md`；R34/R35 从未有文档） |
+| 文档体量 | 19,135 行 / 1.2 MB |
+| 当前用例 | **3,004**（R145 新增 7；R144 树 2967 passed / 28 skipped / 0 failed；本行由 S3 机判） |
+| CI 写回历史 | **74 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-41950282866`；R145 跑预计 75） |
+| 代码基线 | `main` = `1dc3181`（R144 代码 + CI 回写；docs 回填见 R144 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：19 条判据 + 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -50,6 +50,7 @@
 | 五轮连推（三） | R125–R129 | 5 | 满窗 80、大预算、写回幂等、语义指纹截断 |
 | 五轮连推（四） | R130–R134 | 5 | 展示层坏数据边界、CI 报告层降级、发版验收判决、交接文档引用完整性、收口 |
 | 五轮连推（五） | R135–R139 | 5 | 流程资产自描述：CI job 清单恰等、history↔git 双账、索引快照机械化、SOP↔判决脚本同账、收口；R140–R143 已登记（R139 §7） |
+| 五轮连推（六） | R144–R148 | 5 | 文档与依赖的「第二份账」收口：§6 回填时限机判、依赖四源同账；R146–R148 已登记（R144 §7） |
 
 ## 4. 全量索引（R24–R134）
 
@@ -178,6 +179,7 @@ N3 防复发）。
 | R142 | 2026-11-05 | PROJECT_INFO 专述 bullet 覆盖与顺序单调 | [md](HANDOVER_ROUND142.md) |
 | R143 | 2026-11-05 | requirements 双源一致性 | [md](HANDOVER_ROUND143.md) |
 | R144 | 2026-11-05 | 交接文档 §6 回填时限机判 | [md](HANDOVER_ROUND144.md) |
+| R145 | 2026-11-05 | 依赖四源同账：pyproject / requirements-dev / 双锁 | [md](HANDOVER_ROUND145.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
