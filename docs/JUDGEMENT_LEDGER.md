@@ -1769,3 +1769,18 @@ requirements.lock`、dev 锁头 `compile requirements-dev.txt …
 
 边界：不重放 uv（闭包内容由 W 系）；源文件与 pyproject 的同账由
 W3–W7 负责；`--universal` / `--no-annotate` 等旗标不判。
+
+### 10.32 四轮收口（R157–R160）
+
+四轮连推（九）收口：R157 支持面展示层（P6–P7）、R158 安装文档引用面
+（V3）、R159 锁生成头自名（P8）。三条判据全部首跑即过、生产代码
+零改动——与 R153–R155（§10.28）同型：**判据钉住的是本来就对的账**。
+四轮变异合计 10/10（4+3+3+0），总用例 3052→3060。四轮写回都落在
+第 80 条（满窗滚动）。
+
+§7 实测登记 R161–R164：版本双源同账（pyproject 0.1.0 ==
+web/package.json 0.1.0，test_branding 只钉名字不钉版本）、许可证面
+同账（license = AGPL-3.0-only / license-files = [LICENSE] /
+LICENSE 在磁盘 / README 双语徽章 alt 与 URL 的 AGPL-3.0）、
+PROJECT_INFO 支持面行同账（Python ≥3.11 两处 + Node ≥22.12 两处，
+P4/P7 锚的活文档第二份账）、收口。
