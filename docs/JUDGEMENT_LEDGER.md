@@ -1821,3 +1821,23 @@ R162 实测：pyproject `AGPL-3.0-only`、`LICENSE` 在磁盘、双语徽章
 
 边界：只判声明面——不读 LICENSE 内容、不校验 SPDX 合法性、不判
 徽章 href 指向的上游仓库（fork 徽章有意指 upstream，V2b 同型）。
+
+### 10.35 PROJECT_INFO 支持面行同账（R163）
+
+`tests/test_living_doc_round_caps.py` 的 **L8** 把 PROJECT_INFO 里
+手抄的 Python / Node 下限钉到与 P4/P7 同一个锚（R160 §7 登记）：
+
+- **L8 支持面行**：PROJECT_INFO 的全部「Python ≥X.Y」==
+  requires-python 下限；全部「node/Node.js ≥X.Y」== engines 下限。
+  集合恰等单一值——改下限时漏改任何一处都红；两类各自至少一处，
+  否则显式红（判据不许空转）。438 行的「本机 venv 实际为 Python
+  3.14.8」不带 `≥`，天然不在射程——L8 只钉要求面。
+
+R163 实测：Python ≥3.11 ×3 处（§技术栈 438 / §仓库结构 455 /
+§约束 476）、node ≥22.12 ×2 处（§技术栈 440 / §约束 476），全部
+与锚一致，L8 首跑即过。总用例 3067→3070，变异 2/2（§约束行
+Python / Node 各改一档，L1–L7 全绿互不串扰）。
+
+边界：只钉「≥X.Y」要求面——实测值（3.14.8）与历史 bullet 的版本
+叙述不在射程；README 的「Python 3.11+」加号写法由 P4 负责，两把
+正则互不越界。

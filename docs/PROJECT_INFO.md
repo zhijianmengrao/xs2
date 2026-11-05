@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R162）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R163）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -833,3 +833,4 @@ xs2/
 - 2026-11-06 R160 收口 profile（**收口轮：R157–R160 四账 + R161–R164 登记**）：四轮连推（九）收口。R157 支持面展示层（P6–P7，3052）；R158 安装文档引用面（V3，3055）；R159 锁生成头自名（P8，3058）。三条判据全部首跑即过、生产代码零改动——与 R153–R155 同型：钉住的是本来就对的账。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.29–§10.32 / 记忆 1 条）；四轮变异合计 10/10（收口轮无新判据无变异）。§3 登记 R161–R164（版本双源 pyproject↔web/package.json 均 0.1.0；许可证面 pyproject AGPL-3.0-only/license-files/LICENSE/README 双语徽章；PROJECT_INFO 支持面行 Python ≥3.11 ×2 处 + Node ≥22.12 ×2 处；收口）。总用例 3058→3060（N3/D1 因本篇与 R159 回填 +2）。生产代码与测试零改动。
 - 2026-11-06 R161 单 profile（**版本双源同账：pyproject ↔ web/package.json**）：四轮连推（十）第 1 轮。新增 `tests/test_version_sources.py` W12：`pyproject [project].version` == `web/package.json version`，两处都须 `X.Y.Z` 形状（语料守卫）且逐字相等（实测均 0.1.0）——发版漏改一边时打包元数据与前端清单悄悄分叉，test_branding 只钉名字不钉版本。总用例 3060→3063；变异 2/2（两边各改一次，W12 独红）。生产代码零改动。
 - 2026-11-06 R162 单 profile（**许可证面同账：pyproject license ↔ LICENSE ↔ README 徽章**）：四轮连推（十）第 2 轮。新增 `tests/test_license_surface.py` V4a/V4b：V4a `license-files = ["LICENSE"]` 逐项在磁盘；V4b pyproject `license` 的 SPDX 核心段（AGPL-3.0-only → AGPL-3.0）== 两份 README 徽章 alt 与 URL（`--` 归一）中的 AGPL-3.0，URL 与 alt 双锚各恰一处，解析不到显式红（实测均 AGPL-3.0）。总用例 3063→3067；变异 3/3（license-files 改名 / en 徽章 alt 换 MPL-2.0 / pyproject 核心段 3.1，V4a 与 V4b 互不串扰）。生产代码零改动。
+- 2026-11-06 R163 单 profile（**PROJECT_INFO 支持面行同账：Python/Node 下限**）：四轮连推（十）第 3 轮。`tests/test_living_doc_round_caps.py` 新增 L8：PROJECT_INFO 全部「Python ≥X.Y」（3 处）== requires-python 下限、全部「node/Node.js ≥X.Y」（2 处）== engines 下限，集合恰等单一值、各类至少一处否则显式红（实测 3.11 / 22.12）——P4/P7 只钉 README，PROJECT_INFO 这份活文档第二份账此前无人对账；438 行的「本机实际 3.14.8」不带 ≥，不在射程。总用例 3067→3070；变异 2/2（§约束行 Python / Node 各改一档，L1–L7 全绿互不串扰）。生产代码零改动。

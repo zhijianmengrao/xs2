@@ -252,3 +252,53 @@ def test_judgement_count_matches_the_numbered_ledger() -> None:
         f"索引写「{claimed.group(1)} 条编号判据」，台账 §2 编号表实有 "
         f"{len(numbers)} 条（#1–#{len(numbers)}）"
     )
+
+# ------------------------------------------------- R163: 支持面行同账（L8）
+# PROJECT_INFO 是支持面的活文档第二份账：§技术栈 / §约束 / §仓库结构
+# 里手抄的 Python / Node 下限，此前无人对账（P4/P7 只钉 README）。
+# L8 把活文档里的下限行钉到与 P4/P7 同一个锚（requires-python / engines）。
+PI_PY_FLOOR_RX = re.compile(r"Python\s*≥\s*(\d+\.\d+)")
+PI_NODE_FLOOR_RX = re.compile(r"[Nn]ode(?:\.js)?\s*≥\s*(\d+\.\d+)")
+
+
+def _project_info_floors() -> tuple[set, set]:
+    """PROJECT_INFO 里的 (Python 下限集合, Node 下限集合)。"""
+    text = PROJECT_INFO.read_text(encoding="utf-8-sig")
+    py = {m.group(1) for m in PI_PY_FLOOR_RX.finditer(text)}
+    node = {m.group(1) for m in PI_NODE_FLOOR_RX.finditer(text)}
+    return py, node
+
+
+def test_project_info_support_floors_agree() -> None:
+    """L8：PROJECT_INFO 的 Python/Node 下限 == requires-python / engines。"""
+    import json
+    import tomllib
+
+    document = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    match = re.search(
+        r">=\s*(\d+\.\d+)", document["project"]["requires-python"]
+    )
+    assert match, "requires-python 没有可解析下限——L8 无锚"
+    py_floor = match.group(1)
+    web = json.loads(
+        (REPO_ROOT / "web" / "package.json").read_text(encoding="utf-8")
+    )
+    node_match = re.match(
+        r">=(\d+)\.(\d+)\.0$", (web.get("engines") or {}).get("node", "")
+    )
+    assert node_match, "engines.node 不是 >=X.Y.0 形状——L8 无锚"
+    node_floor = f"{node_match.group(1)}.{node_match.group(2)}"
+
+    py_floors, node_floors = _project_info_floors()
+    assert py_floors, "PROJECT_INFO 没有「Python ≥X.Y」——L8 的 Python 面空转"
+    assert node_floors, "PROJECT_INFO 没有「Node ≥X.Y」——L8 的 Node 面空转"
+    assert py_floors == {py_floor}, (
+        f"PROJECT_INFO 的 Python 下限与 requires-python 不同账："
+        f"文档写 {sorted(py_floors)}，requires-python 下限是 {py_floor}"
+    )
+    assert node_floors == {node_floor}, (
+        f"PROJECT_INFO 的 Node 下限与 engines 不同账："
+        f"文档写 {sorted(node_floors)}，engines 下限是 {node_floor}"
+    )
