@@ -1784,3 +1784,19 @@ web/package.json 0.1.0，test_branding 只钉名字不钉版本）、许可证�
 LICENSE 在磁盘 / README 双语徽章 alt 与 URL 的 AGPL-3.0）、
 PROJECT_INFO 支持面行同账（Python ≥3.11 两处 + Node ≥22.12 两处，
 P4/P7 锚的活文档第二份账）、收口。
+
+### 10.33 版本双源同账（R161）
+
+`tests/test_version_sources.py` 的 **W12** 把版本当一份双源对账
+（R160 §7 登记；W1–W11 对账依赖四源，W12 延伸到版本）：
+
+- **W12 版本逐字相等**：`pyproject.toml [project].version` ==
+  `web/package.json version`，两处都必须是 `X.Y.Z` 形状（语料
+  守卫，形状不对显式红）。发版漏改一边时打包元数据与前端清单
+  悄悄分叉。
+
+R161 实测：两处都是 `0.1.0`，W12 首跑即过。总用例 3060→3063，
+变异 2/2（两边各改一次，W12 独红）。
+
+边界：不判 `web/package-lock.json`（npm ci 自带一致性闸门）；不判
+`[tool.*]` 的其他版本字段；不判 git tag（RELEASE_SOP 自己管）。
