@@ -332,6 +332,31 @@ docker compose -f docker-compose.yml config -q
   </tr>
 </table>
 
+### Contributors
+
+Thanks to the community members who help improve DeterminFlow through code, reviews, design, and suggestions.
+
+<table>
+  <tr>
+    <td align="center" width="180">
+      <a href="https://github.com/Deitykiki1208">
+        <img src="https://github.com/Deitykiki1208.png?size=128" width="64" height="64" alt="@Deitykiki1208"><br>
+        <code>@Deitykiki1208</code>
+      </a>
+    </td>
+    <td>Light-theme design and implementation reference (<a href="https://github.com/alikon-art/DeterminFlow/pull/8">PR #8</a>)</td>
+  </tr>
+  <tr>
+    <td align="center" width="180">
+      <a href="https://github.com/ZLaoliu">
+        <img src="https://github.com/ZLaoliu.png?size=128" width="64" height="64" alt="@ZLaoliu"><br>
+        <code>@ZLaoliu</code>
+      </a>
+    </td>
+    <td>Diagnosis and implementation suggestions for session recovery, context compression, and Agent output retry (<a href="https://github.com/alikon-art/DeterminFlow/pull/9">PR #9</a>, <a href="https://github.com/alikon-art/DeterminFlow/pull/10">#10</a>, <a href="https://github.com/alikon-art/DeterminFlow/pull/12">#12</a>)</td>
+  </tr>
+</table>
+
 ## Roadmap
 
 - Complete the remaining internal compatibility-name migration to DeterminFlow
