@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R133）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R146）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -816,3 +816,4 @@ xs2/
 - 2026-11-05 R143 单 profile（**requirements 双源一致性**）：R140–R143 收官轮。实测 requirements.txt（19 顶层）与 requirements-dev.lock（84 闭包）按名覆盖成立、19 个 == 钉版一致但无判据。新增 `tests/test_requirements_lock_sync.py`（2 条）：W1 名字覆盖（extras 归一）、W2 钉版逐字同账。变异 M1–M3 3/3。
 - 2026-11-05 R144 单 profile（**交接文档 §6 回填时限机判**）：五轮连推（六）第 1 轮。实测 R139 §9 点名的「§6 由下一轮回填」仍无判据：R137 §6 模板落后 6 轮、R143 待回填、R139 回填未提交。新增 `tests/test_handover_ci_backfill.py`（10 条，D 系）：D1 R135..latest-1 的 §6 必须无占位且点名 run id、latest 豁免；D2 每个 run id 必在 history.json，`A→B` 的 B == 该 run 的账序（时间区间冒号邻接排除，首跑自咬后修正）。回填 R137/R139/R143 三处并核验 10 job success；索引 §1 代码基线 `096ff16`→`e217624`。变异 M1–M3 3/3。§7 登记 R145–R148（依赖四源 / 轮次盖子 / §4 行自描述 / 收口）。
 - 2026-11-05 R145 单 profile（**依赖四源同账**）：五轮连推（六）第 2 轮。实测 R143 的 W1/W2 只钉 requirements.txt↔requirements-dev.lock；pyproject（17 个钉版）、requirements-dev.txt 的 `-r` 展开、requirements.lock（Docker/桌面安装源）三处无判据。新增 `tests/test_dependency_sources.py`（7 条，W3–W9）：语料守卫、pyproject⊆requirements（名+钉版）、独有包恰等允许集（tzdata/uvicorn-worker）、dev 展开==requirements∪dev extra、reqdev⊆dev lock、requirements⊆runtime lock。实测四条边全成立（17/17、2/2、19+1、20/20、19/19，无现行漂移）。变异 M1–M5 5/5（首版 M2 选 six 撞闭包重名，改 tabulate 隔离）。总用例 2995→3004（新增 7 + 文档触发的 D1/N3 各 +1）。§7 记录 `uv.lock` 零引用（87 包）待 R148 决定。
+- 2026-11-05 R146 单 profile（**活文档轮次盖子：当前时态数字机判**）：五轮连推（六）第 3 轮。实测 9 处登记漂移：PROJECT_INFO H2「至 R133」落后 12 轮；索引 H1「R24–R131」、§4 H2/§6.1「R24–R134」三处区间各停旧值；§3 标题「106 份」而磁盘 120 份；§3 的 R135–R139 行尾仍挂「R140–R143 已登记」（那四轮已完成）；§6.4.3 的 38/107、42/109 两个历史审计数字无轮次锚；§1「判据登记 19 条」自 R133 起手抄（台账 §2 实为 18 条编号条目）；L2 首跑又咬出第十处——阶段表整段缺 R140–R143 行。新增 `tests/test_living_doc_round_caps.py`（5 条，L 系）：L1 轮次盖子==磁盘最新交接轮、L2 阶段表份数/区间/覆盖/「已登记」时限、L3 历史审计数字必须带轮次锚、L4 判据条数==台账 §2 编号表。19→18 是口径纠正：只数编号表，不数未编号的家族判据。变异 M1–M7 7/7。总用例 3004→3011。§7 复核 R147–R148 登记。
