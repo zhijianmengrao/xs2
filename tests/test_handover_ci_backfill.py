@@ -15,10 +15,14 @@
 - **D1 时限**：R135 .. latest-1 的每份交接文档，§6 必须已回填——含至少
   一个 GitHub run id，且不得出现 ``<run`` / ``<code-sha>`` / 「预计」占位。
   latest（当前轮）允许模板：它的 run 在推送后才存在，由下一轮回填。
-- **D2 同账**：§6 里出现的每个 run id 必须能在 ``history.json`` 找到；同一
-  条目内 ``A→B`` 的写回声明，若其前面有 run id，则 B 必须等于该 run id 在
-  history 中的序号（A == B-1）。不带 run id 的 ``A→B`` 不判——那是下一轮
-  docs 跑的预告，是未来账。
+- **D2 同账（R152 改为快照口径）**：§6 里出现的每个 run id 都必须出现在
+  **该 run 自己的 bot 提交**里那份 ``history.json``；``A→B`` 的写回声明，
+  若其前面有 run id，则 B 必须等于该 run 在当时快照中的序号（A == B-1）。
+  满窗 80 后 ``record`` 会裁掉最旧条目，当前文件的下标会前移——拿当前
+  文件给历史声明对账，会把正确的序号判红（R152 实测：旧 D2 在 R152 树
+  上会红 R149/R150 两条本来正确的声明）。满窗后的写回不再递增，§6 改写
+  「第 N 条」；D2 同时认这种写法，序号同样按 bot 快照判。不带 run id 的
+  声明不判——那是下一轮 docs 跑的预告，是未来账。
 
 边界：不判「10 job 全绿」等叙述真假（CI 平台的结论不在仓库内），只判
 run id 在账与序号自洽；不扫描 §6 之外的 CI 叙述。
@@ -28,13 +32,14 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS = REPO_ROOT / "docs"
-HISTORY = REPO_ROOT / "tests" / "fixtures" / "e2e_retry_history" / "history.json"
+HISTORY_REL = "tests/fixtures/e2e_retry_history/history.json"
 
 # 单跑轮次制起点：R135 起 docs 回填并入下一轮提交。
 BACKFILL_FLOOR = 135
@@ -45,6 +50,8 @@ PLACEHOLDER_RX = re.compile(r"<run\d*>|<code-sha>|预计")
 RUN_ID_RX = re.compile(r"(?<!\d)(\d{11})(?!\d)")
 # 写回区间 ``A→B``；时间区间 ``18:04:03→18:25:43`` 不能误吃（冒号邻接排除）。
 WRITEBACK_RX = re.compile(r"(?<![:\d])(\d+)\s*→\s*(\d+)(?![\d:])")
+# 满窗后写回计数不再递增：§6 用「第 N 条」表达当前快照里的位置。
+POSITION_RX = re.compile(r"第\s*(\d+)\s*条")
 
 
 def _handover_numbers() -> list[int]:
@@ -66,10 +73,44 @@ def _section_6(path: Path) -> str:
     return rest[: nxt.start()] if nxt else rest
 
 
-def _history_entries() -> list[dict]:
-    document = json.loads(HISTORY.read_text(encoding="utf-8"))
+def _git(*args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=30,
+    )
+    assert proc.returncode == 0, (
+        f"git {' '.join(args)} 失败（退出码 {proc.returncode}）："
+        f"{proc.stderr.strip()[:200]}——浅检出必须显式红，不许 skip"
+    )
+    return proc.stdout
+
+
+_SNAPSHOTS: dict[str, list[dict]] = {}
+
+
+def _history_at_bot(run_id: str) -> list[dict]:
+    """取该 run 的 bot 提交里那份 ``history.json``（写回当时的口径）。
+
+    窗口满 80 后 ``record`` 裁掉最旧条目，当前文件里的下标会前移；历史
+    声明记录的是**写回当时**的位置，必须按当时的快照对账（R152）。
+    """
+    if run_id in _SNAPSHOTS:
+        return _SNAPSHOTS[run_id]
+    sha = _git(
+        "log", "-1", "--format=%H", "--fixed-strings",
+        f"--grep=record CI run {run_id}",
+    ).strip()
+    assert sha, (
+        f"git 里找不到 run {run_id} 的 bot 提交（chore(e2e): record CI "
+        "run …）——文档引用了没有第二份账的 run"
+    )
+    raw = _git("show", f"{sha}:{HISTORY_REL}")
+    document = json.loads(raw)
     entries = document["history"] if isinstance(document, dict) else document
-    assert isinstance(entries, list) and entries, "history.json 没有条目"
+    assert isinstance(entries, list) and entries, (
+        f"run {run_id} 的 bot 提交里 history.json 为空——快照不可用"
+    )
+    _SNAPSHOTS[run_id] = entries
     return entries
 
 
@@ -110,12 +151,13 @@ def test_backfilled_handover_cites_ledger_runs(round_no: int) -> None:
     cited = RUN_ID_RX.findall(section)
     assert cited, f"{path.name} §6 没有 run id——回填至少要点名一次 CI run"
 
-    # D2：每个 run id 都必须在 history.json 里，写回序号要对得上。
-    entries = _history_entries()
-    ledger_ids = {str(entry["run_id"]) for entry in entries}
+    # D2：每个 run id 都必须在它自己的 bot 提交里入账；写回序号按**当时**
+    # 的 history 快照判（窗口满 80 后当前下标会前移）。
     for run_id in cited:
+        entries = _history_at_bot(run_id)
+        ledger_ids = {str(entry["run_id"]) for entry in entries}
         assert f"ci-{run_id}" in ledger_ids, (
-            f"{path.name} §6 引用的 run {run_id} 不在 history.json——"
+            f"{path.name} §6 引用的 run {run_id} 不在它自己的 bot 提交里——"
             "文档账与写回账分叉"
         )
     for bullet in _bullets(section):
@@ -127,9 +169,10 @@ def test_backfilled_handover_cites_ledger_runs(round_no: int) -> None:
             if not preceding:
                 continue  # 下一轮 docs 跑的预告（未来账），不判
             run_id = preceding[-1].group(1)
+            entries = _history_at_bot(run_id)
             assert 1 <= high <= len(entries), (
-                f"{path.name} §6 写回序号 {high} 超出 history 条目数 "
-                f"{len(entries)}"
+                f"{path.name} §6 写回序号 {high} 超出 run {run_id} 写回时的 "
+                f"history 条目数 {len(entries)}"
             )
             assert low == high - 1, (
                 f"{path.name} §6 写回区间 {low}→{high} 不连续"
@@ -137,7 +180,27 @@ def test_backfilled_handover_cites_ledger_runs(round_no: int) -> None:
             actual = str(entries[high - 1]["run_id"])
             assert actual == f"ci-{run_id}", (
                 f"{path.name} §6 把 run {run_id} 记为第 {high} 条写回，"
-                f"但 history 第 {high} 条是 {actual}——序号或 run id 漂移"
+                f"但写回时 history 第 {high} 条是 {actual}——序号或 run id 漂移"
+            )
+        for match in POSITION_RX.finditer(bullet):
+            if "写回" not in bullet:
+                continue
+            preceding = [
+                m for m in RUN_ID_RX.finditer(bullet) if m.start() < match.start()
+            ]
+            if not preceding:
+                continue
+            run_id = preceding[-1].group(1)
+            entries = _history_at_bot(run_id)
+            position = int(match.group(1))
+            assert 1 <= position <= len(entries), (
+                f"{path.name} §6 写回「第 {position} 条」超出 run {run_id} "
+                f"写回时的 history 条目数 {len(entries)}"
+            )
+            actual = str(entries[position - 1]["run_id"])
+            assert actual == f"ci-{run_id}", (
+                f"{path.name} §6 把 run {run_id} 记为第 {position} 条写回，"
+                f"但写回时 history 第 {position} 条是 {actual}——序号漂移"
             )
 
 

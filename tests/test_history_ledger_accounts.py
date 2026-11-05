@@ -14,12 +14,17 @@
 - **H1 逐条形状**：``source='ci'`` 条目 run_id 必须是 ``ci-<数字>``；计数
   字段（total/passed/failed/retried/attempts）必须是 int；``scenarios``
   必须是 dict 列表（name/passed/attempts 在场）；时间戳形状的 run_id
-  **恰好 1 条**且是第 1 条（legacy 种子，防止新条目再以时间戳入库）。
+  **至多 1 条**且只能是第 1 条（legacy 种子，防止新条目再以时间戳入库；
+  80 条窗口滚动后种子会被裁掉，不要求它回来）。
 - **H2 账序**：run_id 无重复；``exported_at`` 单调不减。
-- **H3 双账恰等**：git bot 提交的 run id 集合 == ``source='ci'`` 条目的
-  run id 集合（双向差额逐一报出）。**浅检出下显式红**（附
-  ``git fetch --unshallow`` 指引）——R136 同时给 backend / windows-backend
-  的 checkout 加了 ``fetch-depth: 0``，CI 里本判据是真的，不许降级成 skip。
+- **H3 双账按序后缀**（R152 改）：当前 history 的 ci 条目序列必须等于
+  git bot 账本的**最新 N 条、同序**。R136 原判据是「集合恰等」，隐含
+  「窗口未滚动」；窗口满 80 后 ``record`` 裁掉最旧条目，集合恰等会把
+  正确账本判红。按序后缀仍双向发声音：history 每条都要有 bot 提交，
+  bot 的最新 N 条也必须原样在 history 里。**浅检出下显式红**（附
+  ``git fetch --unshallow`` 指引）——R136 同时给 backend /
+  windows-backend 的 checkout 加了 ``fetch-depth: 0``，CI 里本判据是
+  真的，不许降级成 skip。
 
 边界：不核对这些 run 的测试结果对不对（那是 R113 失败形状与闸门判据的
 职责）；不数 history 长度（每轮自然 +2，无魔法数）；``totals.runs`` 的
@@ -51,20 +56,24 @@ def _entries_by_source(entries: list[dict], source: str | None) -> list[dict]:
     return [e for e in entries if e.get("source") == source]
 
 
-def test_entry_shapes_and_single_legacy_seed() -> None:
-    """H1：ci 条目形状钉死；时间戳形状 run_id 恰好 1 条且是第 1 条。"""
+def test_entry_shapes_and_optional_legacy_seed() -> None:
+    """H1：ci 条目形状钉死；时间戳形状 run_id 至多 1 条且只能是第 1 条。"""
     entries = _entries()
     timestamp_shaped = [
         i for i, e in enumerate(entries)
         if not RUN_ID_RX.match(str(e.get("run_id", "")))
     ]
-    assert timestamp_shaped == [0], (
-        f"run_id 非 ci-形状的条目应只有第 1 条 legacy 种子，实际位于："
+    assert len(timestamp_shaped) <= 1, (
+        f"run_id 非 ci-形状的条目至多 1 条 legacy 种子，实际位于："
         f"{timestamp_shaped}（{[entries[i].get('run_id') for i in timestamp_shaped]}）"
     )
-    assert TIMESTAMP_RX.match(str(entries[0]["run_id"])), (
-        f"第 1 条 legacy 种子形状漂移：{entries[0]['run_id']!r}"
-    )
+    if timestamp_shaped:
+        assert timestamp_shaped == [0], (
+            f"legacy 种子只能是第 1 条，实际位于 {timestamp_shaped}"
+        )
+        assert TIMESTAMP_RX.match(str(entries[0]["run_id"])), (
+            f"第 1 条 legacy 种子形状漂移：{entries[0]['run_id']!r}"
+        )
     for idx, entry in enumerate(entries):
         where = f"history[{idx}]（{str(entry.get('run_id'))[:30]}）"
         assert entry.get("source") in ("ci", None), f"{where} source 非法：{entry.get('source')!r}"
@@ -99,7 +108,8 @@ def test_run_ids_unique_and_exported_at_monotonic() -> None:
     )
 
 
-def _git_bot_run_ids() -> set[str]:
+def _git_bot_run_ids_in_order() -> list[str]:
+    """git bot 提交的 run id，按提交时间从旧到新（``--reverse``）。"""
     probe = subprocess.run(
         ["git", "rev-parse", "--is-shallow-repository"],
         cwd=REPO_ROOT, capture_output=True, text=True,
@@ -111,28 +121,45 @@ def _git_bot_run_ids() -> set[str]:
             "`git fetch --unshallow` 后重跑；不许把本判据降级成 skip。"
         )
     log = subprocess.run(
-        ["git", "log", "--format=%s"], cwd=REPO_ROOT,
+        ["git", "log", "--reverse", "--format=%s"], cwd=REPO_ROOT,
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     ).stdout
-    return set(re.findall(r"record CI run (\d+)", log))
+    return re.findall(r"record CI run (\d+)", log)
 
 
 def test_history_matches_git_bot_commits_bidirectionally() -> None:
-    """H3：git bot 提交 run id 集合 == ci-形状条目集合（双向恰等）。
+    """H3：history 的 ci 条目 == bot 账本的**连续后缀**（R152 满窗口径）。
 
-    实测口径：6 条 R93 前的 legacy 条目虽无 ``source`` 标注，但同样有 bot
-    提交在账；唯一对不上 git 的是第 1 条时间戳种子（H1 钉死恰好 1 条）。
-    对账按 **run_id 形状** 取集合，不按 source 标注——标注是元数据，账是
-    run id 本身。
+    R136 原判据是「集合恰等」——它隐含「窗口未滚动」。窗口满 80 后
+    ``record`` 会裁掉最旧条目，当前 history 只是 bot 账本的尾部；集合
+    恰等会从 R153 起误判。按序后缀仍然双向发声音：history 的每条 ci
+    都必须在 bot 账本里，bot 的最新 N 条也必须原样、按序在 history 里。
+    实测口径：唯一可能对不上 bot 的是第 1 条时间戳种子（H1 钉住「至多 1 条」，滚动后可能已被裁掉），
+    对账按 **run_id 形状** 取序列，不按 source 标注。
     """
     entries = _entries()
-    ci_ids = {
-        str(e["run_id"])[3:] for e in entries if RUN_ID_RX.match(str(e.get("run_id", "")))
-    }
-    bot_ids = _git_bot_run_ids()
-    missing_in_history = sorted(bot_ids - ci_ids)
-    missing_in_git = sorted(ci_ids - bot_ids)
-    assert not missing_in_history and not missing_in_git, (
-        "双账漂移：git bot 提交有而 history.json 无 "
-        f"{missing_in_history}；history.json 有而 git 无 {missing_in_git}"
+    ci_ids = [
+        str(e["run_id"])[3:]
+        for e in entries
+        if RUN_ID_RX.match(str(e.get("run_id", "")))
+    ]
+    assert ci_ids, "history 没有 ci- 形状条目——H3 空转"
+    bot_ids = _git_bot_run_ids_in_order()
+    assert len(ci_ids) <= len(bot_ids), (
+        f"history 有 {len(ci_ids)} 条 ci 条目，git bot 提交只有 "
+        f"{len(bot_ids)} 个——history 多出了没有第二份账的条目"
     )
+    expected = bot_ids[-len(ci_ids):]
+    if ci_ids != expected:
+        missing = [run_id for run_id in expected if run_id not in set(ci_ids)]
+        extra = [run_id for run_id in ci_ids if run_id not in set(expected)]
+        mismatched = [
+            (position + 1, actual, want)
+            for position, (actual, want) in enumerate(zip(ci_ids, expected))
+            if actual != want
+        ][:5]
+        raise AssertionError(
+            "history 不是 bot 账本的连续后缀："
+            f"缺 {missing[:5]}；多 {extra[:5]}；"
+            f"错位（位置, history, bot）{mismatched}"
+        )

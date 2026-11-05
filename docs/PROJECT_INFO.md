@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R151）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R152）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -822,3 +822,4 @@ xs2/
 - 2026-11-05 R149 单 profile（**索引 §1 余下两行机械化：文档体量与代码基线**）：四轮连推（七）第 1 轮。实测体量行 19,543 行 / 1.1 MB 与磁盘 123 份交接文档逐项相等；代码基线行写 `e9e8649`（R147 的 bot），而 history 末条已是 `ci-42000993269`（bot `cc56faa`，R148 写回）——S5 首跑当场咬出落后一次。`tests/test_index_snapshot.py` 新增 S4（行数 == `splitlines()` 总和；MB == 归一化 UTF-8 字节 / 1 MiB，1 位小数）与 S5（sha == 末条 run 的 bot 提交；行内 `R<n>` == bot 父提交轮次）。总用例 3018→3022；变异 4/4。索引 §1 翻正写回 77→78、基线 `cc56faa`；生产代码零改动。
 - 2026-11-05 R150 单 profile（**双锁闭包同账：runtime lock ⊆ dev lock**）：四轮连推（七）第 2 轮。实测 `requirements.lock` 81 包、`requirements-dev.lock` 84 包，运行时锁 81/81 全部在 dev 锁里，共享 81 包钉版 0 漂移，dev 独有 3 包（`pytest` / `pluggy` / `iniconfig`）。W8/W9 只钉顶层声明到锁的边，闭包之间无人对账：dev 锁少一个运行时传递依赖、或两份锁把同一包钉成两个版本，CI 与 Docker 会跑出不同依赖而两边都自洽。`tests/test_dependency_sources.py` 新增 W10（按名闭包）与 W11（共享钉版逐字相等）。总用例 3022→3026；变异 2/2。生产代码零改动。
 - 2026-11-05 R151 单 profile（**Python 支持面同账：CI / Dockerfile / classifiers / README**）：四轮连推（七）第 3 轮。实测四处声明：requires-python `>=3.11`、classifiers 3.11/3.12；CI 的 ubuntu backend 与三个桌面 workflow 3.11、windows-backend（Windows 权威基线）3.14；Dockerfile `python:3.12-slim`；README/README.en 3.11+。**3.14 是权威 CI 却不在 classifiers**——PyPI 元数据静默缩小支持面。新增 `tests/test_python_support_surface.py`（4 条，P1–P4）：P1 语料守卫、P2 CI → 范围+classifiers、P3 Dockerfile → 范围+classifiers、P4 README 下限 == requires-python 下限；修法只补 `Programming Language :: Python :: 3.14` 一条元数据。总用例 3026→3032；变异 4/4。生产代码零改动。
+- 2026-11-05 R152 收口 profile（**收口轮：R149–R152 四账 + 满窗滚动账本修正 + R153–R156 登记**）：四轮连推（七）收口。R149 索引 §1 体量/代码基线（S4–S5，3022）；R150 双锁闭包（W10–W11，3026）；R151 Python 支持面（P1–P4，补 3.14 classifier，3032）。本轮核心发现：history 保留期 80 条首次滚动（R151 写回裁掉最旧一条），旧 D2 的「当前下标」会把 R149/R150 两条正确写回声明判红，旧 H3 的「集合恰等」会在 R153 起必红。D2 改为按 bot 提交当时的 history 快照判（兼认「第 N 条」），H3 改为「当前 ci 序列 == bot 账本最新 N 条、同序」。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.21–§10.24 / 记忆 1 条）；四轮变异合计 14/14。§7 登记 R153–R156（README 双语结构 / 索引 §1 CI 行 / 锁生成头 ↔ Python 下限 / 收口）。总用例 3018→3034。
