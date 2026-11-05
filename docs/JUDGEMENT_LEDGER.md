@@ -1699,3 +1699,28 @@ P7 README Node 下限 ↔ engines、CI node-version major 同账）、安装
 文件存在）、收口。R157–R159 的实测事实在登记时全部成立（徽章 3.11
 == 下限 3.11；Node 22.12+ == engines >=22.12.0；8 处引用可解析；
 两锁自名一致）。
+
+### 10.29 支持面展示层同账（R157）
+
+`tests/test_python_support_surface.py` 的 **P6–P7** 把支持面的展示层
+收进 P 系（R156 §7 登记）：
+
+- **P6 徽章 → 下限**：README.md / README.en.md 的 shields 徽章
+  （URL 的 `badge/Python-X.Y-` 与 `alt="Python X.Y"`）== requires-python
+  下限。URL 与 alt 是同一事实的两次展示，双锚各恰一处——只改其一
+  仍红。
+- **P7 Node 下限 → engines**：README 双语的「Node.js X.Y+」==
+  `web/package.json` `engines.node`（只认 `>=X.Y.0` 形状，其他写法
+  显式红）；声明 `node-version` 的 workflow，major 必须 == engines
+  major；全仓库无 `node-version` 声明也红（防判据空转）。
+
+R157 实测：徽章 3.11 == 下限 3.11（双语同）；Node 22.12+ ==
+`>=22.12.0`；三个 workflow（ci.yml / desktop-windows.yml /
+desktop-macos.yml）都写 `"22"`。P6/P7 首跑即过。总用例 3048→3052，
+变异 4/4（徽章 URL / 徽章 alt / README Node / engines，P6 与 P7
+互不串扰）。
+
+边界：CI 的 `node-version: "22"` 只有 major 颗粒度，伴生判只做
+major 同账——`22.12` 的保证来自 engines 本身（npm 拒绝更旧的
+Node）；不判 npm 下限（README 提 npm 无版本声明）；不判 desktop
+管线的 Node 实际版本（tag-only 上游继承，声明面已覆盖）。

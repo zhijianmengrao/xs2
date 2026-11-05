@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R156）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R157）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -827,3 +827,4 @@ xs2/
 - 2026-11-05 R154 单 profile（**索引 §1「CI 闸门」行机械化**）：四轮连推（八）第 2 轮。实测索引行 `10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback）`：8 个顶层 job 键、两个矩阵 job 各 `×2`、展开后 10 个 job run。I1 只钉 ci.yml 的 job 清单恰等与展开数，索引行本身无人对账——ci.yml 加一个 job、索引行没改，两本账照旧各自通过。`tests/test_index_snapshot.py` 新增 S6：行内总数 == 矩阵展开数、括号内顶层 job 名集合 == ci.yml job 键、每项 `×k` == 该 job 的展开数（无 `×k` 视为 1）、各项声明数之和 == 总数。索引行现状首跑即过；总用例 3040→3043；变异 3/3。生产代码零改动。
 - 2026-11-06 R155 单 profile（**锁生成头 ↔ Python 下限同账：--python-version / requires-python**）：四轮连推（八）第 3 轮。实测两份锁（`requirements.lock` / `requirements-dev.lock`）的 uv 生成头第 2 行各写 `--python-version 3.11`，`pyproject` `requires-python` 下限同为 3.11——这条边此前无人对账：改 requires-python 而不重生成锁时，锁仍按旧解释器解析，闭包可能悄悄漂移；W8/W9 只对账顶层声明↔锁内钉版，W10/W11 只对账两锁闭包交集，没有判据读过生成头。`tests/test_python_support_surface.py` 新增 P5：两份锁生成头的 `--python-version X.Y` == requires-python 下限，生成头丢失或写法改变显式红（生成头是 P5 唯一的锚）。实测现状首跑即过；总用例 3043→3046（+1 P5、N3/D1 因本篇与 R154 回填 +2）；变异 3/3（runtime 锁头 3.11→3.10 / dev 锁头 3.11→3.12 / 删 `--python-version` 旗标，P1–P4 全绿互不串扰）。生产代码零改动。
 - 2026-11-06 R156 收口 profile（**收口轮：R153–R156 四账 + R157–R160 登记**）：四轮连推（八）收口。R153 README 双语结构（M1–M4，3040）；R154 索引 §1 CI 闸门行（S6，3043）；R155 锁生成头 ↔ Python 下限（P5，3046）。收口发现：三条判据钉住的账在钉住之前就已经是对的（R153 只补了英文缺的一节、R154/R155 首跑即过）——判据的价值是让它们保持对。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.25–§10.28 / 记忆 1 条）；四轮变异合计 11/11（收口轮无新判据无变异）。§3 登记 R157–R160（支持面展示层 P6–P7：README 徽章 ↔ Python 下限、Node 下限 ↔ engines；安装文档引用面 V3：README×2 / CONTRIBUTING / Dockerfile 的 8 处锁文件引用可解析；锁生成头自名 P8：--output-file == 文件名、compile 源文件存在；收口）。总用例 3046→3048（N3/D1 因本篇与 R155 回填 +2）。生产代码与测试零改动。
+- 2026-11-06 R157 单 profile（**支持面展示层同账：徽章 ↔ Python 下限 / Node 下限 ↔ engines**）：四轮连推（九）第 1 轮。`tests/test_python_support_surface.py` 新增 P6–P7：P6 徽章双锚（URL `badge/Python-X.Y-` 与 `alt="Python X.Y"` 各恰一处）== requires-python 下限（实测 3.11 == 3.11）；P7 README 双语 `Node.js X.Y+` == `web/package.json` engines `>=X.Y.0`（实测 22.12 == `>=22.12.0`）+ CI `node-version` major 同账（3 个 workflow 各写 `"22"`）。语料守卫内建：徽章/engines/Node 下限解析不到显式红。总用例 3048→3052；变异 4/4（徽章 URL / 徽章 alt / README Node 下限 / engines 下限，P6 与 P7 互不串扰）。生产代码零改动。
