@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R158）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R159）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -829,3 +829,4 @@ xs2/
 - 2026-11-06 R156 收口 profile（**收口轮：R153–R156 四账 + R157–R160 登记**）：四轮连推（八）收口。R153 README 双语结构（M1–M4，3040）；R154 索引 §1 CI 闸门行（S6，3043）；R155 锁生成头 ↔ Python 下限（P5，3046）。收口发现：三条判据钉住的账在钉住之前就已经是对的（R153 只补了英文缺的一节、R154/R155 首跑即过）——判据的价值是让它们保持对。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.25–§10.28 / 记忆 1 条）；四轮变异合计 11/11（收口轮无新判据无变异）。§3 登记 R157–R160（支持面展示层 P6–P7：README 徽章 ↔ Python 下限、Node 下限 ↔ engines；安装文档引用面 V3：README×2 / CONTRIBUTING / Dockerfile 的 8 处锁文件引用可解析；锁生成头自名 P8：--output-file == 文件名、compile 源文件存在；收口）。总用例 3046→3048（N3/D1 因本篇与 R155 回填 +2）。生产代码与测试零改动。
 - 2026-11-06 R157 单 profile（**支持面展示层同账：徽章 ↔ Python 下限 / Node 下限 ↔ engines**）：四轮连推（九）第 1 轮。`tests/test_python_support_surface.py` 新增 P6–P7：P6 徽章双锚（URL `badge/Python-X.Y-` 与 `alt="Python X.Y"` 各恰一处）== requires-python 下限（实测 3.11 == 3.11）；P7 README 双语 `Node.js X.Y+` == `web/package.json` engines `>=X.Y.0`（实测 22.12 == `>=22.12.0`）+ CI `node-version` major 同账（3 个 workflow 各写 `"22"`）。语料守卫内建：徽章/engines/Node 下限解析不到显式红。总用例 3048→3052；变异 4/4（徽章 URL / 徽章 alt / README Node 下限 / engines 下限，P6 与 P7 互不串扰）。生产代码零改动。
 - 2026-11-06 R158 单 profile（**安装文档引用面：README / CONTRIBUTING / Dockerfile 的锁文件引用可解析**）：四轮连推（九）第 2 轮。`tests/test_scripts_inventory.py` 新增 V3：安装文档的 `pip install -r <file>` 引用与 Dockerfile 单文件 COPY 引用的仓库文件必须存在（实测 7 处 `-r` + 4 处 COPY 全部可解析，首跑即过；`COPY --from=` 旗标形、目录、通配跳过不判）；语料守卫下限 README ≥2 / CONTRIBUTING ≥1 / COPY ≥1。总用例 3052→3055；变异 3/3（README / Dockerfile / CONTRIBUTING 引用改名，V3 独红）。生产代码零改动。
+- 2026-11-06 R159 单 profile（**锁生成头自名：--output-file 与 compile 源文件**）：四轮连推（九）第 3 轮。`tests/test_python_support_surface.py` 新增 P8：两份锁生成头的 `--output-file X` == 文件自身名（自名不一致是拷贝重生成的指纹）、`uv pip compile <src>` 的源文件在磁盘（改名则重生成命令失效）；解析不到显式红（锁头三要素每个都是唯一锚）。实测两锁自名一致、源文件都在，首跑即过。总用例 3055→3058；变异 3/3（输出名改写 / 源文件改名 / 删 --output-file，P1–P7 全绿互不串扰）。生产代码零改动。

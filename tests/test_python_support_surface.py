@@ -1,6 +1,6 @@
-"""R151 / R155：Python 支持面同账——CI / Dockerfile / classifiers / README / 锁头。
+"""R151 / R155 / R159：Python 支持面同账——CI / Dockerfile / classifiers / README / 锁头。
 
-背景（实测，R148 §7 登记、R151 开工复核；R155 续）：
+背景（实测，R148 §7 登记、R151 开工复核；R155/R159 续）：
 
 - ``pyproject.toml``：``requires-python = ">=3.11"``，classifiers 只有
   3.11 / 3.12；
@@ -344,4 +344,49 @@ def test_readme_node_floor_matches_engines() -> None:
     assert not violations, (
         "CI 的 node-version 与 engines 的 major 不同账：\n"
         + "\n".join(violations)
+    )
+
+
+# ------------------------------------------------- R159: 锁生成头自名
+# R159（R156 §7 登记）：P5 只读生成头的 --python-version；生成头里还有
+# 两个自描述字段——--output-file（必须 == 文件自身名）与
+# `uv pip compile <src>`（源文件必须在磁盘）。拷贝重生成时最容易出现
+# 「dev 锁里写着 runtime 锁的名字」，源文件改名则重生成命令直接失效。
+LOCK_SOURCE_RX = re.compile(r"^#\s{2,}uv pip compile\s+(\S+)\s", re.M)
+LOCK_OUTPUT_RX = re.compile(r"^#\s{2,}uv pip compile .*--output-file\s+(\S+)\s*$", re.M)
+
+
+def _lock_header_names(path: Path) -> tuple[str, str]:
+    """生成头里的 (compile 源文件, --output-file)；解析不到显式红。"""
+    text = path.read_text(encoding="utf-8")
+    source = LOCK_SOURCE_RX.search(text)
+    output = LOCK_OUTPUT_RX.search(text)
+    assert source, (
+        f"{path.name} 生成头没有「uv pip compile <src>」——锚丢失，"
+        "P8 显式红"
+    )
+    assert output, (
+        f"{path.name} 生成头没有「--output-file <name>」——锚丢失，"
+        "P8 显式红"
+    )
+    return source.group(1), output.group(1)
+
+
+def test_lock_header_self_names() -> None:
+    """P8：生成头 --output-file == 文件自身名，compile 源文件在磁盘。"""
+    violations = []
+    for path in LOCKS:
+        source, output = _lock_header_names(path)
+        if output != path.name:
+            violations.append(
+                f"{path.name}: 生成头 --output-file 写 {output}"
+                "——自名不一致（拷贝重生成的痕迹）"
+            )
+        if not (REPO_ROOT / source).is_file():
+            violations.append(
+                f"{path.name}: 生成头 compile 源 {source} 不在磁盘"
+                "——重生成命令已失效"
+            )
+    assert not violations, (
+        "锁生成头自名/源文件不同账：\n" + "\n".join(violations)
     )

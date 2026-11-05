@@ -1748,3 +1748,24 @@ scripts/docker-entrypoint.sh、run.py）全部可解析，V3 首跑即过。
 P 系）；目录 COPY 的存在性由 container-build 真构建判；空通配是
 合法形态，不在射程；README 的其他路径叙述（clone URL、.venv 写法）
 不是安装源引用，不判。
+
+### 10.31 锁生成头自名（R159）
+
+`tests/test_python_support_surface.py` 的 **P8** 把生成头余下两个
+自描述字段收进 P 系（R156 §7 登记）：
+
+- **P8 自名同账**：`--output-file X` == 文件自身名；
+  `uv pip compile <src>` 的 `<src>` 在磁盘。自名不一致是「拷贝
+  重生成」的指纹（把 runtime 锁复制成 dev 锁而不重跑 uv，输出名
+  仍写着别人的名字）；源文件改名则重生成命令直接失效。
+- 语料守卫：两个字段解析不到都显式红——锁头三要素（版本 / 输出名 /
+  源文件）每个都是唯一锚，丢失不许静默放行。
+
+R159 实测：runtime 锁头 `compile requirements.txt … --output-file
+requirements.lock`、dev 锁头 `compile requirements-dev.txt …
+--output-file requirements-dev.lock`，自名一致、源文件都在，P8
+首跑即过。总用例 3055→3058，变异 3/3（输出名改写 / 源文件改名 /
+删 `--output-file`，P1–P7 全绿互不串扰）。
+
+边界：不重放 uv（闭包内容由 W 系）；源文件与 pyproject 的同账由
+W3–W7 负责；`--universal` / `--no-annotate` 等旗标不判。
