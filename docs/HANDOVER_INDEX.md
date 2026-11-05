@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 交接文档 | **124 份**（`docs/HANDOVER_ROUND24..149.md`；R34/R35 从未有文档） |
-| 文档体量 | 19,673 行 / 1.1 MB |
+| 文档体量 | 19,674 行 / 1.1 MB |
 | 当前用例 | **3,022**（R149：S4/S5 +2、N3/D1 因本篇 +2；R149 树 2994 passed / 28 skipped / 0 failed；本行由 S3 机判） |
 | CI 写回历史 | **78 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42000993269`；R149 跑执行 79） |
 | 代码基线 | `main` = `cc56faa`（R148 提交 + CI 回写；docs 回填见 R148 §6） |
