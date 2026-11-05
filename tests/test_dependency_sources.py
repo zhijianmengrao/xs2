@@ -33,11 +33,19 @@ dev lock 不刷 runtime lock 时，容器构建仍会装旧版本。
   requirements-dev.lock 且钉版逐字相等。
 - **W9 runtime → 运行时锁**：requirements.txt 的每个包都在
   requirements.lock 且钉版逐字相等（Dockerfile 与桌面管线直接安装它）。
+- **W10 双锁按名闭包**：requirements.lock 的每个包都必须出现在
+  requirements-dev.lock（同名归一）。CI 装 dev 锁、Docker 装运行时锁；
+  运行时闭包里的包在 dev 锁里消失，两条安装路径就会分叉，而 W8/W9
+  只看顶层声明到锁的边，看不见闭包之间。
+- **W11 共享包钉版同账**：两份锁共享的包钉版逐字相等。顶层声明都正确
+  也可能在闭包里钉出两个版本（uv 分别编译），届时两个环境跑不同代码。
 
-边界：不要求锁文件 ⊆ requirements（闭包是超集，常态）；不判
-``build-system.requires``（构建隔离环境自管，且是范围规格）；不判
-``uv.lock``——仓库内零引用（CI/Docker/scripts 均不读它），是否删除留给
-R148 收口决定。环境标记行按整行接受（``; sys_platform …`` 不参与判决）。
+边界：不要求锁文件 ⊆ requirements（闭包是超集，常态）；W10/W11 只对账
+两份锁的**交集**，不要求 dev 闭包的独有集合等于某张登记表（dev-only 3
+个包随 pyproject dev extra 变动）；不判 ``build-system.requires``（构建
+隔离环境自管，且是范围规格）；不判 ``uv.lock``——仓库内零引用
+（CI/Docker/scripts 均不读它），R148 收口已决定维持排除。环境标记行按
+整行接受（``; sys_platform …`` 不参与判决）。
 """
 
 from __future__ import annotations
@@ -271,6 +279,38 @@ def test_runtime_lock_covers_requirements() -> None:
         "requirements.txt 与 requirements.lock 版本漂移："
         + "; ".join(
             f"{name}: requirements=={pin} vs runtime-lock=={other}"
+            for name, (pin, other) in drift.items()
+        )
+    )
+
+
+def test_runtime_lock_is_covered_by_the_dev_lock() -> None:
+    """W10：运行时锁的每个包都在开发锁里（按名，闭包 ⊆ 闭包）。"""
+    runtime = _parse_requirements(RUNTIME_LOCK)
+    dev = _parse_requirements(DEV_LOCK)
+    missing = sorted(set(runtime) - set(dev))
+    assert not missing, (
+        f"requirements.lock 有而 requirements-dev.lock 没有：{missing}——"
+        "CI 从 dev 锁安装、Docker 从运行时锁安装，运行时闭包里的包在 dev "
+        "锁里消失会让两条路径分叉"
+    )
+
+
+def test_shared_lock_pins_are_identical() -> None:
+    """W11：双锁共享包的钉版逐字相等（闭包之间的版本漂移）。"""
+    runtime = _parse_requirements(RUNTIME_LOCK)
+    dev = _parse_requirements(DEV_LOCK)
+    shared = set(runtime) & set(dev)
+    assert shared, "两份锁没有共享包——闭包语料形状不对，W11 会空转"
+    drift = {
+        name: (runtime[name], dev[name])
+        for name in sorted(shared)
+        if runtime[name] != dev[name]
+    }
+    assert not drift, (
+        "运行时锁与开发锁的共享包版本漂移（两个环境会装不同版本）："
+        + "; ".join(
+            f"{name}: runtime-lock=={pin} vs dev-lock=={other}"
             for name, (pin, other) in drift.items()
         )
     )
