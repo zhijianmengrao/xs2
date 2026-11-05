@@ -1724,3 +1724,27 @@ desktop-macos.yml）都写 `"22"`。P6/P7 首跑即过。总用例 3048→3052�
 major 同账——`22.12` 的保证来自 engines 本身（npm 拒绝更旧的
 Node）；不判 npm 下限（README 提 npm 无版本声明）；不判 desktop
 管线的 Node 实际版本（tag-only 上游继承，声明面已覆盖）。
+
+### 10.30 安装文档引用面（R158）
+
+`tests/test_scripts_inventory.py` 的 **V3** 把安装文档与 Dockerfile
+的文件引用钉成「必须存在」（R156 §7 登记，续 R140 的 V1/V2）：
+
+- **V3 引用可解析**：README.md / README.en.md / CONTRIBUTING.md 的
+  `pip install -r <file>` 引用与 Dockerfile 的**单文件 COPY** 引用，
+  逐个在仓库根 `is_file()`。锁文件改名时这些命令全部失效——改名前
+  必须同步改引用。
+- 语料守卫：每个文档的引用数有下限（README ≥2、CONTRIBUTING ≥1、
+  Dockerfile 单文件 COPY ≥1），引用面被整体删光时显式红，不空转。
+
+R158 实测：7 处 `-r` 引用（README×2 各 3、CONTRIBUTING 1）+ 4 处
+单文件 COPY（web/package.json、requirements.lock、
+scripts/docker-entrypoint.sh、run.py）全部可解析，V3 首跑即过。
+首跑先红在 `COPY --from=frontend-builder`——旗标形 COPY 的首 token
+是旗标，第二源在构建器阶段里，不在仓库；判据补跳旗标/目录/通配后
+转绿。总用例 3052→3055，变异 3/3（三面各改一个引用名，V3 独红）。
+
+边界：只判「引用的文件存在」，不判内容对错（版本由 W 系、下限由
+P 系）；目录 COPY 的存在性由 container-build 真构建判；空通配是
+合法形态，不在射程；README 的其他路径叙述（clone URL、.venv 写法）
+不是安装源引用，不判。

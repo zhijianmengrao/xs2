@@ -106,3 +106,60 @@ def test_desktop_pipeline_missing_refs_frozen() -> None:
             f"{wf_name} 的缺失脚本引用漂移：实缺 {sorted(missing)}，冻结清单 "
             f"{sorted(expected_missing)}。新增引用缺失脚本/补齐脚本都要显式改清单。"
         )
+
+
+# ------------------------------------------------- R158: 安装文档引用面
+# R158（R156 §7 登记）：R140 的 V1/V2 只管 scripts/*.py 与 ci.yml 的引用；
+# README×2 / CONTRIBUTING.md 的 `pip install -r <file>` 与 Dockerfile 的
+# `COPY <file>` 引用的仓库文件此前无人判——锁文件一改名，所有安装命令
+# 同时失效（404 / 构建失败）。V3 把这些引用钉成「必须存在」。
+INSTALL_DOCS = (
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "README.en.md",
+    REPO_ROOT / "CONTRIBUTING.md",
+)
+INSTALL_REF_RX = re.compile(r"-r\s+([A-Za-z0-9_.\-/]+)")
+DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERFILE_COPY_RX = re.compile(r"^COPY\s+(\S+)", re.M)
+# 语料守卫下限：引用面被整体删光时判据不能静默空转（V3 的锚是「至少还有」）。
+MIN_INSTALL_REFS = {name: n for name, n in (
+    ("README.md", 2), ("README.en.md", 2), ("CONTRIBUTING.md", 1),
+)}
+
+
+def _dockerfile_file_copies() -> list[str]:
+    """Dockerfile 里「单文件 COPY」的源路径（跳过旗标/目录/通配）。"""
+    out = []
+    for ref in DOCKERFILE_COPY_RX.findall(DOCKERFILE.read_text(encoding="utf-8")):
+        if ref.startswith("--"):
+            continue  # COPY --from=… 的首 token 是旗标，第二源在构建器阶段里
+        if ref.endswith("/") or ref in (".", "./"):
+            continue  # 目录 COPY：目录存在性由构建结果（container-build）判
+        if "*" in ref:
+            continue  # 通配 COPY：空匹配是合法形态，不在文件判据射程
+        out.append(ref)
+    return out
+
+
+def test_install_doc_references_resolve() -> None:
+    """V3：安装文档与 Dockerfile 引用的仓库文件必须存在（R158）。"""
+    missing: list[str] = []
+    for path in INSTALL_DOCS:
+        refs = INSTALL_REF_RX.findall(path.read_text(encoding="utf-8-sig"))
+        floor = MIN_INSTALL_REFS.get(path.name, 1)
+        assert len(refs) >= floor, (
+            f"{path.name} 只解析到 {len(refs)} 处 `-r` 安装引用"
+            f"（下限 {floor}）——引用面被删光，V3 空转"
+        )
+        for ref in refs:
+            if not (REPO_ROOT / ref).is_file():
+                missing.append(f"{path.name}: -r {ref}")
+    copy_refs = _dockerfile_file_copies()
+    assert copy_refs, "Dockerfile 没有任何单文件 COPY——V3 的镜像面无锚"
+    for ref in copy_refs:
+        if not (REPO_ROOT / ref).is_file():
+            missing.append(f"Dockerfile: COPY {ref}")
+    assert not missing, (
+        "安装文档 / Dockerfile 引用的仓库文件不存在（改名锁文件前必须"
+        "同步改引用）：\n" + "\n".join(missing)
+    )
