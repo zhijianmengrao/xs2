@@ -1,6 +1,6 @@
-"""R151：Python 支持面同账——CI / Dockerfile / classifiers / README。
+"""R151 / R155：Python 支持面同账——CI / Dockerfile / classifiers / README / 锁头。
 
-背景（实测，R148 §7 登记、R151 开工复核）：
+背景（实测，R148 §7 登记、R151 开工复核；R155 续）：
 
 - ``pyproject.toml``：``requires-python = ">=3.11"``，classifiers 只有
   3.11 / 3.12；
@@ -23,10 +23,21 @@
 - **P4 README → 下限**：README.md 与 README.en.md 的「Python X.Y+」
   下限 == requires-python 的下限（``>=X.Y``）。
 
+R155 把**锁生成头**也收进来（R152 §7 登记）。两份锁的第二行是 uv 的
+生成命令回显，里面的 ``--python-version 3.11`` 记录了**解析这份闭包
+时用的解释器版本**——它才是依赖解析的真实锚点。改 requires-python
+而不重生成锁时，锁仍按旧解释器编译，闭包可能悄悄漂移；此前这条边
+无人对账（W8/W9 只对账包名与钉版，不读生成头）。
+
+- **P5 锁生成头 → 下限**：requirements.lock 与 requirements-dev.lock
+  生成头的 ``--python-version X.Y`` == requires-python 的下限。
+
 边界：只判**声明面**（版本字符串），不判 runner 上 ``python3`` /
 ``python`` 的实际版本——replay 矩阵写的是解释器名，不是版本声明；
 不要求每个 classifier 都在 CI 里跑（3.12 由 Dockerfile 覆盖）；
-不判 requires-python 的上界（当前没有）。
+不判 requires-python 的上界（当前没有）。P5 只读生成头这一行，不重放
+uv 解析过程（那是包内容的事，W 系已覆盖）；生成头丢失或写法变了要
+显式红，不许静默漏判——生成头是 P5 唯一的锚。
 """
 
 from __future__ import annotations
@@ -53,6 +64,10 @@ CLASSIFIER_RX = re.compile(
 DOCKER_RX = re.compile(r"^FROM\s+python:(\d+\.\d+)(?:[-@][^\s]*)?\s*$", re.M | re.I)
 README_FLOOR_RX = re.compile(r"Python\s+(\d+\.\d+)\+")
 VERSION_SHAPE_RX = re.compile(r"^\d+\.\d+$")
+LOCKS = (REPO_ROOT / "requirements.lock", REPO_ROOT / "requirements-dev.lock")
+LOCK_HEADER_RX = re.compile(
+    r"^#\s{2,}uv pip compile .*--python-version[ =](\d+\.\d+)\s", re.M
+)
 
 
 def _requires_python() -> tuple[str, Version]:
@@ -177,4 +192,29 @@ def test_readme_floor_matches_requires_python() -> None:
     assert not violations, (
         "README 的 Python 下限与 requires-python 不同账：\n"
         + "\n".join(violations)
+    )
+
+
+def _lock_header_version(path: Path) -> Version:
+    """取锁生成头的 ``--python-version``（uv pip compile 的回显行）。"""
+    match = LOCK_HEADER_RX.search(path.read_text(encoding="utf-8"))
+    assert match, (
+        f"{path.name} 的生成头没有「uv pip compile … --python-version X.Y」——"
+        "生成头丢失或写法变了，P5 无处落锚（显式红，不静默跳过）"
+    )
+    return Version(match.group(1))
+
+
+def test_lock_generator_python_version_matches_floor() -> None:
+    """P5：两份锁生成头的 --python-version == requires-python 下限。"""
+    _, floor = _requires_python()
+    violations = [
+        f"{path.name}: 生成头 --python-version {_lock_header_version(path)}，"
+        f"requires-python 下限是 {floor}——改下限后需重生成锁"
+        for path in LOCKS
+        if _lock_header_version(path) != floor
+    ]
+    assert not violations, (
+        "锁生成头与 requires-python 下限不同账（锁仍按旧解释器解析，"
+        "依赖闭包可能漂移）：\n" + "\n".join(violations)
     )

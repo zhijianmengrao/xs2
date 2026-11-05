@@ -1658,3 +1658,26 @@ replay-ci-fetch-chain / e2e-history-writeback），其中两个 replay job
 脚本自己的判据）；不要求行内排列顺序与 ci.yml 一致（展示行按可读性
 分组）；`10` 不是常量——若未来新增 job，ci.yml、索引行与 I1 的清单
 必须同时改，S6 仍判「行 == ci.yml」。
+
+### 10.27 锁生成头 ↔ Python 下限同账（R155）
+
+`tests/test_python_support_surface.py` 的 **P5** 把两份锁的 uv 生成头
+收进 P 系对账（R152 §7 登记）：
+
+- **P5 锁生成头 → 下限**：`requirements.lock` 与
+  `requirements-dev.lock` 生成头（`#    uv pip compile …` 回显行）的
+  `--python-version X.Y` == `requires-python` 下限（`>=X.Y`）。
+  生成头是解析这份闭包时用的解释器版本——改 requires-python 而不
+  重生成锁时，锁仍按旧解释器编译，依赖闭包可能悄悄漂移；W8/W9
+  只对账「顶层声明 ↔ 锁内钉版」，W10/W11 只对账两锁闭包的交集，
+  生成头此前无人读过。
+- 语料守卫：生成头匹配不到（丢失或写法改变）显式红并点名该锁，
+  不静默跳过——生成头是 P5 唯一的锚。
+
+R155 实测：两处 `--python-version 3.11` == requires-python 下限
+3.11（README 双语下限同源，P4 已钉）。P5 首跑即过。总用例
+3043→3046，变异 3/3。
+
+边界：只读生成头这一行，不重放 uv 解析过程（闭包内容对账由 W 系
+负责）；不判 `--universal` / `--no-annotate` 等其余旗标；不判
+`requires-python` 的上界；不判 `uv.lock`（R148 已决定维持排除）。
