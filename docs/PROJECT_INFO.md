@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R153）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R154）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -824,3 +824,4 @@ xs2/
 - 2026-11-05 R151 单 profile（**Python 支持面同账：CI / Dockerfile / classifiers / README**）：四轮连推（七）第 3 轮。实测四处声明：requires-python `>=3.11`、classifiers 3.11/3.12；CI 的 ubuntu backend 与三个桌面 workflow 3.11、windows-backend（Windows 权威基线）3.14；Dockerfile `python:3.12-slim`；README/README.en 3.11+。**3.14 是权威 CI 却不在 classifiers**——PyPI 元数据静默缩小支持面。新增 `tests/test_python_support_surface.py`（4 条，P1–P4）：P1 语料守卫、P2 CI → 范围+classifiers、P3 Dockerfile → 范围+classifiers、P4 README 下限 == requires-python 下限；修法只补 `Programming Language :: Python :: 3.14` 一条元数据。总用例 3026→3032；变异 4/4。生产代码零改动。
 - 2026-11-05 R152 收口 profile（**收口轮：R149–R152 四账 + 满窗滚动账本修正 + R153–R156 登记**）：四轮连推（七）收口。R149 索引 §1 体量/代码基线（S4–S5，3022）；R150 双锁闭包（W10–W11，3026）；R151 Python 支持面（P1–P4，补 3.14 classifier，3032）。本轮核心发现：history 保留期 80 条首次滚动（R151 写回裁掉最旧一条），旧 D2 的「当前下标」会把 R149/R150 两条正确写回声明判红，旧 H3 的「集合恰等」会在 R153 起必红。D2 改为按 bot 提交当时的 history 快照判（兼认「第 N 条」），H3 改为「当前 ci 序列 == bot 账本最新 N 条、同序」。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.21–§10.24 / 记忆 1 条）；四轮变异合计 14/14。§7 登记 R153–R156（README 双语结构 / 索引 §1 CI 行 / 锁生成头 ↔ Python 下限 / 收口）。总用例 3018→3034。
 - 2026-11-05 R153 单 profile（**README 双语结构同账：标题层级 / 代码块 / 锚点**）：四轮连推（八）第 1 轮。实测 `README.md` 25 个标题（11 H2 + 14 H3）对 `README.en.md` 24 个（11 H2 + 13 H3）——中文多一个 `### 社区贡献者`，英文只有 `### Join the group chat`；两份各 5 个代码块（10 行围栏；R152 §7 记的「10 个代码块」是围栏行数）与 6 个同名同序锚点。新增 `tests/test_readme_parity.py`（4 条，M1–M4）：M1 语料守卫（围栏必须闭合）、M2 标题层级序列逐项相等、M3 代码块语言序列相等、M4 锚点 id 同名同序且不重复；修法为英文补 `### Contributors` 一节。M2 首跑当场红在「第 23 个标题层级：中文 H3 vs 英文 H2」。总用例 3034→3040；变异 4/4。生产代码零改动。
+- 2026-11-05 R154 单 profile（**索引 §1「CI 闸门」行机械化**）：四轮连推（八）第 2 轮。实测索引行 `10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback）`：8 个顶层 job 键、两个矩阵 job 各 `×2`、展开后 10 个 job run。I1 只钉 ci.yml 的 job 清单恰等与展开数，索引行本身无人对账——ci.yml 加一个 job、索引行没改，两本账照旧各自通过。`tests/test_index_snapshot.py` 新增 S6：行内总数 == 矩阵展开数、括号内顶层 job 名集合 == ci.yml job 键、每项 `×k` == 该 job 的展开数（无 `×k` 视为 1）、各项声明数之和 == 总数。索引行现状首跑即过；总用例 3040→3043；变异 3/3。生产代码零改动。

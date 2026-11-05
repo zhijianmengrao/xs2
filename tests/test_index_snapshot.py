@@ -1,4 +1,4 @@
-"""R137 / R149：索引 §1 快照数字机械化。
+"""R137 / R149 / R154：索引 §1 快照数字机械化。
 
 背景（实测，R136 §7）：``HANDOVER_INDEX.md`` §1 是给人看的快照行（交接
 文档份数、文档体量、当前用例、写回历史、代码基线），每轮靠手更新，漂移
@@ -25,12 +25,23 @@ R146 的 L 系明确把「文档体量」留在射程外（它随轮次波动）
   提交父提交的轮次。判据锚在「写回账的第 K 条」上，而不是某个手抄的
   main 快照。
 
+R154 把最后一行「CI 闸门」也变成机判（**S 系续**）：行内的「N 个 job」
+是矩阵展开后的 job run 数，括号里是顶层 job 名（矩阵 job 标 ``×k``）。
+此前 I1 只钉 ci.yml 的 job 清单与展开数，索引行本身无人对账——ci.yml
+加一个 job、索引行没改，两本账照旧各自通过。
+
+- **S6 CI 闸门行**：``N 个 job`` 的 N == ci.yml 顶层 job 按矩阵展开后的
+  job run 数；括号列表的顶层 job 名集合 == ci.yml 的 job 键；每项的
+  ``×k`` == 该 job 的矩阵展开数（无 ``×k`` 视为 1）。行内总数同时等于
+  各项声明数之和，防止「列表对、总数错」。
+
 边界：行的**括号注记**（passed/skipped 计数、「R14x 跑预计」之类）不钉
 ——平台差异与预期值不该机械化；行的**存在**与五行的键名（交接文档 /
 文档体量 / 当前用例 / CI 写回历史 / 代码基线）钉住——行被删也红。体量
 行的 MB 只判到 1 位小数：语料增删一行不该让「1.1 MB」在 1.05 附近翻
-成 1.0/1.1 两个值。索引其余部分由 R133 的 N2/N3、R135/R136 的判据与
-R146/R147 的 L 系覆盖。
+成 1.0/1.1 两个值。S6 只读 ci.yml 与索引行，不判 job 的业务输出；不要
+求行内 job 的排列顺序与 ci.yml 一致（展示行按可读性分组）。索引其余
+部分由 R133 的 N2/N3、R135/R136 的判据与 R146/R147 的 L 系覆盖。
 """
 
 from __future__ import annotations
@@ -42,16 +53,25 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INDEX = REPO_ROOT / "docs" / "HANDOVER_INDEX.md"
 HISTORY = REPO_ROOT / "tests" / "fixtures" / "e2e_retry_history" / "history.json"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
 ROW_DOCS = "交接文档"
 ROW_VOLUME = "文档体量"
 ROW_CASES = "当前用例"
 ROW_WRITEBACK = "CI 写回历史"
 ROW_BASELINE = "代码基线"
+ROW_CI_GATE = "CI 闸门"
 MIB = 1024 * 1024
+JOB_TOTAL_RX = re.compile(r"(\d+)\s*个\s*job")
+JOB_LIST_RX = re.compile(r"个\s*job\s*（([^（）]*)）")
+JOB_ITEM_RX = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\s*×\s*(\d+))?$"
+)
 
 
 def _index_row(key: str) -> str:
@@ -231,4 +251,82 @@ def test_baseline_row_matches_the_last_writeback_bot() -> None:
     assert int(round_match.group(1)) == int(parent_match.group(1)), (
         f"代码基线轮次漂移：行写 R{round_match.group(1)}，bot 提交的父提交"
         f"是 R{parent_match.group(1)}（{parent_subject[:60]}）"
+    )
+
+
+def _ci_job_expansions() -> dict[str, int]:
+    """ci.yml 顶层 job → 矩阵展开后的 job run 数。"""
+    path = WORKFLOWS / "ci.yml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    jobs = document.get("jobs") if isinstance(document, dict) else None
+    assert isinstance(jobs, dict) and jobs, "ci.yml 没有 jobs 映射——S6 无处落锚"
+    expansions: dict[str, int] = {}
+    for name, job in jobs.items():
+        matrix = (job.get("strategy") or {}).get("matrix") or {}
+        assert isinstance(matrix, dict), f"ci.yml job {name} 的 matrix 不是映射"
+        include = matrix.get("include") or []
+        if include:
+            assert isinstance(include, list), (
+                f"ci.yml job {name} 的 matrix.include 不是列表"
+            )
+            expansions[name] = len(include)
+            continue
+        platforms = matrix.get("os")
+        expansions[name] = len(platforms) if isinstance(platforms, list) else 1
+    assert expansions, "ci.yml 没有解析到任何 job"
+    return expansions
+
+
+def _ci_gate_row_items() -> tuple[int, dict[str, int]]:
+    """解析索引「CI 闸门」行：总数与 {job: ×k}（无 ×k 视为 1）。"""
+    line = _index_row(ROW_CI_GATE)
+    total_match = JOB_TOTAL_RX.search(line)
+    assert total_match, f"CI 闸门行没有「N 个 job」：{line.strip()[:120]}"
+    total = int(total_match.group(1))
+    list_match = JOB_LIST_RX.search(line)
+    assert list_match, (
+        f"CI 闸门行没有「（job / job ×k / …）」列表：{line.strip()[:120]}"
+    )
+    items: dict[str, int] = {}
+    for raw in list_match.group(1).split("/"):
+        item = raw.strip()
+        match = JOB_ITEM_RX.match(item)
+        assert match, f"CI 闸门行无法解析 job 项：{item!r}"
+        name = match.group(1)
+        count = int(match.group(2) or 1)
+        assert count >= 1, f"CI 闸门行 {name} 的 ×{count} 不是正整数"
+        assert name not in items, f"CI 闸门行列了两次 {name}"
+        items[name] = count
+    return total, items
+
+
+def test_ci_gate_row_matches_workflow_inventory() -> None:
+    """S6：CI 闸门行——job 名集合、各项 ×k 与总数都 == ci.yml。"""
+    claimed_total, claimed = _ci_gate_row_items()
+    actual = _ci_job_expansions()
+
+    missing = sorted(set(actual) - set(claimed))
+    extra = sorted(set(claimed) - set(actual))
+    assert not missing and not extra, (
+        "CI 闸门行的 job 清单与 ci.yml 顶层 job 不同账："
+        f"索引行缺 {missing}，多 {extra}"
+    )
+
+    mismatches = [
+        f"{name}: 行写 ×{claimed[name]}，ci.yml 展开 {actual[name]}"
+        for name in sorted(actual)
+        if claimed[name] != actual[name]
+    ]
+    assert not mismatches, (
+        "CI 闸门行的矩阵标记与 ci.yml 不同账：\n" + "\n".join(mismatches)
+    )
+
+    expanded = sum(actual.values())
+    assert claimed_total == expanded, (
+        f"CI 闸门行总数漂移：行写 {claimed_total} 个 job，ci.yml 矩阵展开"
+        f"后是 {expanded} 个 job run（顶层 {len(actual)} 个 job 键）"
+    )
+    declared = sum(claimed.values())
+    assert declared == claimed_total, (
+        f"CI 闸门行自相矛盾：各项声明数之和 {declared} != 总数 {claimed_total}"
     )

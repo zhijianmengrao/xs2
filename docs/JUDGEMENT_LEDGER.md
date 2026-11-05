@@ -1632,3 +1632,29 @@ mermaid / bash / powershell / bash / bash）与锚点（6 个，同名同序）�
 边界：只判结构，不判标题措辞、代码内容、徽章与 HTML 表格；不要求逐段
 翻译对应；不要求每个代码块都有语言标签，只要求两份的标签序列相同。
 README 徽章 `Python-3.11` 的展示值与 P4 的正文下限同账留作候选（R151 §7）。
+
+### 10.26 索引 §1 CI 闸门行机械化（R154）
+
+`tests/test_index_snapshot.py` 的 S6 把索引 §1 最后一行「CI 闸门」从
+手抄展示行变成机判：
+
+- **总数**：行内 `N 个 job` 的 N == ci.yml 顶层 job 按矩阵展开后的
+  job run 数（不是顶层 job 键数）。
+- **清单**：括号列表的顶层 job 名集合 == ci.yml 的 `jobs` 键集合；
+  缺一个、多一个都红；同名重复也红。
+- **矩阵标记**：每项的 `×k` == 该 job 的矩阵展开数（`strategy.matrix.
+  include` 的长度，或 `matrix.os` 列表长度；都没有视为 1）。矩阵 job
+  漏写 `×2` 或写成 `×3` 都红。
+- **自洽**：各项声明数之和 == 行内总数，防止「列表对、总数错」。
+
+R154 实测：索引行列 8 个顶层 job（backend / windows-backend /
+frontend / container-config / container-build / replay-ci-writeback /
+replay-ci-fetch-chain / e2e-history-writeback），其中两个 replay job
+标 `×2`，总数 10；ci.yml 的 `jobs` 键恰为这 8 个，两个 job 的
+`matrix.include` 各 2 项，展开 10。S6 首跑即过。总用例 3040→3043，
+变异 3/3。
+
+边界：S6 只判索引行与 ci.yml 的同账，不判 job 的业务输出（那是闸门
+脚本自己的判据）；不要求行内排列顺序与 ci.yml 一致（展示行按可读性
+分组）；`10` 不是常量——若未来新增 job，ci.yml、索引行与 I1 的清单
+必须同时改，S6 仍判「行 == ci.yml」。
