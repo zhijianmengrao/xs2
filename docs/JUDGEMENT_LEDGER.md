@@ -1800,3 +1800,24 @@ R161 实测：两处都是 `0.1.0`，W12 首跑即过。总用例 3060→3063，
 
 边界：不判 `web/package-lock.json`（npm ci 自带一致性闸门）；不判
 `[tool.*]` 的其他版本字段；不判 git tag（RELEASE_SOP 自己管）。
+
+### 10.34 许可证面同账（R162）
+
+`tests/test_license_surface.py` 的 **V4** 把授权声明收进 V 系
+（R160 §7 登记；V1–V3 是「引用可解析」，V4 延伸到授权面）：
+
+- **V4a license-files 可解析**：`[project].license-files` 数组里的
+  每个文件必须在磁盘（缺失/空数组显式红）——缺文件是打包分发清单
+  指空。
+- **V4b 授权名同账**：pyproject `license` 的 SPDX 核心段
+  （`AGPL-3.0-only` → `AGPL-3.0`）== 两份 README 徽章 alt 与 URL
+  中的授权名（shields URL 的 `--` 归一为 `-`；`-only` 后缀不进
+  徽章是正常写法）。URL 与 alt 双锚各恰一处，只改其一仍红。
+
+R162 实测：pyproject `AGPL-3.0-only`、`LICENSE` 在磁盘、双语徽章
+均 `AGPL-3.0`，V4 首跑即过。总用例 3063→3067，变异 3/3
+（license-files 改名 / en 徽章 alt 换 MPL-2.0 / pyproject 核心段
+3.1，V4a 与 V4b 互不串扰）。
+
+边界：只判声明面——不读 LICENSE 内容、不校验 SPDX 合法性、不判
+徽章 href 指向的上游仓库（fork 徽章有意指 upstream，V2b 同型）。
