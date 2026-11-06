@@ -22,9 +22,15 @@
 - **M4 锚点序列**：``<a id>`` 的 id 序列逐项相等，且每份文件内不重复
   ——锚点是跨语言深链的稳定地址。
 
-边界：只判**结构**，不判标题措辞、代码内容、徽章与 HTML 块；Markdown
-标题只覆盖 H2–H6（两份文档的 H1 都是顶部 HTML ``<h1>``，品牌图不在
-标题序列里）；M3 不要求每个块都有语言标签，只要求两份的标签序列相同；
+R166 补 **M5 徽章序列**（R164 §7 登记）：两份 README 顶部各有 4 枚
+``img.shields.io`` 徽章（Release / CI / license / Python），URL 序列
+逐项相等；alt 不参与——license 徽章的 alt 按语言写
+``许可证：AGPL-3.0`` / ``License: AGPL-3.0``，是正常翻译。
+
+边界：只判**结构**，M5 只判徽章的 URL 序列（alt 有语言差异，豁免），
+不判标题措辞、代码内容与徽章指向的上游仓库（fork 徽章有意指 upstream）；
+Markdown 标题只覆盖 H2–H6（两份文档的 H1 都是顶部 HTML ``<h1>``，品牌图
+不在标题序列里）；M3 不要求每个块都有语言标签，只要求两份的标签序列相同；
 锚点必须是 ``<a id="…"></a>`` 的显式写法——GitHub 自动生成的标题锚点
 不在射程（标题文本本就不同）。
 """
@@ -44,6 +50,12 @@ READMES = {"README.md": ZH_README, "README.en.md": EN_README}
 HEADING_RX = re.compile(r"^ {0,3}(#{2,6})[ \t]+(\S.*?)[ \t]*$")
 FENCE_RX = re.compile(r"^ {0,3}(`{3,})([^`]*)$")
 ANCHOR_RX = re.compile(r'<a\s+id="([^"]+)"\s*>\s*</a>')
+BADGE_SRC_RX = re.compile(
+    r'<img\s+[^>]*src="('
+    r"https://img\.shields\.io/[^\"]+"
+    r"|https://github\.com/[^\"]+/actions/workflows/[^\"]+/badge\.svg"
+    r')"'
+)
 
 
 @dataclass(frozen=True)
@@ -177,4 +189,37 @@ def test_anchor_sequence_matches() -> None:
         f"  中文 {zh.anchors}\n"
         f"  英文 {en.anchors}\n"
         "锚点是跨语言深链的稳定地址，改名/换序必须两份同时改"
+    )
+
+
+# ------------------------------------------------- R166: 徽章 URL 序列（M5）
+# 徽章行是 README 顶部 HTML 块里唯一有跨语言对应关系的结构：两处独立
+# 写入点，URL 必须同名同序；alt 是给人读的，license 徽章的 alt 按语言
+# 写不同前缀是正常翻译，不参与对账。
+def _badge_urls(path: Path) -> list[str]:
+    """按文档顺序返回 ``img.shields.io`` 徽章的 URL 序列。"""
+    text = path.read_text(encoding="utf-8-sig")
+    urls = BADGE_SRC_RX.findall(text)
+    assert urls, (
+        f"{path.name} 没有解析到 img.shields.io 徽章——M5 的语料面空转"
+    )
+    return urls
+
+
+def test_badge_url_sequence_matches() -> None:
+    """M5：两份 README 的徽章 URL 序列逐项相等（alt 语言差异豁免）。"""
+    zh = _badge_urls(ZH_README)
+    en = _badge_urls(EN_README)
+    for position, (left, right) in enumerate(zip(zh, en), 1):
+        assert left == right, (
+            "README 徽章 URL 序列不同账：\n"
+            f"  第 {position} 枚：中文 {left}\n"
+            f"           英文 {right}\n"
+            f"  中文 {len(zh)} 枚，英文 {len(en)} 枚"
+        )
+    assert len(zh) == len(en), (
+        "README 徽章数量不同账：\n"
+        f"  中文 {len(zh)} 枚：{zh}\n"
+        f"  英文 {len(en)} 枚：{en}\n"
+        "双语徽章是两处写入点：加/删一枚必须两份同时改"
     )

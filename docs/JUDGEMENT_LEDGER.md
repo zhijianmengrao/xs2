@@ -1881,3 +1881,23 @@ R165 实测：八处全为 8020，W13 首跑即过。总用例 3072→3076，变
 主机名、不判 `web/` 前端的 Vite 开发代理端口、不判
 `start_determinflow.sh` 的展示/诊断文案；healthcheck 只认
 `localhost:<port>` 形式。
+
+### 10.38 README 徽章序列双语同账（R166）
+
+`tests/test_readme_parity.py` 的 **M5** 把 README 顶部徽章收进 M 系
+（R164 §7 登记；M1–M4 只钉标题/代码块/锚点，徽章在射程外）：
+
+- **M5 徽章序列**：两份 README 的徽章 URL 序列逐项相等、数量相等；
+  每份至少解析出一枚。只认两种宿主——`https://img.shields.io/...`
+  与 `https://github.com/<owner>/<repo>/actions/workflows/<wf>/badge.svg`
+  ——品牌图、截图等其他 `<img>` 不进序列。
+- alt 不参与：license 徽章按语言写 `许可证：AGPL-3.0` /
+  `License: AGPL-3.0`，是正常翻译；P6 只钉 Python 徽章的值、V4b
+  只钉 license 徽章的授权名，三条判据互不越界。
+
+R166 实测：双语各 4 枚（Release / CI / license / Python），URL 序列
+完全一致，M5 首跑即过。总用例 3076→3079，变异 3/3（删 CI 徽章 /
+改 Release URL / 交换前两枚顺序，M1–M4 与 P6/P7、V4b 全绿）。
+
+边界：不判 alt 文案、不判 href 指向的上游仓库（fork 徽章有意指
+upstream，V2b 同型）、不判徽章图片内容与颜色；品牌图与截图不在射程。
