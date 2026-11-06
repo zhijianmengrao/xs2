@@ -2055,3 +2055,30 @@ FROM，P9a 与 P9b 各自独红）。
 边界：只判 major——不判 floating minor（`node:22-alpine` 不带 minor）、
 不判 python base（P3 已覆盖，重复钉会把同一条账记两次）、不判镜像
 digest / 发行版（`-alpine` / `-slim` 是打包选择）。
+
+### 10.47 desktop 版本五源同账（R175）
+
+`tests/test_version_sources.py` 的 **W18** 把桌面发布版本线（与核心
+0.1.0 独立的 1.0.x）收进 W 系（R172 §3 登记为「双源」；开工实测按
+`docs/RELEASE_SOP.md` §1 补齐到五份真实清单）：
+
+- **W18a 语料守卫**：五份桌面版本清单都能解析出 `X.Y.Z` 形状的版本
+  ——`tauri.conf.json`、`Cargo.toml`（`[package] version`）、
+  `Cargo.lock`（`determinflow-desktop` 根包，恰一处）、
+  `package.json`、`official-plugins.lock.json`（`desktop_version`）；
+  `RELEASE_SOP` §1 表的首列路径集合必须恰好是这五份文件 + 发版钉值
+  测试（第六处）。
+- **W18b 五源同账**：五份清单的版本逐字相等，锚 = `tauri.conf.json`。
+
+R175 实测：五处全为 1.0.2，首跑即过。总用例 3107→3111（W18 +2、
+N3/D1 +2），变异 3/3（tauri 形状 1.0 / Cargo.lock 1.0.1 / SOP 删
+Cargo.lock 行；W18a 与 W18b 各自独红）。原
+`test_desktop_versions_are_consistent` 的三源裸断言收编进 W18，改名为
+`test_desktop_release_version_is_pinned` 只保留 SOP 第六处的发布钉值，
+避免同一条账被两个测试各钉一次。
+
+边界：不判版本递增语义（发版 tag 与 `RELEASE_SOP` §3 负责）、不判
+release-notes 与历史文档里的旧版本字面、不判
+`tauri.macos.conf.json`（overlay 不含 `version`，继承主配置）、不判
+`Cargo.lock` 传递依赖的钉版（cargo 维护，W18 只钉根包自述版本）、
+不判桌面版本与核心版本相等（两条独立版本线）。

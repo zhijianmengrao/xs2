@@ -583,22 +583,20 @@ def test_bundled_plugin_verifier_rejects_empty_snapshot(tmp_path: Path) -> None:
         verify_bundled_plugins(tmp_path)
 
 
-def test_desktop_versions_are_consistent() -> None:
+def test_desktop_release_version_is_pinned() -> None:
+    """RELEASE_SOP §1 第六处：当前发布版本钉值（发版时必须同改）。
+
+    五份清单之间的同账由 W18（``tests/test_version_sources.py``）负责；
+    这里只钉发版清单里的「当前版本」这一格——升版本时忘了改这行，
+    发版前先红。
+    """
     tauri = json.loads(
         (REPO_ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text(
             encoding="utf-8"
         )
     )
-    package = json.loads(
-        (REPO_ROOT / "desktop" / "package.json").read_text(encoding="utf-8")
-    )
-    cargo = (REPO_ROOT / "desktop" / "src-tauri" / "Cargo.toml").read_text(
-        encoding="utf-8"
-    )
 
     assert tauri["version"] == "1.0.2"
-    assert package["version"] == tauri["version"]
-    assert f'version = "{tauri["version"]}"' in cargo
 
 
 def test_frozen_backend_can_execute_python_workflow_scripts(tmp_path: Path) -> None:

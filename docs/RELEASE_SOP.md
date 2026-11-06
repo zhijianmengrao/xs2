@@ -12,7 +12,10 @@
 | `desktop/src-tauri/Cargo.lock` | `determinflow-desktop` 条目的 `version`（避免锁漂移） |
 | `desktop/package.json` | `version` |
 | `desktop/official-plugins.lock.json` | `desktop_version`（`load_official_plugin_lock` 硬校验，**漏改 full 构建必炸**） |
-| `tests/test_desktop_packaging.py` | `test_desktop_versions_are_consistent` 的钉值断言 |
+| `tests/test_desktop_packaging.py` | `test_desktop_release_version_is_pinned` 的钉值断言 |
+
+> 前五处由 `tests/test_version_sources.py` 的 W18a/W18b 机判（五源同账）；
+> 第六处是发版钉值，由本表里的测试断言。改本表时 W18a 会先红。
 
 ## 2. Release Notes
 
