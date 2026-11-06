@@ -1963,3 +1963,24 @@ R169 实测：三份 workflow 7 处脚本引用 + Dockerfile 1 处 = 8 处，全
 边界：只判引用与 lockfile 存在——不判脚本内部命令、不判依赖版本与锁
 一致性（`npm ci` 自带完整性闸门）、不判 workflow 的矩阵/条件是否真的
 会跑到（CI 平台语义不在仓库内）；`npm install` 不判。
+
+### 10.42 .env.example 环境模板（R170）
+
+`tests/test_env_template.py` 的 **W15** 把用户复制的环境模板收进 W 系
+（R168 §3 登记）：
+
+- **W15a 读取点存在**：模板的每个 active 键都必须在 `src/` 找到读取点
+  ——裸名命中 `os.getenv` / `os.environ.get` / `_get_config_value` /
+  `_get_int_config` / `_get_bool_config`；带 `DETERMINFLOW_` 前缀的键，
+  后缀命中 `get_determinflow_env`。至少 9 个键的语料守卫，键不得重复。
+- **W15b 默认值同账**：非空模板值 == 代码兜底值（布尔与大小写归一）；
+  空值（凭证类）只判读取点。至少 8 个非空值的语料守卫。
+
+R170 实测：9 个 active 键全部有读取点；8 个非空默认值
+0.0.0.0 / 8020 / INFO / 1000 / true / .md / process / 4 全部同账；
+`DEEPSEEK_API_KEY=` 是唯一空值。总用例 3089→3093，变异 3/3
+（WEB_HOST / LOG_LEVEL / 无读取点键，W15a 与 W15b 各自独红）。
+
+边界：只判 active 行——`#` 注释掉的示例键不在射程；不判 `.env` 本身
+（不入库）、不判 `load_dotenv` 的运行时优先级（运维面）；「至少 9 个
+键」是语料守卫，不是 allowlist。

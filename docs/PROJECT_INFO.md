@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R169）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R170）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -840,3 +840,4 @@ xs2/
 - 2026-11-06 R167 单 profile（**compose 环境账 ↔ config 读取点：W14**）：四轮连推（十一）第 3 轮。新增 `tests/test_compose_environment.py` W14a/W14b：`docker-compose.yml` 的 6 个 env（裸名 `WEB_HOST`/`WEB_PORT`/`LOG_LEVEL`/`CODING_WORKSPACE_COPY_ON_CREATE`，带前缀 `DETERMINFLOW_WORKFLOW_EXECUTOR_MODE`/`COUNT`）全部在 `src/` 有读取点；`${KEY:-default}` 的插值变量名 == 键名，静态默认值与代码兜底值逐项相等（0.0.0.0 / 8020 / INFO / true / process / 4），布尔与大小写归一；同一键多兜底值显式红。实测 6 键全部命中，首跑即过。总用例 3079→3083；变异 4/4（LOG_LEVEL 默认值 / executor count 默认值 / config mode 兜底值 / 新增无读取点的 prefixed key，W14a 与 W14b 各自独红）。生产代码零改动。
 - 2026-11-06 R168 收口 profile（**收口轮：R165–R168 四账 + R169–R172 登记**）：四轮连推（十一）收口。R165 端口八源（W13，3076）、R166 README 徽章序列（M5，3079）、R167 compose 环境账（W14a/W14b，3083）。三条判据全部首跑即过、生产代码零改动——连续第四批同型：候选制实测登记的边在钉住时都是对的。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.37–§10.40 / 记忆 1 条）；三轮变异合计 12/12（收口轮无新判据无变异）。§3 登记 R169–R172：npm 引用面（V5：三份 workflow 8 处脚本引用 + 6 处 npm ci，全部命中 web 13 scripts / desktop 4 scripts 与两份锁文件）、`.env.example` 环境模板（W15：9 个 active 键全部有读取点，8 个非空默认值同账，空凭证豁免）、compose 挂载点 ↔ config 目录（W16：3 个卷目标 == WORKDIR + data/logs/config，宿主机源同名）、收口。总用例 3083→3085（N3/D1 因本篇与 R167 回填 +2）。生产代码与测试零改动。
 - 2026-11-06 R169 单 profile（**npm 引用面：V5**）：四轮连推（十二）第 1 轮。新增 `tests/test_npm_references.py` V5a/V5b：三份 workflow 的 7 处 `npm run`/`npm test` 引用 + Dockerfile 的 1 处，合计 8 处，按 `working-directory` / run 脚本里的 `cd <dir>` / Dockerfile `WORKDIR` 推进后逐处命中 `web/package.json`（13 个 scripts）或 `desktop/package.json`（4 个 scripts）；6 处 `npm ci` 的工作目录都必须有 `package-lock.json`。实测 8 处引用全部可解析、两份锁文件都在，首跑即过。总用例 3085→3089；变异 3/3（删 web 的 lint script / 改 ci.yml 的 lint 引用 / 移走 web/package-lock.json，V5a 与 V5b 各自独红）。生产代码零改动。
+- 2026-11-06 R170 单 profile（**`.env.example` 环境模板：W15**）：四轮连推（十二）第 2 轮。新增 `tests/test_env_template.py` W15a/W15b：模板 9 个 active 键（`WEB_HOST`/`WEB_PORT`/`LOG_LEVEL`/`SESSION_HISTORY_MAX_ENTRIES`/`DEEPSEEK_API_KEY`/`MARKETPLACE_SKILL_FILE_TYPE_CHECK`/`MARKETPLACE_SKILL_ALLOWED_EXTENSIONS`/`DETERMINFLOW_WORKFLOW_EXECUTOR_MODE`/`COUNT`）全部在 `src/` 有读取点；8 个非空默认值与代码兜底值逐项相等（0.0.0.0 / 8020 / INFO / 1000 / true / .md / process / 4），`DEEPSEEK_API_KEY=` 空凭证只判读取点；键不得重复，至少 9 键 / 8 个非空值的语料守卫。实测全部同账，首跑即过。总用例 3089→3093；变异 3/3（WEB_HOST 默认值 / LOG_LEVEL 默认值 / 新增无读取点键，W15a 与 W15b 各自独红）。生产代码零改动。
