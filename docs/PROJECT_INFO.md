@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R175）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R176）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -846,3 +846,4 @@ xs2/
 - 2026-11-06 R173 单 profile（**Vite 开发代理端口：W17**）：四轮连推（十三）第 1 轮。新增 `tests/test_dev_proxy_port.py` W17a/W17b：`web/vite.config.ts` 的两个代理 target（`/api` → `http://localhost:8020`、`/ws` → `ws://localhost:8020`）的端口都 == `src/config.py` 的 `WEB_PORT` 默认值；代理目标恰 2 个、config 锚唯一的语料守卫；协议不参与端口账。实测两个 target 均 8020，首跑即过。总用例 3099→3103；变异 2/2（HTTP target / WS target 各改 8021，W17b 独红）。生产代码零改动。
 - 2026-11-06 R174 单 profile（**Dockerfile node 基础镜像 ↔ engines：P9**）：四轮连推（十三）第 2 轮。`tests/test_python_support_surface.py` 新增 P9a/P9b：Dockerfile 的 `FROM node:22-alpine`（前端构建）major 22 == `web/package.json` engines `>=22.12.0` 的 major 22；node base 必须唯一且可解析；python base `3.12-slim` 已由 P3 覆盖（X.Y ∈ requires-python 与 classifiers），P9 不重复。实测 major 同账，首跑即过。总用例 3103→3107；变异 2/2（node:22→24 / 删除 node FROM，P9a 与 P9b 各自独红）。生产代码零改动。
 - 2026-11-06 R175 单 profile（**desktop 版本五源同账：W18**）：四轮连推（十三）第 3 轮。`tests/test_version_sources.py` 新增 W18a/W18b：按 `docs/RELEASE_SOP.md` §1 的六处清单实测出五份真实版本文件——`desktop/src-tauri/tauri.conf.json`、`desktop/src-tauri/Cargo.toml`、`desktop/src-tauri/Cargo.lock`（`determinflow-desktop` 根包）、`desktop/package.json`、`desktop/official-plugins.lock.json`（`desktop_version`），当前全为 1.0.2；W18a 钉五源 `X.Y.Z` 形状 + SOP §1 表集合恰等（五份文件 + 发版钉值测试），W18b 钉五源逐字相等（锚 = tauri.conf.json）。原 `test_desktop_versions_are_consistent` 的三源裸断言收编进 W18，改名 `test_desktop_release_version_is_pinned` 只保留 SOP 第六处的发布钉值。登记时只数到两处，开工实测按 SOP 补齐——候选制第三次在实测阶段修正判据覆盖面。首跑即过；总用例 3107→3111（W18 +2、N3/D1 +2）；变异 3/3（tauri 形状 1.0 / Cargo.lock 1.0.1 / SOP 删 Cargo.lock 行，W18a 与 W18b 各自独红）。生产代码零改动。
+- 2026-11-06 R176 单 profile（**README 命令引用面：V6**）：四轮连推（十三）第 4 轮（收官）。新增 `tests/test_readme_commands.py` V6a/V6b：只扫两份 README 的 fenced 命令块，`python run.py` / `.\.venv\Scripts\python.exe run.py`（同一个 run.py 的 exe 变体；登记按每份 3 处计，开工实测为每份 4 处、共 8 处）、`docker compose up --build`（默认编排文件）与 `docker compose -f docker-compose.yml config -q`（显式编排文件）全部可解析；V6a 钉每份 ≥3、合计 ≥6 的语料下限，V6b 钉脚本/编排文件存在与默认文件候选（compose.yaml / compose.yml / docker-compose.yaml / docker-compose.yml）。首跑即过；总用例 3111→3115（V6 +2、N3/D1 +2）；变异 3/3（README.md 的 python run.py→main.py / README.en.md 的 -f compose.prod.yml / 删除两条 run.py 启动命令，V6b 两红、V6a 一红）。R175 §6 回填（run 42180441935 / bot 9cf8ce6）。生产代码零改动。

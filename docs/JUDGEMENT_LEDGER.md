@@ -2082,3 +2082,35 @@ release-notes 与历史文档里的旧版本字面、不判
 `tauri.macos.conf.json`（overlay 不含 `version`，继承主配置）、不判
 `Cargo.lock` 传递依赖的钉版（cargo 维护，W18 只钉根包自述版本）、
 不判桌面版本与核心版本相等（两条独立版本线）。
+
+### 10.48 README 命令引用面（R176）
+
+`tests/test_readme_commands.py` 的 **V6** 把两份 README 的命令引用面
+收进 V 系（R172 §3 登记）：
+
+- **V6a 语料守卫**：两份 README 的 fenced 代码块里，每份至少解析出
+  3 处文件引用（实测 4 处），合计至少 6 处（实测 8 处）；引用面被整体
+  删光时判据不能静默空转。
+- **V6b 引用可解析**：`python <file>.py` / `python.exe <file>.py` 的
+  脚本文件必须存在；`docker compose -f <file>` 的编排文件必须存在；
+  不带 `-f` 的 compose 工程子命令（up / config / build / …）要求默认
+  编排文件（`compose.yaml` / `compose.yml` / `docker-compose.yaml` /
+  `docker-compose.yml`）至少一个存在。
+
+R176 实测：两份 README 各 4 处引用——`python run.py`、
+`.\.venv\Scripts\python.exe run.py`（同一个 run.py 的 exe 变体；
+登记按每份 3 处计，开工实测补上）、`docker compose up --build`（默认
+编排文件到位）、`docker compose -f docker-compose.yml config -q`
+（显式编排文件在库），共 8 处全部可解析，首跑即过。总用例
+3111→3115（V6 +2、N3/D1 +2），变异 3/3（README.md 的 `python run.py`
+→`python main.py` / README.en.md 的 `-f docker-compose.yml`→
+`-f compose.prod.yml` / 删除 README.md 两条 `run.py` 启动命令；V6b
+两红、V6a 一红）。
+
+边界：只扫两份 README 的 fenced 代码块——正文散文与行内代码不是
+「可复制执行的命令」，不在射程；不判命令参数语义（端口、`--build`
+等由各自判据/运行时负责）；不判 `python -m <module>`（模块不是文件
+引用）；不判 `cp` / `Copy-Item` 的源文件引用（`.env.example` 由 W15
+直接读取，配置示例文件的读取点另有测试）；compose 子命令只认需要
+工程的集合，`docker compose version` 之类不判；不校验 `-f` 路径是否
+相对或是否落在仓库内（只做字面路径解析）。
