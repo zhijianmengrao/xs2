@@ -2141,3 +2141,30 @@ CONTRIBUTING 是 `22+`，而 engines 已是 `>=22.12.0`——Node 18/20 会被
 探针不是声明），不判 npm 下限，不判 `run.py` 的 Node 存在性提示；
 README 的 Python/Node 下限仍由 P4/P7 负责，Dockerfile 的 python/node
 基础镜像仍由 P3/P9 负责，两把尺不重复。
+
+### 10.50 文档 npm 命令引用面（R178）
+
+`tests/test_doc_npm_commands.py` 的 **V7** 把开发者文档里的 npm 命令
+收进 V 系（R177 §5 登记；V5 只钉 CI / Dockerfile，V6 只钉 README 的
+python / compose）：
+
+- **V7a 语料守卫**：`README.md` / `README.en.md` / `CONTRIBUTING.md`
+  的 fenced 代码块各至少解析出 3/3/4 处 script 引用（实测 10 处），
+  合计至少 9 处；`npm ci` 至少 1 处。命令块被整体删光时判据不能静默
+  空转。
+- **V7b 引用可解析**：按块内 `cd`（含 `(cd web && …)` 子壳）推进工作
+  目录后，`npm run <script>` / `npm test` 必须命中该目录 `package.json`
+  的 scripts；`npm ci` 的工作目录必须有 `package-lock.json`。
+
+R178 实测：三份文档 10 处 script 引用（README.md 3 / README.en.md 3 /
+CONTRIBUTING.md 4）与 1 处 `npm ci`，全部命中 `web/package.json` 的
+13 个 scripts 与 `web/package-lock.json`，首跑即过。总用例 3119→3123
+（V7 +2、N3/D1 +2），变异 3/3（删 `test:extensions` / README 的
+`npm run lint`→`lint:check` / 移走 `package-lock.json`；V7b 三红、
+V7a 绿）。
+
+边界：只扫三份文档的 fenced 代码块；正文散文与行内代码不是可复制
+执行的命令；不判 `desktop/README.md` 与其它 `docs/*.md`（留作后续
+轮次）；不判命令参数语义与 script 内部命令；不判 `npm install` /
+`npx`；`git clone … && cd DeterminFlow` 这类本地不存在的目录名后面
+没有 npm 命令，自然不进射程。
