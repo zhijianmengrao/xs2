@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R167）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R168）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -838,3 +838,4 @@ xs2/
 - 2026-11-06 R165 单 profile（**端口五源同账：Dockerfile / compose / config / README**）：四轮连推（十一）第 1 轮。新增 `tests/test_port_sources.py` W13a/W13b：八个端口写入点（config `_get_int_config("WEB_PORT", 8020)`、run.py 兜底值 `os.getenv("WEB_PORT", "8020")`、`.env.example` 的 `WEB_PORT=8020`、Dockerfile `EXPOSE` / healthcheck / `CMD --bind`、compose `ports: "8020:8020"` 与 `WEB_PORT: "8020"`、两份 README 各两处 `localhost:8020`）以 config 默认值为唯一锚逐项相等，compose 宿主机端与容器端分别入账（实测全部 8020，首跑即过）；登记时只数到六处，本轮开工实测补上 run.py 与 .env.example。W13a 语料守卫要求八个源都能解析且形状唯一，解析源数下限 11，任一源消失先红。总用例 3072→3076；变异 7/7（config 默认值 / Dockerfile EXPOSE / compose WEB_PORT / README.en 端口 / Dockerfile CMD bind / run.py 兜底值 / .env.example，各自独红）。生产代码零改动。
 - 2026-11-06 R166 单 profile（**README 徽章序列双语同账：M5**）：四轮连推（十一）第 2 轮。`tests/test_readme_parity.py` 新增 M5：两份 README 顶部各 4 枚徽章（Release / CI / license / Python）的 URL 序列逐项相等、数量相等；只认 `img.shields.io` 与 GitHub Actions `badge.svg` 两个宿主，品牌图与截图不在射程；alt 不参与（license 的 `许可证：AGPL-3.0` vs `License: AGPL-3.0` 是正常翻译），语料守卫任一份解析不到徽章即显式红。实测双语四枚 URL 完全一致，首跑即过。总用例 3076→3079；变异 3/3（删 CI 徽章 / 改 Release URL / 交换前两枚顺序，M1–M4 与 P6/P7、V4b 全绿互不串扰）。生产代码零改动。
 - 2026-11-06 R167 单 profile（**compose 环境账 ↔ config 读取点：W14**）：四轮连推（十一）第 3 轮。新增 `tests/test_compose_environment.py` W14a/W14b：`docker-compose.yml` 的 6 个 env（裸名 `WEB_HOST`/`WEB_PORT`/`LOG_LEVEL`/`CODING_WORKSPACE_COPY_ON_CREATE`，带前缀 `DETERMINFLOW_WORKFLOW_EXECUTOR_MODE`/`COUNT`）全部在 `src/` 有读取点；`${KEY:-default}` 的插值变量名 == 键名，静态默认值与代码兜底值逐项相等（0.0.0.0 / 8020 / INFO / true / process / 4），布尔与大小写归一；同一键多兜底值显式红。实测 6 键全部命中，首跑即过。总用例 3079→3083；变异 4/4（LOG_LEVEL 默认值 / executor count 默认值 / config mode 兜底值 / 新增无读取点的 prefixed key，W14a 与 W14b 各自独红）。生产代码零改动。
+- 2026-11-06 R168 收口 profile（**收口轮：R165–R168 四账 + R169–R172 登记**）：四轮连推（十一）收口。R165 端口八源（W13，3076）、R166 README 徽章序列（M5，3079）、R167 compose 环境账（W14a/W14b，3083）。三条判据全部首跑即过、生产代码零改动——连续第四批同型：候选制实测登记的边在钉住时都是对的。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.37–§10.40 / 记忆 1 条）；三轮变异合计 12/12（收口轮无新判据无变异）。§3 登记 R169–R172：npm 引用面（V5：三份 workflow 8 处脚本引用 + 6 处 npm ci，全部命中 web 13 scripts / desktop 4 scripts 与两份锁文件）、`.env.example` 环境模板（W15：9 个 active 键全部有读取点，8 个非空默认值同账，空凭证豁免）、compose 挂载点 ↔ config 目录（W16：3 个卷目标 == WORKDIR + data/logs/config，宿主机源同名）、收口。总用例 3083→3085（N3/D1 因本篇与 R167 回填 +2）。生产代码与测试零改动。

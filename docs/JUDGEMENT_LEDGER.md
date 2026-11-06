@@ -1925,3 +1925,19 @@ R167 实测：6 个键全部有读取点，4 处插值变量名与键名一致�
 边界：只判 compose 的 `services.app.environment` 静态账——不判运行时
 插值优先级（shell / `.env` 覆盖是运维面）、不判未在 compose 出现的
 其它 env、不判非字符串值；「至少 6 个键」是语料守卫，不是 allowlist。
+
+### 10.40 四轮收口（R165–R168）
+
+四轮连推（十一）收口：R165 端口八源（W13）、R166 README 徽章序列
+（M5）、R167 compose 环境账（W14a/W14b）。三条判据全部首跑即过、
+生产代码零改动——连续第四批（R153–R155、R157–R159、R161–R163、
+R165–R167）同型：**候选制实测登记的边在钉住时都是对的**。三轮变异
+合计 12/12（7+3+4+0），总用例 3079→3085。三轮写回都落在第 80 条
+（满窗滚动）。
+
+§3 实测登记 R169–R172：npm 引用面（V5：三份 workflow 7 处脚本引用
++ Dockerfile 1 处，`npm ci` 6 处，全部命中 web/desktop 的 scripts
+与 lockfile）、`.env.example` 环境模板（W15：9 个 active 键，8 个非空
+默认值同账，`DEEPSEEK_API_KEY=` 空凭证只判读取点）、compose 挂载点
+↔ config 目录（W16：`./{data,logs,config}` → `/app/{data,logs,config}`，
+运行时 `WORKDIR /app`）、收口。
