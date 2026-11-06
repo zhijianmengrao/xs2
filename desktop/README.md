@@ -50,7 +50,7 @@ macOS 打包与 Windows 正式发行链路独立，不改变 NSIS、Updater、Ta
 | 配置 | `desktop/src-tauri/tauri.macos.conf.json` |
 | 签名 | `tauri build --no-sign`，不注入更新私钥 |
 | 更新包 | `createUpdaterArtifacts=false`，不生成 `.sig` / updater tar.gz |
-| 范围 | 只构建 Core，不构建 Full |
+| 范围 | Core 与 Full 两种候选都构建，与 workflow 矩阵一致 |
 | 发布 | 本地候选验证，不创建 Tag 或 Release |
 
 图标由 `desktop/scripts/generate_macos_icon.py` 从 `web/public/brand/determinflow-mark.svg` 生成 `desktop/src-tauri/icons/icon.icns`。Tauri 会自动合并 `tauri.macos.conf.json`；macOS 必须使用 `npm run build:macos`，不要直接运行 Windows 使用的 `npm run build`。该命令先由 Tauri 生成应用，再对最终路径中的冻结后端二进制及完整应用签名、严格验证，最后生成 DMG，避免 Python 框架别名在资源复制后签名失效。

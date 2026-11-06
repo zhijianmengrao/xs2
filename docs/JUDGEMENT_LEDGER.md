@@ -2335,3 +2335,25 @@ R186 实测：README `DeterminFlow_1.0.2_aarch64.dmg`、模板
 边界：只判 desktop README 的 macOS 验证命令与 build_macos.py 模板——
 不判根 README / release-notes 的历史发版产物名（史料）、不判 Windows
 安装包名、不判 DMG 是否真的构建出来。
+### 10.59 desktop README macOS 候选范围 ↔ workflow 矩阵（R187）
+
+`tests/test_desktop_macos_scope.py` 的 **W24** 把 macOS 候选范围的
+人读账钉到矩阵上（R184 §3 登记）：
+
+- **W24a 范围行 ↔ 矩阵**：`desktop-macos.yml` build job 的 `flavor`
+  矩阵非空、值在 `{core, full}` 词表内；README macOS 小节的「范围」
+  行必须点名矩阵全部 flavor（大小写不敏感）、无矩阵外值、禁用
+  「只构建 / 不构建」否定式；「配置」行路径在磁盘。
+- **W24b 叙述段双覆盖**：macOS 小节叙述段提 flavor 必须同时提两者。
+
+R187 实测（含真实修复）：表行旧值「只构建 Core，不构建 Full」与矩阵
+`[core, full]` 分叉（同文档导语与「桌面更新发布」节都对）——表行修为
+「Core 与 Full 两种候选都构建，与 workflow 矩阵一致」后判据转绿；
+反向验证修复前状态红在否定式守卫。总用例 3151→3155（W24 +2、N3/D1
++2），变异 3/3（矩阵删 full / 范围行回退旧值 / 导语去 Full；M1 双红
+W24a+W24b）。这是候选制第二次登记阶段抓到真实不一致（第一次是 R177
+P10 的 checker Node 下限），本次为纯文档修复。
+
+边界：只判 macOS 小节的范围 / 配置两行与叙述段双覆盖——不判 Windows
+小节、不判矩阵执行行为、不判架构行的「不构建 universal 或 Intel"
+（架构排除不是 flavor 范围）、不判「桌面更新发布」节的历史叙述。

@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R186）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R187）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -857,3 +857,4 @@ xs2/
 - 2026-11-06 R184 收口 profile（**收口轮：R181–R184 四账 + R185–R188 登记**）：四轮连推（十五）收口。R181 macOS 最低版本六处同账（W20，3133）、R182 desktop 管线命令引用面（V8，3137）、R183 前端构建输出目录同账（W21，3141）。三条判据全部落地，三轮变异合计 9/9（收口轮无新判据无变异）；四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.53–§10.56 / 记忆 1 条）。§3 登记 R185–R188：bundle identifier 六处 / 3 文件同账（W22）、README DMG 产物路径版本 / 架构同账（W23：`DeterminFlow_1.0.2_aarch64.dmg` ↔ `build_macos.py` 模板 ↔ tauri 版本）、README macOS 候选范围 ↔ workflow 矩阵（W24，真实不一致：表行仍写「只构建 Core」而 matrix 为 `[core, full]`）、收口。总用例 3141→3143（N3/D1 因本篇与 R183 回填 +2）。R183 §6 回填（run 42235408330 / bot f867987）。生产代码与测试零改动。
 - 2026-11-06 R185 单 profile（**macOS bundle identifier 同账：W22**）：四轮连推（十六）第 1 轮。新增 `tests/test_macos_bundle_identifier.py` W22a/W22b：`io.determinflow.desktop` 共 6 处 / 3 个文件——`desktop/src-tauri/tauri.conf.json` 的 `identifier`、`verify_bundle.py` 2 处（`CFBundleIdentifier` 比较 + 错误消息）、`desktop/README.md` 3 处（Windows / macOS 两条数据路径 + 目录树根）；W22a 钉三源条数 1/2/3、合计恰 6、README 三种上下文各恰一处、全部反向域名形状，W22b 钉六值逐字相等。首跑即过；总用例 3143→3147（W22 +2、N3/D1 +2）；变异 3/3（tauri 改 `io.determinflow.probe` / README 树根改 `probe/` / verify_bundle 比较值改 `probe`，W22b 红；README 树根另打 W22a）。R184 §6 回填（run 42240337924 / bot f49958c）。生产代码与配置零改动。
 - 2026-11-07 R186 单 profile（**desktop README DMG 产物路径同账：W23**）：四轮连推（十六）第 2 轮。新增 `tests/test_desktop_dmg_reference.py` W23a/W23b：`desktop/README.md` macOS 验证命令硬编码 `DeterminFlow_1.0.2_aarch64.dmg`（恰 1 处），`build_macos.py` 产物模板 `DeterminFlow_{version}_aarch64{suffix}.dmg`（恰 1 处），version 读自 `tauri.conf.json`（W18 五源之一）——README 的硬编码是五源外的第六处版本账。W23a 钉两处各恰一、`X.Y.Z` 形状、README 为 Core 后缀，W23b 钉版本 == tauri 版本、架构 == 模板架构。首跑即过；总用例 3147→3151（W23 +2、N3/D1 +2）；变异 3/3（README 版本改 1.0.3 / 模板架构改 x86_64 / tauri 版本改 1.0.3，W23b 红；模板架构另打 W23a）。R185 §6 回填（run 42246512628 / bot 74aa21d）。生产代码与文档零改动。
+- 2026-11-07 R187 单 profile（**desktop README macOS 候选范围 ↔ workflow 矩阵：W24**）：四轮连推（十六）第 3 轮，候选制第二次在登记阶段抓到真实不一致并修复。实测 `desktop/README.md` macOS 表行仍写「范围 | 只构建 Core，不构建 Full」，而 `desktop-macos.yml` 的 matrix 是 `[core, full]`、同文档导语与「桌面更新发布」节都写两者——三处叙述只有表行是旧值。R187 把表行修为「Core 与 Full 两种候选都构建，与 workflow 矩阵一致」，并新增 `tests/test_desktop_macos_scope.py` W24a/W24b：范围行必须点名矩阵全部 flavor（词表 {core, full} 守卫）、禁用「只构建 / 不构建」否定式、配置行路径存在；macOS 小节叙述段提 flavor 必须双覆盖。总用例 3151→3155（W24 +2、N3/D1 +2）；变异 3/3（矩阵删 full / 范围行回退旧值 / 导语去 Full），反向验证修复前状态确实红。R186 §6 回填（run 42251651068 / bot 12e0565）。
