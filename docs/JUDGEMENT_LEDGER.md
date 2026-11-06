@@ -1984,3 +1984,22 @@ R170 实测：9 个 active 键全部有读取点；8 个非空默认值
 边界：只判 active 行——`#` 注释掉的示例键不在射程；不判 `.env` 本身
 （不入库）、不判 `load_dotenv` 的运行时优先级（运维面）；「至少 9 个
 键」是语料守卫，不是 allowlist。
+
+### 10.43 compose 挂载点 ↔ config 目录（R171）
+
+`tests/test_compose_mounts.py` 的 **W16** 把持久化目录收进 W 系
+（R168 §3 登记）：
+
+- **W16a 语料守卫**：compose 恰 3 个卷、config 恰 3 个目录默认值、
+  Dockerfile 有运行时 `WORKDIR`（最后一个）。
+- **W16b 挂载点同账**：容器目标集合 == `WORKDIR/<目录名>`；每个卷的
+  宿主机源 basename == 目录名；缺卷显式红。
+
+R171 实测：`./data:/app/data`、`./logs:/app/logs`、
+`./config:/app/config` 三项全部同名（`WORKDIR /app` + data/logs/config），
+首跑即过。总用例 3093→3097，变异 3/3（卷目标 / config 目录名 /
+删卷，W16a 与 W16b 各自独红）。
+
+边界：只判 app 的三个持久化目录——不判读写权限、不判 bind/named
+volume 类型、不判源目录是否存在（compose 自动创建）；卷只接受
+`src:dst` 短语法。
