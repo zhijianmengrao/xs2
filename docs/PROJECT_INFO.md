@@ -6,7 +6,7 @@ DeterminFlow（`yuyang0702/xs2` 二次开发版）——面向生产的确定性
 - 仓库：https://github.com/zhijianmengrao/xs2（**origin**，2026-10-24 迁移；原 `yuyang0702/xs2` 保留为 upstream 远程，真正上游为 `alikon-art/DeterminFlow`）
 - 本地安装路径：`F:\DeterminFlow x2\xs2`
 
-## 项目状态（R22 完结 → R24 起维护迭代，至 R171）
+## 项目状态（R22 完结 → R24 起维护迭代，至 R172）
 
 > 交接文档总索引见 **docs/HANDOVER_INDEX.md**（轮次表、历史轮次处置、缺口清单）。
 > R15–R23 的早期文档已于 R28 按维护者要求归档删除，原文用
@@ -842,3 +842,4 @@ xs2/
 - 2026-11-06 R169 单 profile（**npm 引用面：V5**）：四轮连推（十二）第 1 轮。新增 `tests/test_npm_references.py` V5a/V5b：三份 workflow 的 7 处 `npm run`/`npm test` 引用 + Dockerfile 的 1 处，合计 8 处，按 `working-directory` / run 脚本里的 `cd <dir>` / Dockerfile `WORKDIR` 推进后逐处命中 `web/package.json`（13 个 scripts）或 `desktop/package.json`（4 个 scripts）；6 处 `npm ci` 的工作目录都必须有 `package-lock.json`。实测 8 处引用全部可解析、两份锁文件都在，首跑即过。总用例 3085→3089；变异 3/3（删 web 的 lint script / 改 ci.yml 的 lint 引用 / 移走 web/package-lock.json，V5a 与 V5b 各自独红）。生产代码零改动。
 - 2026-11-06 R170 单 profile（**`.env.example` 环境模板：W15**）：四轮连推（十二）第 2 轮。新增 `tests/test_env_template.py` W15a/W15b：模板 9 个 active 键（`WEB_HOST`/`WEB_PORT`/`LOG_LEVEL`/`SESSION_HISTORY_MAX_ENTRIES`/`DEEPSEEK_API_KEY`/`MARKETPLACE_SKILL_FILE_TYPE_CHECK`/`MARKETPLACE_SKILL_ALLOWED_EXTENSIONS`/`DETERMINFLOW_WORKFLOW_EXECUTOR_MODE`/`COUNT`）全部在 `src/` 有读取点；8 个非空默认值与代码兜底值逐项相等（0.0.0.0 / 8020 / INFO / 1000 / true / .md / process / 4），`DEEPSEEK_API_KEY=` 空凭证只判读取点；键不得重复，至少 9 键 / 8 个非空值的语料守卫。实测全部同账，首跑即过。总用例 3089→3093；变异 3/3（WEB_HOST 默认值 / LOG_LEVEL 默认值 / 新增无读取点键，W15a 与 W15b 各自独红）。生产代码零改动。
 - 2026-11-06 R171 单 profile（**compose 挂载点 ↔ config 目录：W16**）：四轮连推（十二）第 3 轮。新增 `tests/test_compose_mounts.py` W16a/W16b：compose 的 3 个卷 `./data:/app/data`、`./logs:/app/logs`、`./config:/app/config` 的容器目标 == 运行时 `WORKDIR /app` + `src/config.py` 的 `DATA_DIR`/`LOGS_DIR`/`CONFIG_DIR` 默认目录名（data/logs/config），宿主机源 basename 同名；3 个卷 / 3 个目录 / WORKDIR 的语料守卫；卷目标缺一或改名显式红。实测三项全部同账，首跑即过。总用例 3093→3097；变异 3/3（卷目标改名 / config 目录默认值改名 / 删 config 卷，W16a 与 W16b 各自独红）。生产代码零改动。
+- 2026-11-06 R172 收口 profile（**收口轮：R169–R172 四账 + R173–R176 登记**）：四轮连推（十二）收口。R169 npm 引用面（V5，3089）、R170 `.env.example` 环境模板（W15，3093）、R171 compose 挂载点（W16，3097）。三条判据全部首跑即过、生产代码零改动——连续第五批同型：候选制实测登记的边在钉住时都是对的。四账对齐（handover 4 份 / PROJECT_INFO 4 条 / 台账 §10.41–§10.44 / 记忆 1 条）；三轮变异合计 9/9（收口轮无新判据无变异）。§3 登记 R173–R176：Vite 开发代理端口（W17：`/api` http + `/ws` ws 两个 target 均 8020 == config 默认）、Dockerfile node 基础镜像 ↔ engines（P9：`node:22-alpine` major 22 == `>=22.12.0`；python base 已由 P3 覆盖不重复）、desktop 版本双源（W18：`desktop/package.json` 与 `tauri.conf.json` 均 1.0.2）、README 命令引用面（V6：双语各 3 条 `python run.py` / `docker compose` 引用均可解析）、收口。总用例 3097→3099（N3/D1 因本篇与 R171 回填 +2）。生产代码与测试零改动。

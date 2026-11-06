@@ -2003,3 +2003,20 @@ R171 实测：`./data:/app/data`、`./logs:/app/logs`、
 边界：只判 app 的三个持久化目录——不判读写权限、不判 bind/named
 volume 类型、不判源目录是否存在（compose 自动创建）；卷只接受
 `src:dst` 短语法。
+
+### 10.44 四轮收口（R169–R172）
+
+四轮连推（十二）收口：R169 npm 引用面（V5）、R170 `.env.example`
+环境模板（W15）、R171 compose 挂载点 ↔ config 目录（W16）。三条判据
+全部首跑即过、生产代码零改动——连续第五批（R153–R155、R157–R159、
+R161–R163、R165–R167、R169–R171）同型：**候选制实测登记的边在钉住时
+都是对的**。三轮变异合计 9/9（3+3+3+0），总用例 3089→3099。三轮写回
+都落在第 80 条（满窗滚动）。
+
+§3 实测登记 R173–R176：Vite 开发代理端口（W17：`/api` → http、
+`/ws` → ws，两个 target 均 8020）、Dockerfile node 基础镜像 ↔ engines
+（P9：`node:22-alpine` major == engines major 22；python base 已由
+P3 覆盖）、desktop 版本双源（W18：`desktop/package.json` ==
+`desktop/src-tauri/tauri.conf.json` 1.0.2）、README 命令引用面
+（V6：`python run.py` ×2、`docker compose -f docker-compose.yml` ×2、
+`docker compose up` ×2，文件均可解析）。
