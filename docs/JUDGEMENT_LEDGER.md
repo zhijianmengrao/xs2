@@ -2316,3 +2316,22 @@ R185 实测：6 处 / 3 文件全部为 `io.determinflow.desktop`，首跑即过
 边界：只判 identifier 声明——不判 productName、不判数据目录落盘行为、
 不判 updater URL；tests fixture 取值（跟产品走）与 README 之外的文档
 不在射程。
+### 10.58 desktop README DMG 产物路径同账（R186）
+
+`tests/test_desktop_dmg_reference.py` 的 **W23** 把发布文档里硬编码的
+DMG 产物名收进 W 系（R184 §3 登记）：
+
+- **W23a 语料守卫**：`desktop/README.md` 恰 1 处 DMG 产物名引用、
+  `build_macos.py` 恰 1 处产物名模板；版本 `X.Y.Z` 形状；README 架构 ==
+  模板架构；README 无 `-full` 后缀（验证命令对应 `--flavor core`）。
+- **W23b 三处同账**：README 版本 == `tauri.conf.json` 的 `version`
+  （W18 五源的锚）；README 架构 == 模板架构。
+
+R186 实测：README `DeterminFlow_1.0.2_aarch64.dmg`、模板
+`DeterminFlow_{version}_aarch64{suffix}.dmg`、tauri `1.0.2`，首跑即过。
+总用例 3147→3151（W23 +2、N3/D1 +2），变异 3/3（README 版本 →`1.0.3`
+/ 模板架构 →`x86_64`（W23a+W23b 双红）/ tauri 版本 →`1.0.3`）。
+
+边界：只判 desktop README 的 macOS 验证命令与 build_macos.py 模板——
+不判根 README / release-notes 的历史发版产物名（史料）、不判 Windows
+安装包名、不判 DMG 是否真的构建出来。
