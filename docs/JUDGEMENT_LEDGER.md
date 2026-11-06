@@ -2257,3 +2257,23 @@ V8a 绿）。
 边界：只扫 `desktop/README.md` 的 fenced 代码块；不判正文散文与行内
 代码、`python -m`、`cargo test` 与命令参数语义；不判其它文档（V6/V7
 各守自己的面）。
+### 10.55 前端构建输出目录同账（R183）
+
+`tests/test_frontend_build_output.py` 的 **W21** 把 Vite 产物目录与两处
+后端读取点收进 W 系（R180 §3 登记）：
+
+- **W21a 语料守卫**：Vite 配置至多一处 `build.outDir`（缺省按默认
+  `dist` 取有效值）；`run.py` 恰一处 `dist_dir = web_dir / "<dir>"`；
+  `web_server.py` 恰一处 `web_dist = BASE_DIR / "web" / "<dir>"`；目录名
+  必须是单段。
+- **W21b 三处同账**：有效 `outDir` == `run.py` 的子目录 ==
+  `web_server.py` 的子目录（逐字相等）。
+
+R183 实测：Vite 无显式 `outDir`（默认 `dist`），两处后端路径都是
+`dist`，首跑即过。总用例 3137→3141（W21 +2、N3/D1 +2），变异 3/3
+（Vite 加 `outDir: "public"` / `run.py` 改 `public` / `web_server` 改
+`public`，W21b 三红、W21a 绿）。
+
+边界：只判目录名——不判 Vite 其它构建选项、不判 `web/public` 静态资源
+输入目录、不判构建是否执行（frontend CI job 负责）、不判
+`desktop/README.md` 的 `web/dist` 叙述。
