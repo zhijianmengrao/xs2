@@ -10,6 +10,12 @@ import platform
 from pathlib import Path
 
 
+# 支持面下限：与 pyproject.toml requires-python / web/package.json
+# engines.node 的下限同账（tests/test_environment_check.py 的 P10 钉住）。
+MIN_PYTHON = (3, 11)
+MIN_NODE = (22, 12)
+
+
 class EnvironmentChecker:
     def __init__(self):
         self.errors = []
@@ -20,8 +26,11 @@ class EnvironmentChecker:
     def check_python_version(self):
         """检查 Python 版本"""
         version = sys.version_info
-        if version.major < 3 or (version.major == 3 and version.minor < 11):
-            self.errors.append(f"Python 版本过低: {version.major}.{version.minor}.{version.micro}，需要 3.11+")
+        if (version.major, version.minor) < MIN_PYTHON:
+            self.errors.append(
+                f"Python 版本过低: {version.major}.{version.minor}.{version.micro}，"
+                f"需要 {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+"
+            )
             return False
         self.info.append(f"✅ Python {version.major}.{version.minor}.{version.micro}")
         return True
@@ -40,14 +49,21 @@ class EnvironmentChecker:
                 )
                 if result.returncode == 0:
                     version = result.stdout.strip()
-                    # 检查版本号 (v18+)
+                    # 检查版本号（下限与 engines.node 同账）
                     try:
-                        major = int(version.lstrip('v').split('.')[0])
-                        if major < 18:
-                            self.warnings.append(f"⚠️  Node.js 版本较低: {version}，推荐 18+")
+                        parts = version.lstrip('v').split('.')
+                        node_version = (
+                            int(parts[0]),
+                            int(parts[1]) if len(parts) > 1 else 0,
+                        )
+                        if node_version < MIN_NODE:
+                            self.warnings.append(
+                                f"⚠️  Node.js 版本较低: {version}，"
+                                f"推荐 {MIN_NODE[0]}.{MIN_NODE[1]}+"
+                            )
                         else:
                             self.info.append(f"✅ Node.js {version}")
-                    except:
+                    except (ValueError, IndexError):
                         self.info.append(f"✅ Node.js {version}")
                     return True
             except (FileNotFoundError, subprocess.TimeoutExpired):

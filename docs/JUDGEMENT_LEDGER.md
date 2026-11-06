@@ -2114,3 +2114,30 @@ R176 实测：两份 README 各 4 处引用——`python run.py`、
 直接读取，配置示例文件的读取点另有测试）；compose 子命令只认需要
 工程的集合，`docker compose version` 之类不判；不校验 `-f` 路径是否
 相对或是否落在仓库内（只做字面路径解析）。
+
+### 10.49 环境检查脚本 ↔ 支持面下限（R177）
+
+`tests/test_environment_check.py` 的 **P10** 把用户入口的支持面下限
+收进 P 系（R176 §3 登记；P1–P9 覆盖 CI / Dockerfile / classifiers /
+README / 锁头 / 徽章 / node base）：
+
+- **P10a 语料守卫**：`requires-python`、`engines.node`、
+  `CONTRIBUTING.md` 的 Python/Node 下限、`scripts/check_environment.py`
+  的 `MIN_PYTHON` / `MIN_NODE` 都能解析；CONTRIBUTING 每类恰一处，
+  脚本每个常量定义恰一处——少一处或写成 `22+`（无 minor）显式红。
+- **P10b 下限同账 + 行为边界**：两个常量 == requires-python / engines
+  的下限；CONTRIBUTING 两处 == 同一锚点；脚本对 Node 22.11 告警、
+  22.12 判绿，对 Python 3.10 报错、3.11 判绿。
+
+R177 实测发现一处**真实不一致**：checker 的 Node 下限是 `18+`、
+CONTRIBUTING 是 `22+`，而 engines 已是 `>=22.12.0`——Node 18/20 会被
+判绿，随后 `npm run build` 才失败。本轮把 checker 收敛为
+`MIN_PYTHON = (3, 11)` / `MIN_NODE = (22, 12)`，并把 CONTRIBUTING 改为
+`Node.js 22.12+`；这是 P 系第一条带生产脚本改动的判据。总用例
+3115→3119（P10 +2、N3/D1 +2），变异 3/3（`MIN_NODE`→(18,0) /
+`MIN_PYTHON`→(3,10) / CONTRIBUTING→`22.13+`）。
+
+边界：只判声明面的下限——不判 Node/Python 的实际安装版本（运行时
+探针不是声明），不判 npm 下限，不判 `run.py` 的 Node 存在性提示；
+README 的 Python/Node 下限仍由 P4/P7 负责，Dockerfile 的 python/node
+基础镜像仍由 P3/P9 负责，两把尺不重复。

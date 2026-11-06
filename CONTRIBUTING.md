@@ -10,7 +10,7 @@
 
 ## 本地验证
 
-要求 Python 3.11+ 和 Node.js 22+。
+要求 Python 3.11+ 和 Node.js 22.12+。
 
 ```bash
 python -m pip install -r requirements-dev.lock
