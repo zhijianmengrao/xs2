@@ -1901,3 +1901,27 @@ R166 实测：双语各 4 枚（Release / CI / license / Python），URL 序列
 
 边界：不判 alt 文案、不判 href 指向的上游仓库（fork 徽章有意指
 upstream，V2b 同型）、不判徽章图片内容与颜色；品牌图与截图不在射程。
+
+### 10.39 compose 环境账 ↔ config 读取点（R167）
+
+`tests/test_compose_environment.py` 的 **W14** 把部署环境的第二份 config
+收进 W 系（R164 §7 登记）：
+
+- **W14a 读取点存在**：`docker-compose.yml` 的每个 env 都必须在 `src/`
+  找到读取点——裸名命中 `os.getenv` / `os.environ.get` /
+  `_get_config_value` / `_get_int_config` / `_get_bool_config`；带
+  `DETERMINFLOW_` 前缀的键，后缀必须命中 `get_determinflow_env("<suffix>")`。
+  语料守卫要求至少 6 个键。
+- **W14b 静态默认值同账**：`${KEY:-default}` 的插值变量名必须就是键名
+  （别名会让默认值张冠李戴）；default / 字面量必须等于代码兜底值。
+  兜底值从读取点的第二个实参静态提取，同一键必须恰好一处候选。
+  布尔与大小写归一（`true` / `True`、`INFO` / `info`）。
+
+R167 实测：6 个键全部有读取点，4 处插值变量名与键名一致，默认值
+0.0.0.0 / 8020 / INFO / true / process / 4 全部同账，首跑即过。总用例
+3079→3083，变异 4/4（LOG_LEVEL / executor count / config mode /
+无读取点的 prefixed key，W14a 与 W14b 各自独红）。
+
+边界：只判 compose 的 `services.app.environment` 静态账——不判运行时
+插值优先级（shell / `.env` 覆盖是运维面）、不判未在 compose 出现的
+其它 env、不判非字符串值；「至少 6 个键」是语料守卫，不是 allowlist。
