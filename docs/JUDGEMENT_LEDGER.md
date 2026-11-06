@@ -2295,3 +2295,24 @@ R183 实测：Vite 无显式 `outDir`（默认 `dist`），两处后端路径都
   产物路径同账（W23）、README macOS 候选范围 ↔ workflow 矩阵（W24，
   含真实修复：表行「只构建 Core」与 matrix `[core, full]` 已分叉）、
   收口。
+### 10.57 macOS bundle identifier 同账（R185）
+
+`tests/test_macos_bundle_identifier.py` 的 **W22** 把桌面应用的 bundle
+identifier 收进 W 系（R184 §3 登记）：
+
+- **W22a 语料守卫**：三源各解析出登记条数——`tauri.conf.json` 的
+  `identifier` 1 处、`verify_bundle.py` 2 处（比较 + 错误消息）、
+  `desktop/README.md` 3 处（Windows / macOS 数据路径 + 目录树根）；
+  合计恰 6 处；README 三种上下文各恰一处；全部反向域名形状。
+- **W22b 逐字同账**：六个值完全相同。改 identifier 必须同时改三个
+  文件；漏改 `verify_bundle` 会把正确 bundle 判失败，漏改 README 会让
+  用户找不到数据目录。
+
+R185 实测：6 处 / 3 文件全部为 `io.determinflow.desktop`，首跑即过。
+总用例 3143→3147（W22 +2、N3/D1 +2），变异 3/3（tauri →
+`io.determinflow.probe` / README 树根 → `probe/` / verify 比较值 →
+`probe`；M2 同打 W22a+W22b，M1/M3 只打 W22b）。
+
+边界：只判 identifier 声明——不判 productName、不判数据目录落盘行为、
+不判 updater URL；tests fixture 取值（跟产品走）与 README 之外的文档
+不在射程。
