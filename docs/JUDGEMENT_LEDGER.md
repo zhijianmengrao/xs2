@@ -1855,3 +1855,29 @@ compose WEB_PORT / config 默认 / README ×4 / CMD bind 均 8020）、
 README 徽章序列双语同账（M5：双语各 4 枚，URL 序列逐项相等，alt
 语言差异豁免）、compose 环境账 ↔ config 读取点（W14：6 个 env，
 带 `DETERMINFLOW_` 前缀的读取点与全部静态默认值同账）、收口。
+
+### 10.37 端口五源同账（R165）
+
+`tests/test_port_sources.py` 的 **W13** 把 Web 端口收进 W 系（R164 §7
+登记）：
+
+- **W13a 语料守卫**：八个写入点都必须能解析出端口且形状唯一——
+  `src/config.py` 的 `_get_int_config("WEB_PORT", N)` 恰一处、
+  `run.py` 的 `os.getenv("WEB_PORT", ...)` 恰一处、`.env.example` 的
+  `WEB_PORT=N` 恰一处、Dockerfile 的 `EXPOSE` 恰一行、`CMD --bind`
+  端口恰一处、healthcheck 的 `localhost:<port>` 恰一处、compose 的
+  `ports` 恰一条 `H:C`、compose `WEB_PORT` 是纯数字串、两份 README
+  各至少一处 `localhost:<port>`。解析出的源数下限 11，任一面消失先在
+  这里红，不让 W13b 静默少判。
+- **W13b 端口同账**：以 config 默认值为唯一锚，其余每个端口字面量
+  逐项相等；compose 的宿主机端与容器端分别入账（`"8020:8021"` 这种
+  单边漂移两头都报）。违规按源逐条列出。
+
+R165 实测：八处全为 8020，W13 首跑即过。总用例 3072→3076，变异 7/7
+（config 默认值 / Dockerfile EXPOSE / compose WEB_PORT / README.en
+端口 / Dockerfile CMD bind / run.py 兜底值 / .env.example，各自独红）。
+
+边界：只判 Web 端口这一个数——不判编排设计、不判 README 的协议与
+主机名、不判 `web/` 前端的 Vite 开发代理端口、不判
+`start_determinflow.sh` 的展示/诊断文案；healthcheck 只认
+`localhost:<port>` 形式。
