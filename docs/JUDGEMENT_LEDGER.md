@@ -2357,3 +2357,22 @@ P10 的 checker Node 下限），本次为纯文档修复。
 边界：只判 macOS 小节的范围 / 配置两行与叙述段双覆盖——不判 Windows
 小节、不判矩阵执行行为、不判架构行的「不构建 universal 或 Intel"
 （架构排除不是 flavor 范围）、不判「桌面更新发布」节的历史叙述。
+### 10.60 四轮收口（R185–R188）
+
+四轮连推（十六）收口：R185 macOS bundle identifier 同账（W22）、
+R186 desktop README DMG 产物路径同账（W23）、R187 desktop README
+macOS 候选范围 ↔ workflow 矩阵（W24，含真实修复）。三条判据全部
+落地，三轮变异合计 9/9（3+3+3；收口轮无新判据）。
+
+- W22 把 `io.determinflow.desktop` 的六个声明点（tauri identifier /
+  verify_bundle 比较 + 错误消息 / README 三处数据路径与树根）钉成
+  逐字同账；W23 把 README 硬编码的 `DeterminFlow_1.0.2_aarch64.dmg`
+  与 `build_macos.py` 模板、tauri 版本钉成三处同账——两条都是「钉住
+  本来就对的账」。
+- W24 是候选制第二次登记阶段抓到真实不一致（第一次 R177 P10）：
+  README 范围行「只构建 Core，不构建 Full」与 matrix `[core, full]`
+  分叉；表行修复后判据转绿，反向验证修复前状态红在否定式守卫。
+- 总用例 3143→3147→3151→3155→3157。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R189–R192：desktop README 架构表路径同账（W25）、
+  Windows 表 ↔ desktop-windows.yml（W26）、README 表 ↔ tauri conf
+  键同账（W27）、收口。
