@@ -2277,3 +2277,21 @@ R183 实测：Vite 无显式 `outDir`（默认 `dist`），两处后端路径都
 边界：只判目录名——不判 Vite 其它构建选项、不判 `web/public` 静态资源
 输入目录、不判构建是否执行（frontend CI job 负责）、不判
 `desktop/README.md` 的 `web/dist` 叙述。
+### 10.56 四轮收口（R181–R184）
+
+四轮连推（十五）收口：R181 macOS 最低版本同账（W20）、R182 desktop
+管线命令引用面（V8）、R183 前端构建输出目录同账（W21）。三条判据全部
+落地，三轮变异合计 9/9（3+3+3；收口轮无新判据）。
+
+- W20 把 `11.0` 的六个声明点（tauri 配置 / verify_bundle 常量 /
+  workflow deployment target / README 三处）钉成逐字同账；W21 把 Vite
+  有效 `outDir` 与 `run.py` / `web_server` 两处产物目录钉成三处同账——
+  两条都是「钉住本来就对的账」，价值在改下限 / 改 outDir 时先红。
+- V8 把 `desktop/README.md` 的 9 处脚本引用、3 处 npm script、2 处
+  `npm ci` 钉成可解析；登记时的 8 处是逐行口径，V8 合并 `\` 续行后
+  多看到 macOS `build_backend` 一处，判据下限仍用 8。
+- 总用例 3129→3133→3137→3141→3143。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R185–R188：identifier 六处同账（W22）、README DMG
+  产物路径同账（W23）、README macOS 候选范围 ↔ workflow 矩阵（W24，
+  含真实修复：表行「只构建 Core」与 matrix `[core, full]` 已分叉）、
+  收口。
