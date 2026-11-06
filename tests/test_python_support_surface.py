@@ -390,3 +390,48 @@ def test_lock_header_self_names() -> None:
     assert not violations, (
         "锁生成头自名/源文件不同账：\n" + "\n".join(violations)
     )
+
+
+# ------------------------------------------------- R174: Dockerfile node 基础镜像 ↔ engines（P9）
+# P3 已钉 python 基础镜像的 X.Y ∈ requires-python / classifiers；node 基础
+# 镜像此前无人对账——P7 只钉 README 与 workflow 的 node-version，Dockerfile
+# 的 `FROM node:22-alpine` 是前端构建的实际运行时。升级 engines 到 24 而
+# 忘了改 Dockerfile，镜像仍按旧 major 构建。
+NODE_DOCKER_RX = re.compile(r"^FROM\s+node:(\d+)", re.M | re.I)
+
+
+def _dockerfile_node_majors() -> list[int]:
+    majors = [
+        int(raw)
+        for raw in NODE_DOCKER_RX.findall(
+            DOCKERFILE.read_text(encoding="utf-8")
+        )
+    ]
+    assert majors, (
+        "Dockerfile 没有 node 基础镜像（FROM node:<major>…）——P9 无锚"
+    )
+    return majors
+
+
+def test_dockerfile_node_base_is_parseable() -> None:
+    """P9a：Dockerfile 的 node 基础镜像可解析，且 major 唯一。"""
+    majors = _dockerfile_node_majors()
+    assert len(set(majors)) == 1, (
+        f"Dockerfile 的 node 基础镜像 major 不唯一：{majors}"
+        "——多阶段构建必须用同一个 Node 大版本"
+    )
+    _node_floors()
+
+
+def test_dockerfile_node_base_matches_engines_major() -> None:
+    """P9b：node 基础镜像 major == engines.node 的 major。"""
+    _, engines_major = _node_floors()
+    violations = [
+        f"FROM node:{major} 与 engines major {engines_major} 不同账"
+        for major in _dockerfile_node_majors()
+        if major != engines_major
+    ]
+    assert not violations, (
+        "Dockerfile node 基础镜像与 engines 不同账：\n"
+        + "\n".join(violations)
+    )

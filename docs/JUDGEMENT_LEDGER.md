@@ -2037,3 +2037,21 @@ R173 实测：`/api` → `http://localhost:8020`、`/ws` →
 
 边界：只判代理端口——不判代理路径的路由语义、不判 `server.port`
 5173（前端开发服务器自己的端口）、不判 `web/dist` 产物。
+
+### 10.46 Dockerfile node 基础镜像 ↔ engines（R174）
+
+`tests/test_python_support_surface.py` 的 **P9** 把前端构建阶段的 Node
+基础镜像收进 P 系（R172 §3 登记）：
+
+- **P9a 语料守卫**：Dockerfile 至少一个 `FROM node:<major>`，且所有
+  node base 的 major 唯一；`engines.node` 可解析。
+- **P9b major 同账**：每个 node base 的 major == `engines.node` 的
+  major。
+
+R174 实测：`FROM node:22-alpine` 与 engines `>=22.12.0` major 同为
+22，首跑即过。总用例 3103→3107，变异 2/2（node:22→24 / 删除 node
+FROM，P9a 与 P9b 各自独红）。
+
+边界：只判 major——不判 floating minor（`node:22-alpine` 不带 minor）、
+不判 python base（P3 已覆盖，重复钉会把同一条账记两次）、不判镜像
+digest / 发行版（`-alpine` / `-slim` 是打包选择）。
