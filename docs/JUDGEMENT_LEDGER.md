@@ -2235,3 +2235,25 @@ R181 实测：6 处 / 4 文件全部为 `11.0`，首跑即过。总用例 3129�
 `macosx_11_0_arm64` 是 wheel 平台标签（低版本 wheel 可装在高版本系统），
 同文件的「macOS 11」说明文字也不随应用下限同步，均留在射程外；
 `desktop/README.md` 之外的文档不判。
+### 10.54 desktop 管线命令引用面（R182）
+
+`tests/test_desktop_pipeline_commands.py` 的 **V8** 把 `desktop/README.md`
+的命令引用收进 V 系（R180 §3 登记；V7 只扫三份开发者文档并显式留出
+desktop README）：
+
+- **V8a 语料守卫**：fenced 命令块至少 8 处 `python desktop/scripts/
+  *.py`、至少 3 处 `npm run` / `npm test`、至少 2 处 `npm ci`。
+- **V8b 引用可解析**：脚本文件存在；npm script 命中该工作目录
+  `package.json` 的 `scripts`；`npm ci` 的工作目录有
+  `package-lock.json`。工作目录按子壳 `(cd … && …)` 的局部 cd 推进。
+
+R182 实测：`\` 续行合并后 9 处脚本引用 / 3 处 npm script / 2 处
+`npm ci`（R180 §3 逐行口径为 8 处；macOS `build_backend` 的脚本名在
+续行上），全部可解析，首跑即过。总用例 3133→3137（V8 +2、N3/D1 +2），
+变异 3/3（README 的 `npm run build:macos`→`build:macosx` / 移走
+`generate_macos_icon.py` / 移走 `web/package-lock.json`，V8b 三红、
+V8a 绿）。
+
+边界：只扫 `desktop/README.md` 的 fenced 代码块；不判正文散文与行内
+代码、`python -m`、`cargo test` 与命令参数语义；不判其它文档（V6/V7
+各守自己的面）。
