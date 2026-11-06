@@ -2168,3 +2168,28 @@ V7a 绿）。
 轮次）；不判命令参数语义与 script 内部命令；不判 `npm install` /
 `npx`；`git clone … && cd DeterminFlow` 这类本地不存在的目录名后面
 没有 npm 命令，自然不进射程。
+
+### 10.51 desktop 默认配置覆盖（R179）
+
+`tests/test_desktop_defaults.py` 的 **W19** 把桌面 full 包的默认配置
+清单钉成集合恰等（R178 §5 登记）：
+
+- **W19a 集合恰等**：`config/*.json` == `SOURCE_CONFIG_FILES` ∪
+  `DESKTOP_OVERRIDES` ∪ models 派生对（`models_config.example.json` /
+  `models_config.json`）；三组两两不重叠；源 ≥10、覆盖 ≥3。新增配置
+  漏登记、清单留不存在的文件都显式红。
+- **W19b 真实落盘**：`build_payloads` 的键集合 == `config/`；
+  `models_config.json` 逐字等于 example；`stage_defaults` 返回与落盘
+  的文件集合 == `config/`。这一条走真实 `git show HEAD:config/…`，
+  不 monkeypatch，证明实际会写进安装包的文件集合。
+
+R179 实测：`config/` 15 个 JSON = 10 源 + 3 覆盖 + 2 派生，恰等且不
+重叠；`build_payloads` / `stage_defaults` 均为 15 个文件，首跑即过。
+总用例 3123→3127（W19 +2、N3/D1 +2），变异 3/3（新增未登记
+`config/w19_probe.json` / 源清单删 `preset_phrases.json` / 覆盖键改
+`extensions.probe.json`，W19a/W19b 各自红）。
+
+边界：只判文件集合——不判 JSON 内容、不判覆盖值的业务正确性（脱敏与
+覆盖已由 `test_stage_defaults_uses_sanitized_overrides` 负责）；不判
+`config/extension-overrides/` 目录；不判安装后 `seed_user_config` 的
+落盘行为（已有测试）。
