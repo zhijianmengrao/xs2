@@ -1941,3 +1941,25 @@ R165–R167）同型：**候选制实测登记的边在钉住时都是对的**�
 默认值同账，`DEEPSEEK_API_KEY=` 空凭证只判读取点）、compose 挂载点
 ↔ config 目录（W16：`./{data,logs,config}` → `/app/{data,logs,config}`，
 运行时 `WORKDIR /app`）、收口。
+
+### 10.41 npm 引用面（R169）
+
+`tests/test_npm_references.py` 的 **V5** 把 CI / Dockerfile 的 npm 引用
+收进 V 系（R168 §3 登记）：
+
+- **V5a 脚本引用可解析**：workflow 每个 step 的 `npm run <script>` /
+  `npm test` 必须命中该 step 工作目录下 `package.json` 的 scripts 键。
+  工作目录按 `working-directory` → run 脚本里的 `cd <dir>` 顺序推进；
+  Dockerfile 按 `WORKDIR` 推进，`/app/<x>` 映射回仓库 `<x>`。
+  至少 8 处引用的语料守卫。
+- **V5b 锁文件存在**：每个 `npm ci` 的工作目录必须有
+  `package-lock.json`。至少 6 处 `npm ci` 的语料守卫。
+
+R169 实测：三份 workflow 7 处脚本引用 + Dockerfile 1 处 = 8 处，全部
+命中 `web`（13 scripts）/ `desktop`（4 scripts）；`npm ci` 6 处，
+两份锁文件都在，首跑即过。总用例 3085→3089，变异 3/3（删 lint script /
+改 lint 引用 / 移走 lockfile，V5a 与 V5b 各自独红）。
+
+边界：只判引用与 lockfile 存在——不判脚本内部命令、不判依赖版本与锁
+一致性（`npm ci` 自带完整性闸门）、不判 workflow 的矩阵/条件是否真的
+会跑到（CI 平台语义不在仓库内）；`npm install` 不判。
