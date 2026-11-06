@@ -2211,3 +2211,27 @@ R179 实测：`config/` 15 个 JSON = 10 源 + 3 覆盖 + 2 派生，恰等且�
 总用例 3115→3119→3123→3127→3129。四轮写回都落在第 80 条（满窗
 滚动）。§3 登记 R181–R184：macOS 最低版本六处同账（W20）、desktop
 管线命令引用面（V8）、前端构建输出目录三处同账（W21）、收口。
+### 10.53 macOS 最低版本同账（R181）
+
+`tests/test_macos_minimum_version.py` 的 **W20** 把 Apple Silicon 候选包
+的最低系统版本收进 W 系（R180 §3 登记）：
+
+- **W20a 语料守卫**：四源各解析出登记条数——`tauri.macos.conf.json` 的
+  `bundle.macOS.minimumSystemVersion` 1 处、`verify_bundle.py` 的
+  `MINIMUM_MACOS_VERSION` 1 处、`desktop-macos.yml` 的
+  `MACOSX_DEPLOYMENT_TARGET` 1 处、`desktop/README.md` 恰 3 处（架构行 +
+  两条构建命令）；合计恰 6 处，全部 `X.Y` 形状。任一声明点消失显式红。
+- **W20b 逐字同账**：六个值完全相同。改最低版本必须同时改四个文件；
+  漏改 `verify_bundle` 会让正确 bundle 被判失败，漏改 workflow 会让
+  编译目标分叉，漏改 README 会让文档失真。
+
+R181 实测：6 处 / 4 文件全部为 `11.0`，首跑即过。总用例 3129→3133
+（W20 +2、N3/D1 +2），变异 3/3（tauri `11.0`→`12.0` / README 架构行
+`macOS 11.0+`→`12.0+`，W20b 红；workflow 删 `MACOSX_DEPLOYMENT_TARGET`
+行，W20a 红）。
+
+边界：只判最低版本声明——不判取值该是多少、不判 `tauri.conf.json` 其它
+键、不判 macOS SDK / runner 版本；`install_macos_build_dependencies.py` 的
+`macosx_11_0_arm64` 是 wheel 平台标签（低版本 wheel 可装在高版本系统），
+同文件的「macOS 11」说明文字也不随应用下限同步，均留在射程外；
+`desktop/README.md` 之外的文档不判。
