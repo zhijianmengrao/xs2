@@ -2020,3 +2020,20 @@ P3 覆盖）、desktop 版本双源（W18：`desktop/package.json` ==
 `desktop/src-tauri/tauri.conf.json` 1.0.2）、README 命令引用面
 （V6：`python run.py` ×2、`docker compose -f docker-compose.yml` ×2、
 `docker compose up` ×2，文件均可解析）。
+
+### 10.45 Vite 开发代理端口（R173）
+
+`tests/test_dev_proxy_port.py` 的 **W17** 把本地开发链路的端口收进 W 系
+（R172 §3 登记）：
+
+- **W17a 语料守卫**：`web/vite.config.ts` 恰 2 个代理 target
+  （HTTP + WS），config 的 `WEB_PORT` 默认值恰一处。
+- **W17b 代理端口同账**：两个 target 的端口都 == config 默认值；
+  协议（`http` / `ws`）不参与——它们是代理类型，不是端口账。
+
+R173 实测：`/api` → `http://localhost:8020`、`/ws` →
+`ws://localhost:8020`，两个 target 均 8020，首跑即过。总用例
+3099→3103，变异 2/2（HTTP / WS 各改 8021，W17b 独红）。
+
+边界：只判代理端口——不判代理路径的路由语义、不判 `server.port`
+5173（前端开发服务器自己的端口）、不判 `web/dist` 产物。
