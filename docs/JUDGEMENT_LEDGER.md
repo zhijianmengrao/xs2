@@ -2505,3 +2505,27 @@ R193 实测：两份 desktop workflow 的 `name:` 本来就在词表内，修复
 `workflow_call` 复用工作流不在人读引用面）、不判 job 名与产物名里的
 candidate 词（候选制叙述，合法）、不判工作流触发条件与 step 行为。
 
+### 10.66 desktop flavor 词表五源闭包（R194）
+
+`tests/test_desktop_flavor_vocabulary.py` 的 **W29** 把 flavor 词表钉成
+五源恰等（R192 §3 登记四处、R194 开工实测补 verify_bundle.py 的
+`--expected-flavor` choices 成五处——W18/W13/W25/R193 同型的实测补面）：
+
+- **W29a 语料守卫**：五处（build_macos.py `choices` / build_macos.py
+  运行时集合 / build_backend.py `choices` / verify_bundle.py
+  `choices` / 两份 workflow `matrix.flavor`）各恰一处、非空、值都在
+  登记词表 {`core`, `full`} 内（扩充 flavor 先红词表，强制显式扩表并
+  同步五源与 README 范围行，W24 同型）；两份 workflow 恰一个 job 带
+  `flavor` 矩阵（结构守卫，不写死 job 名，W26 同型）。
+- **W29b 五源恰等**：五处解析出的集合两两恰等（以 build_macos
+  choices 为参照）——任一处加减值显式红。
+
+R194 实测：五源现均为 {core, full}，首跑即过。总用例 3175→3179
+（W29 +2、N3/D1 +2），变异 3/3（backend `choices` 删 `full` / Windows
+矩阵删 `full`，W29b 独红；build_macos 删运行时集合两行，W29a+W29b
+双红）。
+
+边界：只判五处词表——不判 README 范围行与叙述段（W24 射程）、不判
+矩阵展开行为与 job 数（CI 负责）、不判 flavor 语义（full 多捆绑官方
+插件快照）、不判 verify_bundle 其余参数与校验逻辑。
+
