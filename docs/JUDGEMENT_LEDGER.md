@@ -2579,3 +2579,30 @@ desktop flavor 词表五源闭包（W29）、R195 README R2 分发凭据同账
   的两处真实不一致（工作流名、R2 清单）分别在 R193/R195 落地修复——
   候选制实测先行连续第三批收口闭环。
 
+### 10.69 R2 公网回落域名三源同账（R197）
+
+`tests/test_desktop_r2_fallback_domain.py` 的 **W31** 把 R2 分发域名的
+回落缺省钉成三源同账（R196 §3 登记）：desktop-windows.yml 与
+replace-desktop-assets.yml 各一处的
+`${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}`
+（R46 注释自述「与 replace-desktop-assets.yml 同款，便于改域名时不改
+代码」）+ desktop/README.md「桌面更新发布」节的「未设置时回落」说明
+（R195 补清单时入账的第三源）：
+
+- **W31a 语料守卫**：两份分发 workflow 的回落缺省模式各恰一处；
+  `--public-base-url "$R2_PUBLIC_BASE_URL"` 消费点各恰一处（回落值必须
+  真的被发布命令吃掉）；desktop-macos.yml 回落模式 0 处（macOS 候选包
+  不在 R2 更新通道，多出来的第四源当场红）；README「未设置时回落」
+  说明恰一处。
+- **W31b 三源同账**：三源回落域名字面值逐字恰等（任一源改域名而其余
+  未跟显式红）。
+
+R197 实测：三源现同值 `https://downloads.determinflow.com`，首跑即过
+（纯钉住，无修复）。总用例 3185→3189（W31 +2、N3/D1 +2），变异 4/4
+（两 workflow 与 README 各改回落域名，W31b 各自独红；desktop-windows
+消费点改名，W31a 独红——同账集合不变）。
+
+边界：只判回落域名字面值与消费点的存在——不判未设变量时的回落触发
+行为（CI 负责）、不判 `vars.R2_PUBLIC_BASE_URL` 取值、不判 R46 注释
+散文（「同款」自述不进射程）、不判 `publish_r2_release.py` 的 URL
+拼装逻辑（`public_object_url` 有自己的判据面）。
