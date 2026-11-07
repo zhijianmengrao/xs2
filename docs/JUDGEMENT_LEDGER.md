@@ -2376,3 +2376,32 @@ macOS 候选范围 ↔ workflow 矩阵（W24，含真实修复）。三条判据
   滚动）。§3 登记 R189–R192：desktop README 架构表路径同账（W25）、
   Windows 表 ↔ desktop-windows.yml（W26）、README 表 ↔ tauri conf
   键同账（W27）、收口。
+### 10.61 desktop README 架构表路径同账（R189）
+
+`tests/test_desktop_ui_paths.py` 的 **W25** 把架构表「桌面适配」行背后
+的四源路径链收进 W 系（R188 §3 登记）：README 架构表「桌面适配」行的
+`ui/desktop-adapter.js`、`desktop/package.json` test script 的
+`ui/desktop-adapter.test.mjs`、`tauri.conf.json` 的
+`build.frontendDist == "../ui"`，开工实测补上第四源——`main.rs:118`
+的注入点 `include_str!("../../ui/desktop-adapter.js")`（编译期路径，
+四源里唯一的生产代码；adapter 挪走时 Rust 构建硬失败，但另外三源不会
+红，这正是本判据要钉的边）。
+
+- **W25a 语料守卫与解析性**：四源各恰一处；按各自基座（README 按
+  `desktop/`、package.json 按 `desktop/`、frontendDist 按
+  `desktop/src-tauri/`、include_str 按 `desktop/src-tauri/src/`）解析后
+  全部在磁盘；frontendDist 目录下 `index.html` 在磁盘（main.rs 的
+  `WebviewUrl::App("index.html")` 入口，缺了就是空壳包）。
+- **W25b 同目录同账**：四源字面值逐字钉死；adapter（README 与 main.rs
+  两条路解析出的同一文件）与 test script 文件的父目录都等于
+  frontendDist 解析出的目录。
+
+R189 实测：四源同目录（`desktop/ui/`），首跑即过。总用例
+3157→3161（W25 +2、N3/D1 +2），变异 3/3（README adapter 改名 /
+main.rs include_str 指向同目录另一文件（文件存在、目录同账，只有字面值
+可判，W25b 独红）/ frontendDist 改指 `../src-tauri`）。
+
+边界：只判架构表「桌面适配」行与三个工程引用点——不判 Windows /
+macOS 表行（W26/W27 射程）、不判 frontendDist 的打包行为、不判
+adapter 的运行时行为与测试执行、不判 Rust 侧其他 include_str。
+
