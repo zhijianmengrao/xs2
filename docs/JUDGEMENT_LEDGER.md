@@ -2732,3 +2732,28 @@ R202 实测：两段现同账（`latest.json` + `zhijianmengrao/xs2`），首跑
 （tauri 运行时负责）、不判 `latest.json` 内容结构、不判
 `gh release upload` 的执行（CI 负责）；git 不可用显式红不 skip
 （R136 纪律）。
+### 10.75 release-notes 引用面（R203）
+
+`tests/test_desktop_release_notes_refs.py` 的 **W36** 把
+`desktop/release-notes/` 的引用面钉成「生产端形状同账 + 消费端可解析」
+（R200 §3 登记）：生产端三份发版 workflow 恰 6 处引用（desktop-windows.yml
+3、replace-desktop-assets.yml 3，tag 占位符两写法 bash 的
+`$RELEASE_TAG.md` / python f-string 的 `{tag}.md`），消费端
+docs/community-updates.md 恰 2 处链接指向具体版本实盘文件：
+
+- **W36a 语料与形状同账**：workflow 引用逐份计数恰等（3/3，合计 6）
+  且占位符形状 ∈ {`$RELEASE_TAG`, `{tag}`}（目录前缀 + `.md` 后缀钉
+  在提取正则里，白名单防第三种写法悄悄分叉）；community-updates 的
+  链接恰 2 处。
+- **W36b 消费端可解析**：community-updates 的每条链接按 docs/ 为基
+  解析后在磁盘——日志改名/删除而文档没跟显式红。
+
+R203 实测：引用面现自洽，首跑即过（纯钉住，无修复）。总用例
+3207→3211（W36 +2、N3/D1 +2），变异 4/4（community 链接指 v9.9.9，
+W36b 独红；后缀改 `.MD`、占位符改 `{tagx}`、链接复制一份，W36a
+各自独红）。
+
+边界：只判引用路径的字面与可解析——不判日志内容、不判 workflow 的
+执行行为（CI 负责）、不判 README（实测 0 处 release-notes 引用）、
+不判历史日志是否该存在（消费端引用到的必须在盘，没被引用的旧日志
+不判）。
