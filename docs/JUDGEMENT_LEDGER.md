@@ -2890,3 +2890,25 @@ windows 丢 `--check`，W40b 各自独红；macos 调用删除 / windows 调用
 的词表已钉）、不判脚本执行行为（CI 负责）、不判其他脚本的非对称
 调用面（smoke_backend 归 W41、smoke_installer.ps1 归 W42、
 verify_bundle/create_update_manifest 已由 W38/W39 钉）。
+### 10.82 smoke_backend 调用面同账（R210）
+
+`tests/test_desktop_smoke_backend_timeouts.py` 的 **W41** 把
+`smoke_backend.py` 的 4 处调用钉成「计数恰等 + 超时预算同账」（R208
+§3 登记）：desktop-macos.yml 3 处（构建后 L52 / DMG 前核验 L66 / 挂载
+副本核验 L77）、desktop-windows.yml 1 处（L88），均带 `--timeout 180`：
+
+- **W41a 语料守卫**：调用逐份恰等（macos 3 / windows 1，合计 4）
+  ——加/删调用先红语料守卫。
+- **W41b 超时预算同账**：每处调用恰有一个 `--timeout <N>` 且全部
+  逐字同值（== 180）——超时预算改动四处同改。
+
+R210 实测：调用面现同账，首跑修正计数耦合（`len(timeouts) == 4` 从
+W41b 移除，计数归 W41a）后即过（纯钉住，无修复）。总用例
+3231→3235（W41 +2、N3/D1 +2），变异 4/4（windows 超时改 120 / macos
+一处丢 `--timeout`，W41b 各自独红；macos 一处删除 / 复制，W41a 各自
+独红）。
+
+边界：只判调用计数与 `--timeout` 值的字面同账——不判各处定位参数
+（app-bundle/挂载副本路径是各点的本意差异）、不判 smoke 的执行行为
+（CI 负责）、不判 `--timeout` 取值合理性（180 是政策值，改动先红
+同账再改）。
