@@ -2657,3 +2657,21 @@ R199 实测：两段现同账（`desktop/releases/` +
 自身的判据面负责）、不判 `latest.json` 内容结构、不判
 `publish_immutable` 的逐资产键（`{version_prefix}/latest.json` 由同一
 前缀推出，前缀同账即覆盖）。
+### 10.72 四轮收口（R197–R200）
+
+四轮连推（十九）收口：R197 R2 公网回落域名三源同账（W31）、R198
+desktop workflow 脚本引用路径逐处可解析（W32）、R199 README R2 发行
+路径两段同账（W33）。三条判据全部「钉住本来就对的账」，三轮变异合计
+12/12（4+3+5；收口轮无新判据）。
+
+- W31 把回落缺省的三份账（desktop-windows.yml / replace-desktop-assets.yml
+  的 `${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}`
+  + README「未设置时回落」说明）钉成字面值恰等，desktop-macos.yml 的
+  0 处守卫封死第四源；W32 把 17 处 `desktop/scripts/*` 引用钉成计数
+  恰等（8/8/1）+ 逐处可解析，计数与解析分工让变异各自独红；W33 把
+  发行目录前缀与稳定清单键两段钉成 README ↔ 脚本逐字同账，vX/v{version}
+  形状各自钉在提取正则里。
+- 总用例 3185→3189→3193→3197→3199。四轮写回都落在第 80 条（满窗滚动）。
+  §3 登记 R201–R204：产物后缀词表四源同账（W34）、更新通道清单端到端
+  同账（W35）、release-notes 引用面（W36）、收口。R199 的形状漂移变异
+  双红如实登记——形状既是语料也是账面。
