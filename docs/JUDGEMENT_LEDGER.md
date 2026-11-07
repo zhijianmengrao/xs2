@@ -2775,3 +2775,27 @@ W36b 独红；后缀改 `.MD`、占位符改 `{tagx}`、链接复制一份，W36
   verify_bundle 调用面参数同账（W38）、create_update_manifest 调用面
   参数同账（W39）、收口——调用面从「路径可解析」（W32）推进到
   「flag 可解析」。
+### 10.77 gh release 上传面同账（R205）
+
+`tests/test_desktop_gh_release_uploads.py` 的 **W37** 把发版资产进
+GitHub release 的 `gh release` 调用面钉成两半同账（R204 §3 登记）：
+desktop-windows.yml 3 处（view → 分支 upload/create）+ 
+replace-desktop-assets.yml 2 处（upload/edit），两条 upload 与 create
+的资产集合都是 `release-assets/*`：
+
+- **W37a 语料守卫**：调用逐份恰等（3/2，合计 5）；子命令形状恰等
+  （view ×1 / upload ×2 / create ×1 / edit ×1）；upload 全带
+  `--clobber`（重跑发布不撞已存在资产）。
+- **W37b 上传面同账**：upload×2 与 create×1 的资产实参逐字恰等
+  （== `release-assets/*`，一处改目录集合翻红）；全部调用带
+  `--repo "$GITHUB_REPOSITORY"`（create 的在续行，按 400 字符窗口判）。
+
+R205 实测：上传面现同账，首跑即过（纯钉住，无修复）。总用例
+3213→3217（W37 +2、N3/D1 +2），变异 4/4（replace upload 目录改值 /
+edit 丢 `--repo`，W37b 各自独红；upload 丢 `--clobber` / view 行删除，
+W37a 各自独红）。
+
+边界：只判 gh 调用的字面形状——不判 release 是否真的存在/资产是否
+真的传上（CI 负责）、不判 `--verify-tag`/`--title` 的语义、不判
+`--notes-file` 的语义（edit/create 的 notes-file 面由 W36 的引用面
+覆盖）、不判 `$RELEASE_TAG` 的取值。
