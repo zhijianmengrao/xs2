@@ -2952,3 +2952,25 @@ smoke_backend 调用面同账（W41）、R211 smoke_installer.ps1 调用面参�
   滚动）。§3 登记 R213–R216：R2 分发门控变量同账（W43）、macOS 产物
   路径前缀同账（W44）、desktop workflow npm script 调用面（W45）、
   收口。
+### 10.85 R2 分发门控变量同账（R213）
+
+`tests/test_desktop_r2_gate.py` 的 **W43** 把 `R2_DISTRIBUTION_ENABLED`
+门控钉成「两 workflow 条件全文恰等 + README 叙述值同账」（R212 §3
+登记）：desktop/README.md 两处叙述（L120/L126，均 `=true`）+
+desktop-windows.yml 与 replace-desktop-assets.yml 各一处
+`if: vars.R2_DISTRIBUTION_ENABLED == 'true'`：
+
+- **W43a 语料守卫**：两 workflow 的门控条件各恰一处（形状值无关，
+  `==`/`!=` 都算门控）；README 的提及恰 2 处。
+- **W43b 门控同账**：两 workflow 的门控条件全文（含运算符）逐字
+  恰等；README 提及值集合 == workflow 比较值集合（按集合）。
+
+R213 实测：门控现同账，首跑修正「只比值不比运算符」（首版 `!=
+'true'` 变异双绿，捕获组改条件全文后才红）后即过（纯钉住，无修复）。
+总用例 3241→3245（W43 +2、N3/D1 +2），变异 4/4（windows 门控 `==`
+翻 `!=` / replace 比较值改 `'True'`，W43b 各自独红；README 提及删除
+/ 门控复制，W43a 各自独红）。
+
+边界：只判门控条件的字面与值的同账——不判门控的求值行为（CI
+负责）、不判 README 两处叙述的措辞（prose 措辞不进射程，只对值）、
+不判 `R2_PUBLIC_BASE_URL` 等其他变量（W31/W30 已管）。

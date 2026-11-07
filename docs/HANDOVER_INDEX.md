@@ -1,4 +1,4 @@
-# 交接文档总索引（R24–R212）
+# 交接文档总索引（R24–R213）
 
 > 生成：2026-11-04（R131 之后、R132 之前）。用途：一份文件回答四件事——
 > **有哪些轮次、每轮做了什么、文档在哪、还有哪些缺口**。
@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **187 份**（`docs/HANDOVER_ROUND24..212.md`；R34/R35 从未有文档） |
-| 文档体量 | 26,209 行 / 1.5 MB |
-| 当前用例 | **3,241**（R212：N3/D1 因本篇与 R211 回填 +2；R212 树 3213 passed / 28 skipped / 0 failed；本行由 S3 机判） |
-| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42419886716`；R212 翻正，满窗后计数恒 80） |
-| 代码基线 | `main` = `03f3bd1`（R211 提交 + CI 回写；docs 回填见 R211 §6） |
+| 交接文档 | **188 份**（`docs/HANDOVER_ROUND24..213.md`；R34/R35 从未有文档） |
+| 文档体量 | 26,310 行 / 1.5 MB |
+| 当前用例 | **3,245**（R213：W43 +2、N3/D1 因本篇与 R212 回填 +2；R213 树 3217 passed / 28 skipped / 0 failed；本行由 S3 机判） |
+| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42422351039`；R213 翻正，满窗后计数恒 80） |
+| 代码基线 | `main` = `5e2de5e`（R212 提交 + CI 回写；docs 回填见 R212 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条编号判据（§2 编号表）+ 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -33,7 +33,7 @@
 （`~/.zcode/.../memory/xs2-round-status.md`），外部接手者只能依赖前三者——
 见 §6.4。
 
-## 3. 阶段划分（187 份文档的骨架）
+## 3. 阶段划分（188 份文档的骨架）
 
 | 阶段 | 轮次 | 份数 | 主线 |
 |---|---|---|---|
@@ -68,8 +68,9 @@
 | 四轮连推（二十） | R201–R204 | 4 | 产物后缀词表四源同账（W34）、更新通道清单端到端同账（W35）、release-notes 引用面（W36）、收口（四轮完成） |
 | 四轮连推（二十一） | R205–R208 | 4 | gh release 上传面同账（W37）、verify_bundle 调用面参数同账（W38）、create_update_manifest 调用面参数同账（W39）、收口（四轮完成） |
 | 四轮连推（二十二） | R209–R212 | 4 | 跨平台脚本调用面同账（W40）、smoke_backend 调用面同账（W41）、smoke_installer.ps1 调用面参数同账（W42）、收口（四轮完成） |
+| 四轮连推（二十三） | R213–R216 | 4 | R2 分发门控变量同账（W43）、macOS 产物路径前缀同账（W44）、desktop workflow npm script 调用面（W45）、收口（四轮完成） |
 
-## 4. 全量索引（R24–R212）
+## 4. 全量索引（R24–R213）
 
 日期取文档首次入库的提交日期；主题取标题副标题（R112 起 18 份无副标题，
 按引言首句补；R133 已补齐 19 份含 R129/R132，钉测 `test_docs_navigation.py`
@@ -264,6 +265,7 @@ N3 防复发）。
 | R210 | 2026-11-08 | smoke_backend 调用面同账：W41 | [md](HANDOVER_ROUND210.md) |
 | R211 | 2026-11-08 | smoke_installer.ps1 调用面参数同账：W42 | [md](HANDOVER_ROUND211.md) |
 | R212 | 2026-11-08 | 收口轮：R209–R212 四账 + R213–R216 登记 | [md](HANDOVER_ROUND212.md) |
+| R213 | 2026-11-08 | R2 分发门控变量同账：W43 | [md](HANDOVER_ROUND213.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
@@ -284,7 +286,7 @@ R10–R12 的副本含 BOM 与「〔待补〕」乱码占位符；若从 git 恢
 
 按 §5：**R4–R9 完全无记录；R1–R3 仅合并记录；R10–R23 只剩 git 历史；
 R34/R35 从未有文档**。现行维护入口从 R24 起，R36 已把 R34/R35 的可溯源部分
-补进正文。除此之外，R24–R212 每轮恰好一份，无缺号、无重号。
+补进正文。除此之外，R24–R213 每轮恰好一份，无缺号、无重号。
 
 ### 6.2 回填缺口（CI 写回 run 未记账）——**已在本轮补正文的 4 处**
 
