@@ -2629,3 +2629,31 @@ W32b 各自独红；windows 一处引用删 `desktop/` 前缀，W32a 独红—�
 边界：只判 `desktop/scripts/` 形状的字面引用——不判脚本内容、不判
 step 执行行为（CI 负责）、不判 README 侧命令引用面（V8 已管）、
 `ci.yml` 实测 0 处引用（非桌面分发面，不进账）。
+### 10.71 README R2 发行路径两段同账（R199）
+
+`tests/test_desktop_r2_release_paths.py` 的 **W33** 把 README「桌面更新
+发布」节的两段发行路径与 `publish_r2_release.py` 的实现侧钉成两段逐字
+同账（R196 §3 登记）：发行目录前缀（README `desktop/releases/vX/` ↔
+脚本 `version_prefix = f"desktop/releases/v{version}"`）+ 稳定清单键
+（README「最后更新 `desktop/stable/latest.json`」↔ 脚本
+`publish_latest(manifest_path, "desktop/stable/latest.json")`）：
+
+- **W33a 语料守卫**：README 的 ``…/vX/`` token 与「最后更新 `<stable>`」
+  句各恰一处（`vX` 形状钉在提取正则里，L118 的「最后更新稳定
+  Manifest」不带 token 不误收）；脚本的 `version_prefix` 定义与
+  `publish_latest` 实参各恰一处。
+- **W33b 两段同账**：发行目录前缀逐字恰等（README 去 `/vX/` == 脚本
+  去 `/v{version}`，脚本侧形状漂移显式红）；稳定清单键逐字恰等——
+  改目录/改键名单侧漂移显式红。
+
+R199 实测：两段现同账（`desktop/releases/` +
+`desktop/stable/latest.json`），首跑即过（纯钉住，无修复）。总用例
+3193→3197（W33 +2、N3/D1 +2），变异 5/5（脚本改目录/改稳定键、README
+改目录，W33b 各自独红；README 复制 token，W33a 独红——值不变；README
+`vX` 形状漂移，W33a 锚丢失 + W33b 无锚可比，双红——形状既是语料也是
+账面）。
+
+边界：只判两段路径的字面同账——不判发布行为与不可变校验（CI 与脚本
+自身的判据面负责）、不判 `latest.json` 内容结构、不判
+`publish_immutable` 的逐资产键（`{version_prefix}/latest.json` 由同一
+前缀推出，前缀同账即覆盖）。
