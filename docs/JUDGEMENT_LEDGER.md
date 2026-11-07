@@ -2936,3 +2936,19 @@ ValidateSet 改值，W42b 各自独红；call site 复制一份，W42a 独红）
 边界：只判参数名与 ValidateSet 值的字面同账——不判 PowerShell 参数
 绑定语义（大小写不敏感是运行时行为）、不判 `$Flavor` 默认值取值、
 不判脚本执行行为（CI 负责）。
+### 10.84 四轮收口（R209–R212）
+
+四轮连推（二十二）收口：R209 跨平台脚本调用面同账（W40）、R210
+smoke_backend 调用面同账（W41）、R211 smoke_installer.ps1 调用面参数
+同账（W42）。三条判据全部「钉住本来就对的账」，三轮变异合计 12/12
+（4+4+4；收口轮无新判据）。
+
+- W40 把 windows/macos 对称调用的两脚本钉成计数对称 + 实参逐字恰等；
+  W41 把 smoke_backend 的 4 处冒烟点钉成 3/1 计数 + 超时预算全等；
+  W42 把 PowerShell 冒烟脚本的参数面钉成集合恰等 + ValidateSet 第六
+  源并入 flavor 词表。desktop workflow 的脚本调用面（W32 路径账）至此
+  全部推进到 flag/参数账（W38/W39/W40/W41/W42）。
+- 总用例 3227→3231→3235→3239→3241。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R213–R216：R2 分发门控变量同账（W43）、macOS 产物
+  路径前缀同账（W44）、desktop workflow npm script 调用面（W45）、
+  收口。
