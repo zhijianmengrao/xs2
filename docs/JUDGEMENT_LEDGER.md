@@ -2912,3 +2912,27 @@ W41b 移除，计数归 W41a）后即过（纯钉住，无修复）。总用例
 （app-bundle/挂载副本路径是各点的本意差异）、不判 smoke 的执行行为
 （CI 负责）、不判 `--timeout` 取值合理性（180 是政策值，改动先红
 同账再改）。
+### 10.83 smoke_installer.ps1 调用面参数同账（R211）
+
+`tests/test_desktop_smoke_installer_params.py` 的 **W42** 把 PowerShell
+冒烟脚本 `smoke_installer.ps1` 的调用面钉成「参数集合恰等 + ValidateSet
+第六源并入 flavor 词表」（R208 §3 登记）：call site 在 desktop workflow
+恰一处（desktop-windows.yml 的 smoke 步，`-Installer …` `-Flavor …`），
+脚本 `param()` 恰 2 参数（`$Installer` Mandatory / `$Flavor = "core"`，
+带 `[ValidateSet("core", "full")]`）：
+
+- **W42a 语料守卫**：call site 恰一处；`param()` 恰 2 个参数（只钉
+  数量，参数名集合由 W42b 同账——防改名变异双红）。
+- **W42b 调用面同账**：call site 参数集合 == `param()` 集合（双向
+  恰等）；`ValidateSet` 值集合 == {core, full}——flavor 词表的第六源
+  （W29 五源之外），改 flavor 词表必须同改。
+
+R211 实测：调用面现同账，首跑修正 param 块提取（闭合锚必须是行首
+独立 `)`——首版被 `[Parameter(Mandatory = $true)]` 的内层右括号截断）
+与 W42a 数量钉后即过（纯钉住，无修复）。总用例 3235→3239（W42 +2、
+N3/D1 +2），变异 4/4（call site `-Flavor` 错拼 / 脚本 `$Flavor` 改名 /
+ValidateSet 改值，W42b 各自独红；call site 复制一份，W42a 独红）。
+
+边界：只判参数名与 ValidateSet 值的字面同账——不判 PowerShell 参数
+绑定语义（大小写不敏感是运行时行为）、不判 `$Flavor` 默认值取值、
+不判脚本执行行为（CI 负责）。
