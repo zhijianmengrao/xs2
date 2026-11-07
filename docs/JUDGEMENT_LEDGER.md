@@ -2702,3 +2702,33 @@ bash 四处改值，W34b 各自独红；NSIS 行复制一份，W34a 独红——
 边界：只判后缀词表字面同账——不判产物名里 version 段的取值（W18
 的版本五源已管）、不判 `.sha256`/`.sig` 派生后缀（由同一 name 推出，
 词表同账即覆盖）、不判 workflow/脚本的执行行为（CI 负责）。
+### 10.74 更新通道清单端到端同账（R202）
+
+`tests/test_desktop_updater_channel.py` 的 **W35** 把桌面更新通道的
+清单钉成端到端同账（R200 §3 登记）：消费端 tauri.conf.json 的
+`plugins.updater.endpoints` 恰一处
+`https://github.com/zhijianmengrao/xs2/releases/latest/download/latest.json`
+（硬编码 owner/repo），生产端 desktop-windows.yml 的
+create_update_manifest `--base-url "https://github.com/${{
+github.repository }}/releases/download/$RELEASE_TAG"` 产出
+`--output release-assets/latest.json` 再 `gh release upload`
+（`releases/latest/download/` 是 GitHub 对最新 release 下载地址的
+别名，与 `releases/download/<tag>` 同键族）：
+
+- **W35a 语料守卫**：端点数组恰一条 github.com/…/latest/download/
+  <file>.json 形状；`--base-url`（github.repository 表达式 +
+  releases/download）与 `--output release-assets/<file>` 各恰一处。
+- **W35b 端到端同账**：端点文件名 == `--output` 文件名（清单改名
+  两端必须同改）；端点 owner/repo == git origin owner/repo（仓库
+  改名/搬移显式红——workflow 侧 github.repository 自动跟走，端点
+  不会）。
+
+R202 实测：两段现同账（`latest.json` + `zhijianmengrao/xs2`），首跑
+即过（纯钉住，无修复）。总用例 3203→3207（W35 +2、N3/D1 +2），变异
+4/4（端点文件名 / 端点 owner-repo / workflow --output 三处改值，W35b
+各自独红；端点条目复制一份，W35a 独红）。
+
+边界：只判端点/清单的字面同账——不判 updater 的运行行为与签名校验
+（tauri 运行时负责）、不判 `latest.json` 内容结构、不判
+`gh release upload` 的执行（CI 负责）；git 不可用显式红不 skip
+（R136 纪律）。
