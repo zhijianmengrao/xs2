@@ -2799,3 +2799,29 @@ W37a 各自独红）。
 真的传上（CI 负责）、不判 `--verify-tag`/`--title` 的语义、不判
 `--notes-file` 的语义（edit/create 的 notes-file 面由 W36 的引用面
 覆盖）、不判 `$RELEASE_TAG` 的取值。
+### 10.78 verify_bundle 调用面参数同账（R206）
+
+`tests/test_desktop_verify_bundle_flags.py` 的 **W38** 把
+`verify_bundle.py` 的调用面从「路径可解析」（W32）推进到「flag 可解析」
+（R204 §3 登记）：三处 call site——desktop-macos.yml 1 处 7 flag
+（--expected-flavor / --app-bundle / --dmg / --verify-macos-load-commands
+/ --verify-macos-signatures / --verify-dmg-container /
+--forbid-updater-artifacts；R204 §3 登记六处是 sed 窗口截断，开工实测
+补第七 flag）、desktop-windows.yml 2 处（1 flag / 3 flag）：
+
+- **W38a 语料守卫**：三处 call site 各恰一处（macos 1 / windows 2）、
+  每处 flag 数语料守卫 7/1/3——加/删 flag 先红语料守卫。
+- **W38b 调用面同账**：call site 用到的每个 flag ∈ 脚本 argparse 的
+  option 集合（单向：定义未被调用是脚本 API 不判，调用未定义当场红）。
+
+R206 实测：三处 call site 的 flag 全部可解析，首跑修正折行正则（贪婪
+行吞吃让可选组零迭代完成匹配的经典坑，展开循环
+`((?:[^\n]|\r?\n)*)` 才稳）与 flag 计数后即过（纯钉住，无修复）。
+总用例 3217→3221（W38 +2、N3/D1 +2），变异 4/4（workflow flag 错字 /
+脚本 option 改名，W38b 各自独红；macos、windows 各删一 flag，W38a
+各自独红）。
+
+边界：只判 flag 名的字面可解析——不判 flag 取值（--expected-flavor
+choices 由 W29 钉）、不判 flag 顺序与折行写法、不判脚本执行行为
+（CI 负责）、不判 --forbid-updater-artifacts 等 workflow 侧未用
+option（脚本 API 面不收缩）。
