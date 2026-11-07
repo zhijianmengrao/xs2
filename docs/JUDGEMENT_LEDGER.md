@@ -2675,3 +2675,30 @@ desktop workflow 脚本引用路径逐处可解析（W32）、R199 README R2 发
   §3 登记 R201–R204：产物后缀词表四源同账（W34）、更新通道清单端到端
   同账（W35）、release-notes 引用面（W36）、收口。R199 的形状漂移变异
   双红如实登记——形状既是语料也是账面。
+### 10.73 产物后缀词表四源同账（R201）
+
+`tests/test_desktop_product_suffixes.py` 的 **W34** 把桌面发行产物的
+文件名后缀词表钉成四源同账（R196 §3 候选面、R200 §3 实测扩成四源）：
+replace-desktop-assets.yml 期望词表 4 后缀、desktop-windows.yml bash
+发布步四后缀列表、desktop-windows.yml NSIS 对（`_x64-setup.exe`/
+`_x64-full-setup.exe`，带前导下划线）、build_macos.py DMG 对
+（`suffix = "-full" if flavor == "full" else ""` 拼进
+`DeterminFlow_{version}_aarch64{suffix}.dmg`）：
+
+- **W34a 语料守卫**：五处锚各恰一处（replace 元组 / NSIS 对 / bash
+  列表 / build_macos 分支 / DMG 模板）+ 结构形状就位（元组 4 项、
+  NSIS 对两项带 `_` 前缀、分支含 full/else 两值）——锚被删/复制先红
+  这里，值由 W34b 判。
+- **W34b 四源同账**：NSIS 对（剥 `_`）∪ DMG 对 == replace 词表 ==
+  bash 列表，且 NSIS 与 DMG 两族不相交（复制后缀混族当场红）。
+
+R201 实测：四源现同账（{x64-setup.exe, x64-full-setup.exe,
+aarch64.dmg, aarch64-full.dmg}），首跑抓到模板基底提取的解包 bug
+（对已解包字符串再 `[0]` 取成首字符）修正后即过（纯钉住，无修复）。
+总用例 3199→3203（W34 +2、N3/D1 +2），变异 5/5（replace/NSIS/分支/
+bash 四处改值，W34b 各自独红；NSIS 行复制一份，W34a 独红——
+`_require`/`_first` 双守卫分工，锚复制取首值集合不变）。
+
+边界：只判后缀词表字面同账——不判产物名里 version 段的取值（W18
+的版本五源已管）、不判 `.sha256`/`.sig` 派生后缀（由同一 name 推出，
+词表同账即覆盖）、不判 workflow/脚本的执行行为（CI 负责）。
