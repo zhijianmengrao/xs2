@@ -2849,3 +2849,22 @@ site 复制完整块，W39a 独红——每块各自与 option 集合恰等仍�
 边界：只判 flag 名的字面同账——不判 flag 取值（--base-url 的形状由
 W35 钉、--notes-file 引用由 W36 覆盖、--output 文件名由 W35 钉）、
 不判脚本执行行为（CI 负责）。
+### 10.80 四轮收口（R205–R208）
+
+四轮连推（二十一）收口：R205 gh release 上传面同账（W37）、R206
+verify_bundle 调用面参数同账（W38）、R207 create_update_manifest 调用
+面参数同账（W39）。三条判据全部「钉住本来就对的账」，三轮变异合计
+12/12（4+4+4；收口轮无新判据）。
+
+- W37 把 `gh release` 上传面钉成 upload×2/create 资产实参恰等 +
+  `--repo` 逐处 + `--clobber` 全带；W38 把 verify_bundle 的调用面从
+  路径（W32）推进到 flag（7/1/3 语料守卫 + flag ∈ argparse 单向账）；
+  W39 把 create_update_manifest 的调用面钉成 flag 多重集 == option
+  集合的恰等（7==7 双向）。两处开工实测修正（W38 登记 6→7 flag、
+  W39 的 git --format 误收）延续「登记面实测先行、开工再实测校准」
+  的纪律。
+- 总用例 3213→3217→3221→3225→3227。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R209–R212：跨平台脚本调用面同账（W40）、
+  smoke_backend 调用面同账（W41）、smoke_installer.ps1 调用面参数
+  同账（W42）、收口——desktop workflow 的脚本调用面（9 脚本 17 处，
+  W32 的路径账）至此推进到全部 6 个带参数脚本的 flag 账。
