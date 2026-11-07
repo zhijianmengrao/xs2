@@ -2429,3 +2429,29 @@ runner（callable workflow 无自己的 `runs-on`；`release` 是仅 tag 的
 `ubuntu-latest` 发版收尾）、不判矩阵展开行为、不判工作流触发条件与
 step 行为。
 
+### 10.63 desktop README 表 ↔ tauri conf 打包三键（R191）
+
+`tests/test_desktop_readme_packaging.py` 的 **W27** 把三行打包声明表钉到
+tauri 配置的三个键上（R188 §3 登记）：
+
+- **W27a 语料守卫**：产物/更新包行（macOS 小节）与安装包行（Windows
+  小节）各恰一处——「安装包」锚带 `NSIS` 前缀消歧（Windows 小节有两处
+  `| 安装包 |` 形状：正式表 + 「同一版本生成两个安装包」表的表头）；
+  产物行同时含 `.app` 与 `.dmg` token；更新包行恰一处
+  `createUpdaterArtifacts=<bool>` token；安装包行恰一处 NSIS 安装模式
+  token；conf 三键存在且类型正确（targets 列表 / 布尔 / 字符串）。
+- **W27b 三键同账**：产物扩展名集合 == `bundle.targets` 集合（双向：
+  conf 加目标 README 少提、README 多提 conf 不打，都红）；更新包 token
+  的布尔 == `bundle.createUpdaterArtifacts`；安装模式 token ==
+  `bundle.windows.nsis.installMode`。
+
+R191 实测：三键三行逐项同账，首跑即过。总用例 3165→3169（W27 +2、
+N3/D1 +2），变异 3/3（`targets` 加 `deb` / `installMode` 改
+`perMachine`，W27b 独红；更新包行删 token，W27a+W27b 双红）。
+
+边界：只判三行表与三个键——不判基础 `tauri.conf.json` 的
+`bundle.targets == ["nsis"]` 与 `bundle.createUpdaterArtifacts == true`
+（Windows 侧 NSIS 目标与发版 `.sig` 账，README「桌面更新发布」节另行
+叙述，登记口径未含）、不判 `nsis` 其余键、不判 `flavor` 矩阵（W24
+射程）、不判打包的执行行为（CI 负责）。
+
