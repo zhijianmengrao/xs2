@@ -2479,3 +2479,29 @@ desktop README 表 ↔ tauri conf 打包三键（W27）。三条判据全部落�
   `R2_PUBLIC_BASE_URL` Variable）、收口。候选制连续第三批在登记阶段
   实测抓到真实不一致。
 
+### 10.65 desktop README 工作流名同账（R193）
+
+`tests/test_desktop_workflow_name.py` 的 **W28** 把 README 引用的桌面
+工作流名钉到 `.github/workflows/desktop-*.yml` 的 `name:` 上（R192 §3
+登记、R193 开工修复——README 写 `Desktop macOS candidate`、workflow
+`name:` 是 `Desktop macOS`，先修 README 一行再钉）：
+
+- **W28a 词表与形状守卫**：desktop-*.yml 每份有 `name:` 字符串；name
+  集合恰等于登记词表 {`Desktop macOS`, `Desktop Windows`}（新增/改名/
+  删除 desktop 工作流先红词表，强制显式扩表）；README 的「`` `X` 工作流
+  ``」引用形状（反引号 token 紧跟「工作流」）全文档恰一处。
+- **W28b 名字同账**：README 引用的名 ∈ name 集合（逐字，双向）——
+  workflow 改名而 README 没跟、README 写出集合外的名，都显式红。
+
+R193 实测：两份 desktop workflow 的 `name:` 本来就在词表内，修复后
+首跑即过。总用例 3171→3175（W28 +2、N3/D1 +2），变异 3/3（README 回退
+`Desktop macOS candidate`，W28b 红 / desktop-windows.yml `name:` 改
+词表外值 `Desktop Windows Installer`，W28a 独红——引用的 macOS 名仍在
+集合 / desktop-macos.yml 删 `name:` 行，双红）。
+
+边界：只判「`` `X` 工作流 ``」引用形状与两份 desktop-*.yml 的
+`name:`——不判 Windows 表「工作流」行的路径引用（W26 射程）、不判
+`replace-desktop-assets.yml`（文件名不匹配 `desktop-*.yml` glob，
+`workflow_call` 复用工作流不在人读引用面）、不判 job 名与产物名里的
+candidate 词（候选制叙述，合法）、不判工作流触发条件与 step 行为。
+
