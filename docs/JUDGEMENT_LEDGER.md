@@ -2974,3 +2974,25 @@ R213 实测：门控现同账，首跑修正「只比值不比运算符」（首
 边界：只判门控条件的字面与值的同账——不判门控的求值行为（CI
 负责）、不判 README 两处叙述的措辞（prose 措辞不进射程，只对值）、
 不判 `R2_PUBLIC_BASE_URL` 等其他变量（W31/W30 已管）。
+### 10.86 macOS 产物路径前缀同账（R214）
+
+`tests/test_desktop_product_paths.py` 的 **W44** 把 `build_macos.py`
+的产物路径（pathlib 拼装）与 `desktop-macos.yml` verify 调用的字面
+路径钉成两段同账（R212 §3 登记）：app 路径
+（desktop/src-tauri/target/release/bundle/macos/DeterminFlow.app）+
+dmg 目录前缀（…/bundle/dmg/）：
+
+- **W44a 语料守卫**：脚本 bundle 组合行 / app 产物行 / dmg 产物行各
+  恰一处；yml `--app-bundle`/`--dmg` 各恰一处。
+- **W44b 路径同账**：脚本段 join 出的 app 路径 == yml `--app-bundle`
+  字面路径；脚本 dmg 目录前缀 == yml `--dmg` 去 `*.dmg` 后的前缀
+  ——产物挪目录两边同改。
+
+R214 实测：路径现同账，首跑即过（纯钉住，无修复）。总用例
+3245→3249（W44 +2、N3/D1 +2），变异 4/4（yml app 路径改值 / 脚本
+dmg 目录改值 / 脚本 app 名改值，W44b 各自独红；yml `--app-bundle`
+复制一份，W44a 独红）。
+
+边界：只判路径字面同账——不判 dmg 文件名模板（W34 的 aarch64 后缀
+词表已管）、不判 tauri 实际输出布局（tauri 升级行为，CI 负责）、
+不判 verify 的执行行为。
