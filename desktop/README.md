@@ -123,7 +123,7 @@ macOS 候选由 `Desktop macOS` 工作流生成，分别生成 Apple Silicon Cor
 
 桌面端并行检查 R2、GitHub 与 Gitee 的最新发布。相同版本与签名下优先使用 R2；R2 不可用或签名与 GitHub/Gitee 权威发布不一致时，回退原有 GitHub/Gitee 选择规则。所有来源最终都必须通过同一 Tauri 公钥验签，R2 只承载分发流量，不改变 GitHub Tag 和 Release 的版本权威。
 
-正式发布仍先创建 GitHub Release，并同时上传 Core/Full NSIS 安装包、各自同名 `.sig`、SHA-256 文件和 `latest.json`。当仓库变量 `R2_DISTRIBUTION_ENABLED=true` 时，发布任务再调用 `desktop/scripts/publish_r2_release.py`：先上传并公开校验 `desktop/releases/vX/` 下的不可变资产，最后更新 `desktop/stable/latest.json`。同名不可变对象内容不一致时任务会失败，不会覆盖历史版本。R2 凭据只通过 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY` Secret 和 `R2_BUCKET`、`R2_ENDPOINT_URL` Variable 注入。更新签名私钥不得进入 Git，只通过 `TAURI_SIGNING_PRIVATE_KEY` Secret 注入构建。macOS 候选包不进入该更新通道。
+正式发布仍先创建 GitHub Release，并同时上传 Core/Full NSIS 安装包、各自同名 `.sig`、SHA-256 文件和 `latest.json`。当仓库变量 `R2_DISTRIBUTION_ENABLED=true` 时，发布任务再调用 `desktop/scripts/publish_r2_release.py`：先上传并公开校验 `desktop/releases/vX/` 下的不可变资产，最后更新 `desktop/stable/latest.json`。同名不可变对象内容不一致时任务会失败，不会覆盖历史版本。R2 凭据只通过 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY` Secret 和 `R2_BUCKET`、`R2_ENDPOINT_URL`、`R2_PUBLIC_BASE_URL` Variable 注入（`R2_PUBLIC_BASE_URL` 未设置时回落 `https://downloads.determinflow.com`）。更新签名私钥不得进入 Git，只通过 `TAURI_SIGNING_PRIVATE_KEY` Secret 注入构建。macOS 候选包不进入该更新通道。
 
 Full 构建从官方 Plugin 仓库的 `main` Catalog 解析当时全部公开 Plugin，执行声明式资源
 预检后锁定精确 Commit 与内容摘要，再写入安装包。Core 自动更新不重置 Plugin 状态。

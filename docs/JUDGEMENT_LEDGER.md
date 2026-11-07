@@ -2529,3 +2529,30 @@ R194 实测：五源现均为 {core, full}，首跑即过。总用例 3175→317
 矩阵展开行为与 job 数（CI 负责）、不判 flavor 语义（full 多捆绑官方
 插件快照）、不判 verify_bundle 其余参数与校验逻辑。
 
+### 10.67 README R2 分发凭据同账（R195）
+
+`tests/test_desktop_r2_credentials.py` 的 **W30** 把 README 的「只通过
+…注入」凭据清单钉到三份 desktop workflow 的 `secrets.*`/`vars.*` 引用
+上（R192 §3 登记、R195 开工修复——清单漏 `R2_PUBLIC_BASE_URL`，R46
+变量化分发域名时 README 没跟上，先补清单再钉）：
+
+- **W30a 语料守卫**：「桌面更新发布」节恰一处；节内凭据提名
+  （`R2_*`/`TAURI_*` 形状反引号 token，容忍 `=true` 后缀，名字取 `=`
+  前段）可解析非空；「R2 凭据只通过」清单句恰一处（清单被复制/改写
+  成两份时集合不变、只有这里红）；三份 desktop workflow 的
+  `secrets.*`/`vars.*` 引用可解析（desktop-macos.yml 实测无引用，
+  并集非空即可）。
+- **W30b 凭据同账**：README 提名集合 == 三份 workflow 消费集合
+  （双向恰等：workflow 加消费 README 不提名、README 提名 workflow 不
+  消费，都红）。
+
+R195 实测：修复后 README 七名 == workflow 并集七名，首跑即过。总用例
+3179→3183（W30 +2、N3/D1 +2），变异 3/3（README 清单删
+`R2_ENDPOINT_URL` / desktop-windows.yml 消费名改名，W30b 独红；清单句
+复制一份，W30a 独红）。
+
+边界：只判 README「桌面更新发布」节的凭据提名与三份 desktop workflow
+的 `secrets.*`/`vars.*` 引用名——不判 `ci.yml`（实测无引用）、不判
+凭据取值与回落域名字面值、不判 `env:` 里 `R2_*` → `AWS_*` 的别名
+映射（实现细节）、不判 step 执行行为（CI 负责）。
+
