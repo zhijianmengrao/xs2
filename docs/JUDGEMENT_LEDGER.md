@@ -2825,3 +2825,27 @@ R206 实测：三处 call site 的 flag 全部可解析，首跑修正折行正�
 choices 由 W29 钉）、不判 flag 顺序与折行写法、不判脚本执行行为
 （CI 负责）、不判 --forbid-updater-artifacts 等 workflow 侧未用
 option（脚本 API 面不收缩）。
+### 10.79 create_update_manifest 调用面参数同账（R207）
+
+`tests/test_desktop_manifest_flags.py` 的 **W39** 把
+`create_update_manifest.py` 的调用面钉成「flag 多重集 == argparse
+option 集合」的恰等账（R204 §3 登记）：call site 在 desktop workflow
+恰一处（desktop-windows.yml 的 create_update_manifest 步），argparse
+7 option（--version / --installer / --signature / --base-url /
+--notes-file / --pub-date / --output）被 call site 全用：
+
+- **W39a 语料守卫**：call site 恰一处；脚本 argparse 定义非空（锚
+  存在）。
+- **W39b 调用面恰等**：call site 的 flag 多重集 == argparse option
+  集合（sorted 逐字恰等）——漏 flag、错字、重复、脚本侧增删都翻红。
+
+R207 实测：call site 7 flag == option 7 个，首跑修正 flag 提取（只认
+续行行首——`--pub-date` 取值内嵌 `$(git show -s --format=%cI …)`，git
+的 `--format` 被 naive 块内提取误收成第 8 flag）后即过（纯钉住，无
+修复）。总用例 3221→3225（W39 +2、N3/D1 +2），变异 4/4（删 --pub-date
+/ 脚本 --base-url 改名 / 重复 --output，W39b 各自独红；整个 call
+site 复制完整块，W39a 独红——每块各自与 option 集合恰等仍绿）。
+
+边界：只判 flag 名的字面同账——不判 flag 取值（--base-url 的形状由
+W35 钉、--notes-file 引用由 W36 覆盖、--output 文件名由 W35 钉）、
+不判脚本执行行为（CI 负责）。
