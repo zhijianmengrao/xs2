@@ -2405,3 +2405,27 @@ main.rs include_str 指向同目录另一文件（文件存在、目录同账，
 macOS 表行（W26/W27 射程）、不判 frontendDist 的打包行为、不判
 adapter 的运行时行为与测试执行、不判 Rust 侧其他 include_str。
 
+### 10.62 desktop README Windows 表 ↔ desktop-windows.yml（R190）
+
+`tests/test_desktop_windows_runner.py` 的 **W26** 把 Windows 表的 runner
+账钉到 workflow 上（R188 §3 登记）：
+
+- **W26a 语料守卫与路径存在性**：构建/配置/工作流三行各恰一处；runner
+  恰一处 `windows-YYYY` 形状（`windows-latest` 这类浮动标签随微软下线
+  旧镜像会悄悄漂移，不可对账，直接红，强制显式年份进账）；配置行与
+  工作流行路径按仓库根解析后在磁盘；workflow 首个 job 有 `runs-on`
+  字符串值（结构守卫，防首 job 改名/换位让 W26b 的锚落空）。
+- **W26b runner 同账**：README 构建行 runner == workflow 第一个 job
+  （YAML 映射序）的 `runs-on`，逐字相等。
+
+R190 实测：两侧均 `windows-2025`，首跑即过。总用例 3161→3165
+（W26 +2、N3/D1 +2），变异 3/3（README runner 改 `windows-2022` /
+workflow `runs-on` 改 `windows-2022`，W26b 双红；配置行路径改
+`tauri.probe.json`，W26a 独红）。
+
+边界：只判构建/配置/工作流三行与首个 job 的 runner——不判「安装包」
+「更新」两行（W27 射程）、不判 `build-macos` / `release` 两个 job 的
+runner（callable workflow 无自己的 `runs-on`；`release` 是仅 tag 的
+`ubuntu-latest` 发版收尾）、不判矩阵展开行为、不判工作流触发条件与
+step 行为。
+
