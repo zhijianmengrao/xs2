@@ -1,4 +1,4 @@
-# 交接文档总索引（R24–R191）
+# 交接文档总索引（R24–R192）
 
 > 生成：2026-11-04（R131 之后、R132 之前）。用途：一份文件回答四件事——
 > **有哪些轮次、每轮做了什么、文档在哪、还有哪些缺口**。
@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **166 份**（`docs/HANDOVER_ROUND24..191.md`；R34/R35 从未有文档） |
-| 文档体量 | 23,977 行 / 1.3 MB |
-| 当前用例 | **3,169**（R191：W27 +2、N3/D1 因本篇与 R190 回填 +2；R191 树 3141 passed / 28 skipped / 0 failed；本行由 S3 机判） |
-| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42347861422`；R191 翻正，满窗后计数恒 80） |
-| 代码基线 | `main` = `532e389`（R190 提交 + CI 回写；docs 回填见 R190 §6） |
+| 交接文档 | **167 份**（`docs/HANDOVER_ROUND24..192.md`；R34/R35 从未有文档） |
+| 文档体量 | 24,093 行 / 1.3 MB |
+| 当前用例 | **3,171**（R192：N3/D1 因本篇与 R191 回填 +2；R192 树 3143 passed / 28 skipped / 0 failed；本行由 S3 机判） |
+| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42350304034`；R192 翻正，满窗后计数恒 80） |
+| 代码基线 | `main` = `6a1a0f4`（R191 提交 + CI 回写；docs 回填见 R191 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条编号判据（§2 编号表）+ 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -33,7 +33,7 @@
 （`~/.zcode/.../memory/xs2-round-status.md`），外部接手者只能依赖前三者——
 见 §6.4。
 
-## 3. 阶段划分（166 份文档的骨架）
+## 3. 阶段划分（167 份文档的骨架）
 
 | 阶段 | 轮次 | 份数 | 主线 |
 |---|---|---|---|
@@ -62,9 +62,9 @@
 | 四轮连推（十四） | R177–R180 | 4 | 环境检查脚本下限、文档 npm 命令引用面、desktop 默认配置覆盖、收口（四轮完成） |
 | 四轮连推（十五） | R181–R184 | 4 | macOS 最低版本同账、desktop 管线命令引用面、前端构建输出目录同账、收口（四轮完成） |
 | 四轮连推（十六） | R185–R188 | 4 | bundle identifier 同账、README DMG 产物路径同账、README macOS 候选范围 ↔ workflow 矩阵（含文档修复）、收口（四轮完成） |
-| 四轮连推（十七） | R189–R192 | 4 | desktop README 架构表路径同账、Windows 表 runner 同账、README 表 ↔ tauri conf 三键、收口；R192 已登记（R188 §3） |
+| 四轮连推（十七） | R189–R192 | 4 | desktop README 架构表路径同账、Windows 表 runner 同账、README 表 ↔ tauri conf 三键、收口（四轮完成） |
 
-## 4. 全量索引（R24–R191）
+## 4. 全量索引（R24–R192）
 
 日期取文档首次入库的提交日期；主题取标题副标题（R112 起 18 份无副标题，
 按引言首句补；R133 已补齐 19 份含 R129/R132，钉测 `test_docs_navigation.py`
@@ -238,6 +238,7 @@ N3 防复发）。
 | R189 | 2026-11-07 | desktop README 架构表路径同账：W25 | [md](HANDOVER_ROUND189.md) |
 | R190 | 2026-11-07 | desktop README Windows 表 ↔ desktop-windows.yml：W26 | [md](HANDOVER_ROUND190.md) |
 | R191 | 2026-11-07 | desktop README 表 ↔ tauri conf 打包三键：W27 | [md](HANDOVER_ROUND191.md) |
+| R192 | 2026-11-07 | 收口轮：R189–R192 四账 + R193–R196 登记 | [md](HANDOVER_ROUND192.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
@@ -258,7 +259,7 @@ R10–R12 的副本含 BOM 与「〔待补〕」乱码占位符；若从 git 恢
 
 按 §5：**R4–R9 完全无记录；R1–R3 仅合并记录；R10–R23 只剩 git 历史；
 R34/R35 从未有文档**。现行维护入口从 R24 起，R36 已把 R34/R35 的可溯源部分
-补进正文。除此之外，R24–R191 每轮恰好一份，无缺号、无重号。
+补进正文。除此之外，R24–R192 每轮恰好一份，无缺号、无重号。
 
 ### 6.2 回填缺口（CI 写回 run 未记账）——**已在本轮补正文的 4 处**
 

@@ -2455,3 +2455,27 @@ N3/D1 +2），变异 3/3（`targets` 加 `deb` / `installMode` 改
 叙述，登记口径未含）、不判 `nsis` 其余键、不判 `flavor` 矩阵（W24
 射程）、不判打包的执行行为（CI 负责）。
 
+### 10.64 四轮收口（R189–R192）
+
+四轮连推（十七）收口：R189 desktop README 架构表路径同账（W25）、
+R190 desktop README Windows 表 ↔ desktop-windows.yml（W26）、R191
+desktop README 表 ↔ tauri conf 打包三键（W27）。三条判据全部落地，
+三轮变异合计 9/9（3+3+3；收口轮无新判据）。
+
+- W25 把架构表「桌面适配」行的四源路径链（README 架构行 / package.json
+  test script / tauri frontendDist / main.rs include_str! 注入点）钉成
+  字面值 + 同目录同账——登记三锚、开工实测补 main.rs 第四源（W18/W13
+  同型的实测补面）；W26 把 Windows 表构建行 runner 与 workflow 首个
+  job（YAML 映射序）的 runs-on 钉成逐字同账，`windows-YYYY` 形状守卫
+  禁用 `windows-latest` 这类浮动标签；W27 把三行打包声明表与 tauri conf
+  的 targets / createUpdaterArtifacts / installMode 三键钉成集合与值
+  同账——三条都是「钉住本来就对的账」。
+- 总用例 3157→3161→3165→3169→3171。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R193–R196：desktop README 工作流名同账（W28，实测
+  发现真实不一致：README 写 `Desktop macOS candidate`、workflow
+  `name:` 是 `Desktop macOS`）、flavor 词表四源闭包（W29：两份构建
+  脚本 choices + 两份 workflow matrix 现均 {core, full}）、README R2
+  分发凭据同账（W30，实测发现 README「只通过…注入」清单漏
+  `R2_PUBLIC_BASE_URL` Variable）、收口。候选制连续第三批在登记阶段
+  实测抓到真实不一致。
+
