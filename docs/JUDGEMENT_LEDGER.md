@@ -2556,3 +2556,26 @@ R195 实测：修复后 README 七名 == workflow 并集七名，首跑即过。
 凭据取值与回落域名字面值、不判 `env:` 里 `R2_*` → `AWS_*` 的别名
 映射（实现细节）、不判 step 执行行为（CI 负责）。
 
+### 10.68 四轮收口（R193–R196）
+
+四轮连推（十八）收口：R193 desktop README 工作流名同账（W28）、R194
+desktop flavor 词表五源闭包（W29）、R195 README R2 分发凭据同账
+（W30）。三条判据全部落地，三轮变异合计 9/9（3+3+3；收口轮无新
+判据）。
+
+- W28 把 README 引用的桌面工作流名钉到 desktop-*.yml 的 `name:`
+  集合上（词表 {`Desktop macOS`, `Desktop Windows`} + 引用 ∈ 集合
+  双向）——README `Desktop macOS candidate` 先修为 `Desktop macOS`；
+  W29 把 flavor 词表五份文件钉成恰等（开工实测补 verify_bundle.py
+  第五源），两 workflow 矩阵 + 三脚本 choices/运行时集合现均
+  {core, full}；W30 把 README 的 R2/签名凭据提名集合与三份 desktop
+  workflow 的 `secrets.*`/`vars.*` 消费集合钉成双向恰等——「只通过」
+  清单补 `R2_PUBLIC_BASE_URL`（附回落说明）。三条都是「钉住本来就对
+  的账（修复后）」。
+- 总用例 3175→3179→3183→3185。四轮写回都落在第 80 条（满窗滚动）。
+  §3 登记 R197–R200：R2 公网回落域名三源同账（W31）、desktop workflow
+  脚本引用路径逐处可解析（W32，17 处 / 9 脚本）、README R2 发行路径
+  ↔ publish_r2_release.py 两段同账（W33）、收口。R192 登记阶段抓到
+  的两处真实不一致（工作流名、R2 清单）分别在 R193/R195 落地修复——
+  候选制实测先行连续第三批收口闭环。
+
