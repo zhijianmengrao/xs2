@@ -95,14 +95,15 @@ W31 的锚选在「字面值逐字恰等」而不是「模式存在」：模式�
 
 ## 6. CI
 
-- 提交 `<code-sha>` 推送后 run `<run1>`：10 job 预计全 `success`；
-  写回 **第 80 条**（满窗滚动：追加后裁剪最旧一条，history 仍 80 条）。
-  下一轮回填。
+- 提交 **`5ad352f`** 推送后 run **42385614161**：**10 job 全
+  `success`**（15:17:05→15:31:32 UTC，约 14m27s）；写回 **第 80 条**
+  （满窗滚动：追加后裁剪最旧一条，history 仍 80 条；
+  `ci-42385614161`，bot 提交 **`37b72c7`**）。R198 回填。
 
 ## 7. 提交
 
 - 改动：`tests/test_desktop_r2_fallback_domain.py`（W31）、R197 文档、
   R196 §6 回填、`HANDOVER_INDEX.md`（§1 六行 + H1 + §3 阶段行 + §4
   H2/一行 + §6.1）、`PROJECT_INFO.md`（H2 + R197 一条）、
-  `JUDGEMENT_LEDGER.md`（§10.69）。生产代码与测试外零改动。
+  `JUDGEMENT_LEDGER.md`（§10.69）。生产代码零改动。
 - `config/skills_config.json` 不纳入（C1）。

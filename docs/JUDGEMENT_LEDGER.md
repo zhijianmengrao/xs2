@@ -2606,3 +2606,26 @@ R197 实测：三源现同值 `https://downloads.determinflow.com`，首跑即�
 行为（CI 负责）、不判 `vars.R2_PUBLIC_BASE_URL` 取值、不判 R46 注释
 散文（「同款」自述不进射程）、不判 `publish_r2_release.py` 的 URL
 拼装逻辑（`public_object_url` 有自己的判据面）。
+### 10.70 desktop workflow 脚本引用路径逐处可解析（R198）
+
+`tests/test_desktop_workflow_script_refs.py` 的 **W32** 把三份 desktop
+workflow 的 `desktop/scripts/*` 引用钉成「计数恰等 + 逐处可解析」
+（R196 §3 登记）：17 处引用 / 9 个不同脚本（desktop-windows.yml 8、
+desktop-macos.yml 8、replace-desktop-assets.yml 1），V8（R182）只管
+README 侧命令引用面，workflow 侧此前无锚——脚本改名/挪走 CI 到 run
+时才炸：
+
+- **W32a 语料守卫**：三份 workflow 的引用数逐份恰等（8/8/1，合计 17）
+  ——加/删引用先红语料守卫，按文件分桶防「一份删一处、另一份加一处，
+  总数不变」。
+- **W32b 逐处可解析**：每处引用按仓库根 `Path.is_file()` 解析——解析
+  不到显式红，不等 CI run 时才炸。
+
+R198 实测：17 处全部在磁盘，首跑即过（纯钉住，无修复）。总用例
+3189→3193（W32 +2、N3/D1 +2），变异 3/3（macos/replace 引用改名，
+W32b 各自独红；windows 一处引用删 `desktop/` 前缀，W32a 独红——计数
+钉在语料守卫、解析循环不与 17 耦合，变异各自独红）。
+
+边界：只判 `desktop/scripts/` 形状的字面引用——不判脚本内容、不判
+step 执行行为（CI 负责）、不判 README 侧命令引用面（V8 已管）、
+`ci.yml` 实测 0 处引用（非桌面分发面，不进账）。
