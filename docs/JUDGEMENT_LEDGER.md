@@ -2868,3 +2868,25 @@ verify_bundle 调用面参数同账（W38）、R207 create_update_manifest 调�
   smoke_backend 调用面同账（W41）、smoke_installer.ps1 调用面参数
   同账（W42）、收口——desktop workflow 的脚本调用面（9 脚本 17 处，
   W32 的路径账）至此推进到全部 6 个带参数脚本的 flag 账。
+### 10.81 跨平台脚本调用面同账（R209）
+
+`tests/test_desktop_symmetric_script_calls.py` 的 **W40** 把 windows/
+macos 对称调用的两个脚本钉成「计数对称 + 实参逐字同账」（R208 §3
+登记）：build_backend.py 2 处（windows L87 / macos L51，均
+`--flavor ${{ matrix.flavor }}`）、refresh_official_plugin_lock.py
+2 处（windows L66 / macos L45，均 `--check`）：
+
+- **W40a 语料守卫**：两脚本各恰 2 处调用、windows/macos 各恰 1 处
+  ——加/删调用先红语料守卫。
+- **W40b 跨平台同账**：每脚本各处调用的参数尾（脚本路径后的全部
+  实参，空白归一）逐字恰等——一边改 flag/值，另一边没跟当场红。
+
+R209 实测：对称面现同账，首跑即过（纯钉住，无修复）。总用例
+3227→3231（W40 +2、N3/D1 +2），变异 4/4（macos `--flavor` 错拼 /
+windows 丢 `--check`，W40b 各自独红；macos 调用删除 / windows 调用
+复制，W40a 各自独红）。
+
+边界：只判 flag 与实参的字面同账——不判 `--flavor` 取值空间（W29
+的词表已钉）、不判脚本执行行为（CI 负责）、不判其他脚本的非对称
+调用面（smoke_backend 归 W41、smoke_installer.ps1 归 W42、
+verify_bundle/create_update_manifest 已由 W38/W39 钉）。
