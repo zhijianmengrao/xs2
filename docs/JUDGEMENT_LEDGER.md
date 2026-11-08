@@ -3136,3 +3136,24 @@ bundle 段漂移，W49b 各自独红；forbid 行删除 / 复制，W49a 各自�
 边界：只判 forbid 取值与脚本 bundle 前缀的字面同账——不判
 --app-bundle/--dmg（W44 已管）、不判 forbid 的语义（哪些文件算
 updater 资产是 verify_bundle 自己的逻辑）、不判执行行为（CI 负责）。
+### 10.94 核心安装包名两 workflow 同账（R222）
+
+`tests/test_desktop_installer_name.py` 的 **W50** 把核心（core）NSIS
+安装包名的两种占位写法钉成占位归一后逐字恰等（R220 §3 登记）：
+desktop-windows.yml 的 bash 字面
+`installer="release-assets/DeterminFlow_${version}_x64-setup.exe"` ↔
+replace-desktop-assets.yml 的 python 组合
+`installer=assets / f'DeterminFlow_{version}_x64-setup.exe'`：
+
+- **W50a 语料守卫**：两侧各恰一处（值无关形状）。
+- **W50b 安装包名同账**：占位归一（`${version}` → `{version}`）后
+  逐字恰等（两侧都在才判，缺失归 W50a）。
+
+R222 实测：安装包名现同账，首跑即过（纯钉住，无修复）。总用例
+3273→3277（W50 +2、N3/D1 +2），变异 4/4（windows 后缀漂移 / replace
+后缀漂移，W50b 各自独红；windows 赋值删除 / 复制，W50a 各自独红）。
+
+边界：只判核心安装包名的字面同账——不判 full 安装包名（windows 的
+full 走 `${suffix}` 变量，W34 的词表已管）、不判 `.sig`/`.sha256`
+派生名（由安装包名推出）、不判 `release-assets/` 目录前缀（W37 已管）、
+不判执行行为（CI 负责）。
