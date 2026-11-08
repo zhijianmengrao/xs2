@@ -3157,3 +3157,27 @@ R222 实测：安装包名现同账，首跑即过（纯钉住，无修复）。
 full 走 `${suffix}` 变量，W34 的词表已管）、不判 `.sig`/`.sha256`
 派生名（由安装包名推出）、不判 `release-assets/` 目录前缀（W37 已管）、
 不判执行行为（CI 负责）。
+### 10.95 产物名前缀多源同账（R223）
+
+`tests/test_desktop_product_prefix.py` 的 **W51** 把 `DeterminFlow_
+<version>_` 产物名前缀的 7 处出现钉成占位归一后逐字同账（R220 §3
+登记）：replace-desktop-assets.yml 3（L77 name 组合 / L93 installer /
+L94 signature）、build_macos.py 1（L37 dmg 文件名）、desktop-windows.yml
+3（L175/L176 bash 后缀循环、L185 installer 字面）：
+
+- **W51a 语料守卫**：前缀出现数逐份恰等（3/1/3，合计 7；形状容忍
+  `_`/`-` 连接符）。
+- **W51b 前缀同账**：占位归一（`${version}` → `{version}`）后前缀
+  集合 == {`DeterminFlow_{version}_`}——连接符也进账。
+
+R223 实测：前缀现同账，首跑修正 replace 计数（漏 L94 派生名）与连接
+符入账（首版只捕占位符，连接符漂移变异双绿——W43 教训同型再现）后
+即过（纯钉住，无修复）。总用例 3277→3281（W51 +2、N3/D1 +2），变异
+4/4（replace 连接符漂移 / build_macos 连接符漂移，W51b 各自独红；
+windows L185 删除 / 复制，W51a 各自独红）。
+
+边界：只判 `DeterminFlow_<version>_` 前缀的字面同账——不判后缀（W34
+词表已管）、不判 windows L114 的 `DeterminFlow_${version}${suffix}`
+变体（其连接下划线在 $suffix 内，是 PS 重命名步的另一种组合）、不判
+`.sig`/`.sha256` 派生名的存在性（其前缀在本账内）、不判执行行为
+（CI 负责）。
