@@ -3237,3 +3237,23 @@ N3/D1 +2），变异 4/4（volname / app 名 / ProductName 各自漂移，W53b
 边界：只判显示名的字面同账——不判 `.app` 后缀（路径面 W44 已管）、
 不判 `$ProductName` 的查询语义、不判执行行为（CI 负责）、不判其他
 `DeterminFlow` 字面（产物名前缀 W51 已管）。
+### 10.99 安装数据目录标识同账（R227）
+
+`tests/test_desktop_user_data_identifier.py` 的 **W54** 把
+smoke_installer.ps1 的 UserData 目录标识与 tauri.conf.json 的
+identifier 钉成逐字同账（R224 §3 登记）：脚本
+`$UserData = Join-Path $env:LOCALAPPDATA "io.determinflow.desktop"` ↔
+conf `"identifier": "io.determinflow.desktop"`：
+
+- **W54a 语料守卫**：脚本的 UserData 赋值恰一处；conf 的 identifier
+  存在（json.load 解析）。
+- **W54b 标识同账**：两处 id 逐字恰等（存在才判，缺失归 W54a）。
+
+R227 实测：标识现同账，首跑补缺失的 `_text` 辅助后即过（纯钉住，无
+修复）。总用例 3291→3295（W54 +2、N3/D1 +2），变异 4/4（脚本 id 漂移
+/ conf identifier 漂移，W54b 各自独红；UserData 行删除 / 复制，W54a
+各自独红）。
+
+边界：只判标识的字面同账——不判 `LOCALAPPDATA` 的平台语义、不判
+tauri 按 identifier 建目录的运行时行为（tauri 负责）、不判 conf 的
+其他键（W22/W27 已管）、不判执行行为（CI 负责）。
