@@ -3058,3 +3058,23 @@ R217 实测：剥离逻辑现同账，首跑即过（纯钉住，无修复）。
 github.ref_name，CI 负责）、不判 `${RELEASE_TAG#v}` 的 bash 语义、
 不判发布版本与代码版本五源的关系（tag 驱动发版的设计语义，见 R216
 §5 实测观察）。
+### 10.90 macOS 无参前置脚本调用面（R218）
+
+`tests/test_desktop_paramless_scripts.py` 的 **W47** 把
+desktop-macos.yml 的两个无参前置脚本调用钉成「各恰一处 + 真无参」
+（R216 §3 登记）：install_macos_build_dependencies.py（L40）与
+generate_macos_icon.py（L55）。至此 9 脚本调用面（W32 的 17 处路径账）
+全部有参数/计数账（W38–W45 钉带参脚本，W47 收口无参脚本）：
+
+- **W47a 语料守卫**：两脚本各恰 1 处调用——加/删调用先红语料守卫。
+- **W47b 无参同账**：存在的调用的参数尾为空——任何一方加参显式红
+  （调用缺失归 W47a，W47b 不做存在守卫）。
+
+R218 实测：调用面现同账，首跑修正存在守卫耦合（首版 `assert tails`
+让「删调用」变异双红）后即过（纯钉住，无修复）。总用例 3259→3263
+（W47 +2、N3/D1 +2），变异 4/4（install 加 `--verbose` / icon 加
+`--force`，W47b 各自独红；icon 删除 / install 复制，W47a 各自独红）。
+
+边界：只判调用计数与无参形状——不判脚本内部行为（CI 负责）、不判
+脚本间执行顺序（step 顺序是 workflow 结构账）、不判 windows 侧（两
+脚本都是 macOS 专属，desktop-windows.yml 实测 0 处）。
