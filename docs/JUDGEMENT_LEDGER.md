@@ -3272,3 +3272,23 @@ R226 应用显示名两脚本同账（W53）、R227 安装数据目录标识同�
   滚动）。§3 登记 R229–R232：smoke_installer flavor 参数自洽（W55）、
   installer 步 outputs 定义 == 消费（W56）、replace workflow inputs
   定义 == 消费（W57）、收口。
+### 10.101 smoke_installer flavor 参数自洽（R229）
+
+`tests/test_desktop_smoke_flavor_default.py` 的 **W55** 把
+smoke_installer.ps1 的 `$Flavor` 默认值钉进 ValidateSet 集合账（R228
+§3 登记；W42 已钉集合恰等 {core, full}）：
+
+- **W55a 语料守卫**：默认值赋值（`[string]$Flavor = "…"`）恰一处；
+  ValidateSet 恰一处。
+- **W55b 默认值自洽**：默认值 ∈ ValidateSet 集合（存在才判，缺失
+  归 W55a）。
+
+R229 实测：默认值现自洽（core ∈ {core, full}），首跑把 W55b 改成
+存在才判（首版 `[0]` 索引让「删除」变异双红）后即过（纯钉住，无
+修复）。总用例 3297→3301（W55 +2、N3/D1 +2），变异 4/4（默认值改
+集合外的 "complete"，W55b 独红；默认值赋值删除 / 复制 / ValidateSet
+删除，W55a 各自独红）。
+
+边界：只判默认值 ∈ 集合的字面同账——不判 ValidateSet 集合的内容
+（W42 已管恰等）、不判 PowerShell 的参数绑定语义、不判执行行为
+（CI 负责）。
