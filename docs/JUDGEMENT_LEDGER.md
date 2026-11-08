@@ -3039,3 +3039,22 @@ run 面）、不判 `npm exec tauri` 直调（tauri CLI 面）、不判执行行
   最新 v1.1.1——发版是 tag 驱动（workflow 从 tag 剥版本），conf
   version 只是默认值；「发布版本 vs 代码版本」的语义需维护者拍板，
   登记面不越权。
+### 10.89 tag→version 剥离逻辑同账（R217）
+
+`tests/test_desktop_tag_version_strip.py` 的 **W46** 把
+desktop-windows.yml 的 `version="${RELEASE_TAG#v}"`（tag 剥 v 得版本
+号）三处复制钉成逐字恰等（R216 §3 登记）：bash 后缀循环（L172）、
+create_update_manifest（L184）、publish_r2_release（L223）：
+
+- **W46a 语料守卫**：剥离赋值恰 3 处——加/删/改写先红语料守卫。
+- **W46b 剥离逻辑同账**：3 处逐字恰等（集合大小 1）——改剥离逻辑
+  三处同改，否则同一 tag 的清单/资产版本分叉。
+
+R217 实测：剥离逻辑现同账，首跑即过（纯钉住，无修复）。总用例
+3255→3259（W46 +2、N3/D1 +2），变异 4/4（一处改 `${RELEASE_TAG:1}`
+写法，W46b 独红；一处丢剥离 / 一处删除 / 加第四处，W46a 各自独红）。
+
+边界：只判该赋值语句的字面同账——不判 tag 的取值（RELEASE_TAG 来自
+github.ref_name，CI 负责）、不判 `${RELEASE_TAG#v}` 的 bash 语义、
+不判发布版本与代码版本五源的关系（tag 驱动发版的设计语义，见 R216
+§5 实测观察）。

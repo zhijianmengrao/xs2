@@ -1,4 +1,4 @@
-# 交接文档总索引（R24–R216）
+# 交接文档总索引（R24–R217）
 
 > 生成：2026-11-04（R131 之后、R132 之前）。用途：一份文件回答四件事——
 > **有哪些轮次、每轮做了什么、文档在哪、还有哪些缺口**。
@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **191 份**（`docs/HANDOVER_ROUND24..216.md`；R34/R35 从未有文档） |
-| 文档体量 | 26,607 行 / 1.5 MB |
-| 当前用例 | **3,255**（R216：N3/D1 因本篇与 R215 回填 +2；R216 树 3227 passed / 28 skipped / 0 failed；本行由 S3 机判） |
-| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42429544990`；R216 翻正，满窗后计数恒 80） |
-| 代码基线 | `main` = `4493462`（R215 提交 + CI 回写；docs 回填见 R215 §6） |
+| 交接文档 | **192 份**（`docs/HANDOVER_ROUND24..217.md`；R34/R35 从未有文档） |
+| 文档体量 | 26,700 行 / 1.5 MB |
+| 当前用例 | **3,259**（R217：W46 +2、N3/D1 因本篇与 R216 回填 +2；R217 树 3231 passed / 28 skipped / 0 failed；本行由 S3 机判） |
+| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42432050406`；R217 翻正，满窗后计数恒 80） |
+| 代码基线 | `main` = `aacd04a`（R216 提交 + CI 回写；docs 回填见 R216 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条编号判据（§2 编号表）+ 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -33,7 +33,7 @@
 （`~/.zcode/.../memory/xs2-round-status.md`），外部接手者只能依赖前三者——
 见 §6.4。
 
-## 3. 阶段划分（191 份文档的骨架）
+## 3. 阶段划分（192 份文档的骨架）
 
 | 阶段 | 轮次 | 份数 | 主线 |
 |---|---|---|---|
@@ -69,8 +69,9 @@
 | 四轮连推（二十一） | R205–R208 | 4 | gh release 上传面同账（W37）、verify_bundle 调用面参数同账（W38）、create_update_manifest 调用面参数同账（W39）、收口（四轮完成） |
 | 四轮连推（二十二） | R209–R212 | 4 | 跨平台脚本调用面同账（W40）、smoke_backend 调用面同账（W41）、smoke_installer.ps1 调用面参数同账（W42）、收口（四轮完成） |
 | 四轮连推（二十三） | R213–R216 | 4 | R2 分发门控变量同账（W43）、macOS 产物路径前缀同账（W44）、desktop workflow npm script 调用面（W45）、收口（四轮完成） |
+| 四轮连推（二十四） | R217–R220 | 4 | tag→version 剥离逻辑同账（W46）、macOS 无参前置脚本调用面（W47）、backend 安装段同账（W48）、收口（四轮完成） |
 
-## 4. 全量索引（R24–R216）
+## 4. 全量索引（R24–R217）
 
 日期取文档首次入库的提交日期；主题取标题副标题（R112 起 18 份无副标题，
 按引言首句补；R133 已补齐 19 份含 R129/R132，钉测 `test_docs_navigation.py`
@@ -269,6 +270,7 @@ N3 防复发）。
 | R214 | 2026-11-08 | macOS 产物路径前缀同账：W44 | [md](HANDOVER_ROUND214.md) |
 | R215 | 2026-11-08 | desktop workflow npm script 调用面：W45 | [md](HANDOVER_ROUND215.md) |
 | R216 | 2026-11-08 | 收口轮：R213–R216 四账 + R217–R220 登记 | [md](HANDOVER_ROUND216.md) |
+| R217 | 2026-11-08 | tag→version 剥离逻辑同账：W46 | [md](HANDOVER_ROUND217.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
@@ -289,7 +291,7 @@ R10–R12 的副本含 BOM 与「〔待补〕」乱码占位符；若从 git 恢
 
 按 §5：**R4–R9 完全无记录；R1–R3 仅合并记录；R10–R23 只剩 git 历史；
 R34/R35 从未有文档**。现行维护入口从 R24 起，R36 已把 R34/R35 的可溯源部分
-补进正文。除此之外，R24–R216 每轮恰好一份，无缺号、无重号。
+补进正文。除此之外，R24–R217 每轮恰好一份，无缺号、无重号。
 
 ### 6.2 回填缺口（CI 写回 run 未记账）——**已在本轮补正文的 4 处**
 
