@@ -2996,3 +2996,27 @@ dmg 目录改值 / 脚本 app 名改值，W44b 各自独红；yml `--app-bundle`
 边界：只判路径字面同账——不判 dmg 文件名模板（W34 的 aarch64 后缀
 词表已管）、不判 tauri 实际输出布局（tauri 升级行为，CI 负责）、
 不判 verify 的执行行为。
+### 10.87 desktop workflow npm script 调用面（R215）
+
+`tests/test_desktop_npm_scripts.py` 的 **W45** 把 desktop workflows
+的 `npm run <X>` 调用面钉成「计数恰等 + script 名可解析」（R212 §3
+登记）：desktop-macos.yml 2 处（`npm ci && npm run build` L48、
+`npm run build:macos -- --flavor …` L58）、desktop-windows.yml 2 处
+（`npm run build` L83/L99），desktop/package.json scripts 实测
+{build, build:macos, tauri, test}：
+
+- **W45a 语料守卫**：`npm run` 调用逐份恰等（2/2，合计 4）——加/删
+  调用先红语料守卫。
+- **W45b 调用面同账**：每个 `npm run <X>` 的 `<X>` ∈ package.json
+  `scripts` 键集合（json.load 解析；build/build:macos 基础键显式
+  存在）。
+
+R215 实测：调用面现可解析，首跑即过（纯钉住，无修复）。总用例
+3249→3253（W45 +2、N3/D1 +2），变异 4/4（macos `build:macos` 改名 /
+package.json `build` 改名，W45b 各自独红；windows 调用删除 / macos
+调用复制，W45a 各自独红）。
+
+边界：只判 script 名可解析——不判 script 内容（package.json 的
+build/tauri 命令行是各 script 自己的账）、不判 `npm ci`（不是 npm
+run 面）、不判 `npm exec tauri` 直调（tauri CLI 面）、不判执行行为
+（CI 负责）。
