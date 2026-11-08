@@ -3214,3 +3214,26 @@ R225 实测：最高版本现同账（v1.1.1），首跑修正缺失的 `_text` 
 
 边界：只判最高版本的同账——不判目录里的历史文件是否都被引用（旧
 日志无需叙述）、不判日志内容、不判 tag 与日志的对应（发版流程负责）。
+### 10.98 应用显示名两脚本同账（R226）
+
+`tests/test_desktop_display_name.py` 的 **W53** 把应用显示名
+"DeterminFlow" 的三处来源钉成逐字同账（R224 §3 登记）：build_macos.py
+的 `hdiutil create -volname "DeterminFlow"`（DMG 卷名）与
+`app = bundle / "macos" / "DeterminFlow.app"`（app 产物名段）、
+smoke_installer.ps1 的 `$ProductName = "DeterminFlow"`（DisplayName
+查找名）：
+
+- **W53a 语料守卫**：volname 行 / app 产物行 / ProductName 行各恰
+  一处。
+- **W53b 显示名同账**：三处名字逐字恰等（== "DeterminFlow"；存在
+  才判，缺失归 W53a）。
+
+R226 实测：显示名现同账，首跑拆计数守卫（首版 `_names()` 的 count
+断言被 W53b 共用，「ProductName 复制」变异双红——拆 `_first_names()`
+只守存在）后即过（纯钉住，无修复）。总用例 3287→3291（W53 +2、
+N3/D1 +2），变异 4/4（volname / app 名 / ProductName 各自漂移，W53b
+各自独红；ProductName 行复制，W53a 独红）。
+
+边界：只判显示名的字面同账——不判 `.app` 后缀（路径面 W44 已管）、
+不判 `$ProductName` 的查询语义、不判执行行为（CI 负责）、不判其他
+`DeterminFlow` 字面（产物名前缀 W51 已管）。
