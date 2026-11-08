@@ -3118,3 +3118,21 @@ macOS 无参前置脚本调用面（W47）、R219 backend 安装段同账（W48�
 - 总用例 3255→3259→3263→3267→3269。四轮写回都落在第 80 条（满窗
   滚动）。§3 登记 R221–R224：verify 调用第三段同账（W49）、核心安装
   包名两 workflow 同账（W50）、产物名前缀多源同账（W51）、收口。
+### 10.93 verify 调用第三段同账（R221）
+
+`tests/test_desktop_forbid_bundle_path.py` 的 **W49** 把
+desktop-macos.yml verify 调用的第三段路径（`--forbid-updater-artifacts`
+取值）钉进 build_macos.py 的 bundle 前缀账（R220 §3 登记；W44 已钉
+--app-bundle/--dmg 两段）：
+
+- **W49a 语料守卫**：forbid 取值恰一处；脚本 bundle 组合行恰一处。
+- **W49b 第三段同账**：forbid 取值 == 脚本拼出的 bundle 前缀（存在
+  才判，缺失归 W49a）。
+
+R221 实测：三段现同账，首跑即过（纯钉住，无修复）。总用例
+3269→3273（W49 +2、N3/D1 +2），变异 4/4（yml forbid 取值漂移 / 脚本
+bundle 段漂移，W49b 各自独红；forbid 行删除 / 复制，W49a 各自独红）。
+
+边界：只判 forbid 取值与脚本 bundle 前缀的字面同账——不判
+--app-bundle/--dmg（W44 已管）、不判 forbid 的语义（哪些文件算
+updater 资产是 verify_bundle 自己的逻辑）、不判执行行为（CI 负责）。
