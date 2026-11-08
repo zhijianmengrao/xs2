@@ -3020,3 +3020,22 @@ package.json `build` 改名，W45b 各自独红；windows 调用删除 / macos
 build/tauri 命令行是各 script 自己的账）、不判 `npm ci`（不是 npm
 run 面）、不判 `npm exec tauri` 直调（tauri CLI 面）、不判执行行为
 （CI 负责）。
+### 10.88 四轮收口（R213–R216）
+
+四轮连推（二十三）收口：R213 R2 分发门控变量同账（W43）、R214 macOS
+产物路径前缀同账（W44）、R215 desktop workflow npm script 调用面
+（W45）。三条判据全部「钉住本来就对的账」，三轮变异合计 12/12
+（4+4+4；收口轮无新判据）。
+
+- W43 把 R2 门控钉成两 workflow 条件全文（含运算符）恰等 + README
+  值集合同账（首版只比值不比运算符，`!=` 变异双绿——「变异全绿要查
+  原因」的新教训）；W44 把 macOS 产物路径钉成脚本段 join ↔ yml 字面
+  两段同账；W45 把 workflow npm script 调用面钉成计数 2/2 + script
+  名 ∈ package.json scripts（基础键显式存在防双绿）。
+- 总用例 3241→3245→3249→3253→3255。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R217–R220：tag→version 剥离逻辑同账（W46）、macOS
+  无参前置脚本调用面（W47）、backend 安装段同账（W48）、收口。
+- 实测观察（不当缺口修）：desktop 代码版本五源 1.0.2 而 release-notes
+  最新 v1.1.1——发版是 tag 驱动（workflow 从 tag 剥版本），conf
+  version 只是默认值；「发布版本 vs 代码版本」的语义需维护者拍板，
+  登记面不越权。
