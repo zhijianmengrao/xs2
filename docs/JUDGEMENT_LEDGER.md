@@ -3078,3 +3078,28 @@ R218 实测：调用面现同账，首跑修正存在守卫耦合（首版 `asse
 边界：只判调用计数与无参形状——不判脚本内部行为（CI 负责）、不判
 脚本间执行顺序（step 顺序是 workflow 结构账）、不判 windows 侧（两
 脚本都是 macOS 专属，desktop-windows.yml 实测 0 处）。
+### 10.91 backend 安装段同账（R219）
+
+`tests/test_desktop_backend_install_segment.py` 的 **W48** 把
+`build_backend.py` 的 backend 安装段与 `desktop-macos.yml` 两处 smoke
+定位段的字面路径钉成同账（R216 §3 登记）：脚本
+`runtime_root = desktop_root / "runtime"` / `backend_dir =
+runtime_root / "backend"` / 可执行名三元（非 win32 名
+`determinflow-backend`）↔ yml 两处
+`…/Contents/Resources/runtime/backend/determinflow-backend`：
+
+- **W48a 语料守卫**：脚本两行 + 可执行名三元各恰一处；yml 的
+  `runtime/backend…` 段恰 2 处（段形状值无关）。
+- **W48b 段名同账**：yml 两处全段 == 脚本拼出的
+  `runtime/backend/determinflow-backend`——打包资源布局挪动两边同改。
+
+R219 实测：段名现同账，首跑修正段提取（L78 路径带引号被 `\S+` 误收
+尾引号；形状改值无关让 `backend-x` 变体进形状归 W48b 判值）后即过
+（纯钉住，无修复）。总用例 3263→3267（W48 +2、N3/D1 +2），变异 4/4
+（yml L67 段漂移 / 脚本 backend_dir 改名 / yml L78 可执行名漂移，
+W48b 各自独红；yml L67 删除，W48a 独红）。
+
+边界：只判段名与可执行名的字面同账——不判 win32 侧的 `.exe` 名
+（windows smoke 直接调 onedir 产物，另账）、不判 `Contents/Resources`
+前缀（tauri 打包布局，tauri 升级行为）、不判 smoke 的执行行为（CI
+负责）。
