@@ -3292,3 +3292,24 @@ R229 实测：默认值现自洽（core ∈ {core, full}），首跑把 W55b 改
 边界：只判默认值 ∈ 集合的字面同账——不判 ValidateSet 集合的内容
 （W42 已管恰等）、不判 PowerShell 的参数绑定语义、不判执行行为
 （CI 负责）。
+### 10.102 installer 步 outputs 定义 == 消费（R230）
+
+`tests/test_desktop_installer_outputs.py` 的 **W56** 把
+desktop-windows.yml installer 步的 GITHUB_OUTPUT 定义与消费点钉成
+双向恰等（R228 §3 登记）：定义三行（path/checksum/signature，L121–123）
+↔ 消费四处（smoke_installer 的 outputs.path L127、upload-artifact 的
+三个 L142–144）：
+
+- **W56a 语料守卫**：定义块恰 3 行。
+- **W56b 定义 == 消费（双向）**：定义键集合 == 消费键集合——消费
+  未定义（引用打错）与定义未消费（死输出）都红。
+
+R230 实测：输出键现同账，首跑修正定义正则的引号位置（`>>` 在引号
+外，首版写进引号内提取 0 行）后即过（纯钉住，无修复）。总用例
+3301→3305（W56 +2、N3/D1 +2），变异 4/4（消费错拼 / 定义错拼，W56b
+各自独红；checksum 定义删除——计数与集合同时断的双红；复制，W56a
+独红）。
+
+边界：只判输出键名的字面同账——不判输出的取值（`$installer.FullName`
+的解析是 PowerShell 运行时）、不判 artifact 的上传行为（CI 负责）、
+不判其他 step 的 outputs（smoke 步没有 outputs）。
