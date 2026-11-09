@@ -1,4 +1,4 @@
-# 交接文档总索引（R24–R231）
+# 交接文档总索引（R24–R232）
 
 > 生成：2026-11-04（R131 之后、R132 之前）。用途：一份文件回答四件事——
 > **有哪些轮次、每轮做了什么、文档在哪、还有哪些缺口**。
@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **206 份**（`docs/HANDOVER_ROUND24..231.md`；R34/R35 从未有文档） |
-| 文档体量 | 28,057 行 / 1.5 MB |
-| 当前用例 | **3,309**（R231：W57 +2、N3/D1 因本篇与 R230 回填 +2；R231 树 3281 passed / 28 skipped / 0 failed；本行由 S3 机判） |
-| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42464619245`；R231 翻正，满窗后计数恒 80） |
-| 代码基线 | `main` = `f4c62cc`（R230 提交 + CI 回写；docs 回填见 R230 §6） |
+| 交接文档 | **207 份**（`docs/HANDOVER_ROUND24..232.md`；R34/R35 从未有文档） |
+| 文档体量 | 28,162 行 / 1.6 MB |
+| 当前用例 | **3,311**（R232：收口轮无新判据，N3/D1 因本篇与 R231 回填 +2；R232 树 3283 passed / 28 skipped / 0 failed；本行由 S3 机判） |
+| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42558804151`；R232 翻正，满窗后计数恒 80） |
+| 代码基线 | `main` = `4d6a597`（R231 提交 + CI 回写；docs 回填见 R231 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条编号判据（§2 编号表）+ 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -33,7 +33,7 @@
 （`~/.zcode/.../memory/xs2-round-status.md`），外部接手者只能依赖前三者——
 见 §6.4。
 
-## 3. 阶段划分（206 份文档的骨架）
+## 3. 阶段划分（207 份文档的骨架）
 
 | 阶段 | 轮次 | 份数 | 主线 |
 |---|---|---|---|
@@ -74,7 +74,7 @@
 | 四轮连推（二十六） | R225–R228 | 4 | community-updates 当前正式版同账（W52）、应用显示名两脚本同账（W53）、安装数据目录标识同账（W54）、收口（四轮完成） |
 | 四轮连推（二十七） | R229–R232 | 4 | smoke_installer flavor 参数自洽（W55）、installer 步 outputs 定义 == 消费（W56）、replace workflow inputs 定义 == 消费（W57）、收口（四轮完成） |
 
-## 4. 全量索引（R24–R231）
+## 4. 全量索引（R24–R232）
 
 日期取文档首次入库的提交日期；主题取标题副标题（R112 起 18 份无副标题，
 按引言首句补；R133 已补齐 19 份含 R129/R132，钉测 `test_docs_navigation.py`
@@ -288,6 +288,7 @@ N3 防复发）。
 | R229 | 2026-11-08 | smoke_installer flavor 参数自洽：W55 | [md](HANDOVER_ROUND229.md) |
 | R230 | 2026-11-08 | installer 步 outputs 定义 == 消费：W56 | [md](HANDOVER_ROUND230.md) |
 | R231 | 2026-11-09 | replace workflow inputs 定义 == 消费：W57 | [md](HANDOVER_ROUND231.md) |
+| R232 | 2026-11-09 | 收口轮：R229–R232 四账 + R233–R236 登记 | [md](HANDOVER_ROUND232.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
@@ -308,7 +309,7 @@ R10–R12 的副本含 BOM 与「〔待补〕」乱码占位符；若从 git 恢
 
 按 §5：**R4–R9 完全无记录；R1–R3 仅合并记录；R10–R23 只剩 git 历史；
 R34/R35 从未有文档**。现行维护入口从 R24 起，R36 已把 R34/R35 的可溯源部分
-补进正文。除此之外，R24–R231 每轮恰好一份，无缺号、无重号。
+补进正文。除此之外，R24–R232 每轮恰好一份，无缺号、无重号。
 
 ### 6.2 回填缺口（CI 写回 run 未记账）——**已在本轮补正文的 4 处**
 

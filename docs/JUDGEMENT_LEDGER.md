@@ -3333,3 +3333,18 @@ windows_run 定义复制，W57a 独红）。
 边界：只判输入名的字面同账——不判 description/required 等其余键、
 不判 `gh api` 的运行时校验（脚本负责）、不判 workflow 触发与下载
 行为（CI 负责）。
+### 10.104 四轮收口（R229–R232）
+
+四轮连推（二十七）收口：R229 smoke_installer flavor 参数自洽（W55）、
+R230 installer 步 outputs 定义 == 消费（W56）、R231 replace workflow
+inputs 定义 == 消费（W57）。三条判据全部「钉住本来就对的账」，三轮
+变异合计 12/12（4+4+4；收口轮无新判据）。
+
+- W55 把 `$Flavor` 默认值钉进 ValidateSet 集合账（存在才判，缺失归
+  W55a）；W56 把 installer 步三个 GITHUB_OUTPUT 定义与四处消费钉成
+  双向恰等；W57 把 workflow_dispatch 两个输入定义与两处 `inputs.*`
+  消费钉成双向恰等（表达式修饰容忍）。
+- 总用例 3297→3301→3305→3309→3311。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R233–R236：replace workflow release 步 outputs 定义
+  == 消费（W58）、create_manifest import 调用面同账（W59）、
+  publish_r2_release 调用面同账（W60）、收口。
