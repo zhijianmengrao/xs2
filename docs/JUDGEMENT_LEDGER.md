@@ -3390,3 +3390,23 @@ notes 删除，W59b 各自独红；调用块复制 / 自调用删除，W59a 各�
 边界：只判 kwarg 名的字面同账——不判取值（version/notes 等由其他
 判据负责）、不判 `create_manifest` 的执行行为（CI 负责）、不判 CLI
 面（W39 已钉 desktop-windows.yml 的 flag）。
+### 10.107 publish_r2_release 调用面同账（R235）
+
+`tests/test_desktop_publish_call_site.py` 的 **W60** 把两处
+`publish_r2_release.py` 调用面钉成「⊆ argparse + 差集恰等」（R232 §3
+登记）：argparse 9 个 option（L196–204）↔ desktop-windows.yml（L225，
+7 flags）与 replace-desktop-assets.yml（L132，8 flags）：
+
+- **W60a 语料守卫**：两 workflow 各恰一处调用；argparse 定义非空。
+- **W60b 调用面同账**：每处 flags ⊆ argparse option 集合；两处调用面
+  的对称差恰 == {--revision}（补发通道语义）。
+
+R235 实测：调用面现同账，首跑即过（纯钉住，无修复）。总用例
+3319→3323（W60 +2、N3/D1 +2），变异 4/4（windows flag 错拼 /
+replace 丢 --revision / 脚本 option 改名，W60b 各自独红；windows
+调用块复制，W60a 独红——均单红）。
+
+边界：只判 flag 名的字面同账——不判取值（bucket/endpoint 由 W30/W31
+负责）、不判脚本执行行为（CI 负责）、不判 required/default
+（argparse 自身负责）。`--aws-binary` 有默认值且两处都不用，故用
+「⊆ + 差集」而非「恰等」。
