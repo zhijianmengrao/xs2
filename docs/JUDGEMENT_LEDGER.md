@@ -3348,3 +3348,23 @@ inputs 定义 == 消费（W57）。三条判据全部「钉住本来就对的账
   滚动）。§3 登记 R233–R236：replace workflow release 步 outputs 定义
   == 消费（W58）、create_manifest import 调用面同账（W59）、
   publish_r2_release 调用面同账（W60）、收口。
+### 10.105 replace workflow release 步 outputs 定义 == 消费（R233）
+
+`tests/test_desktop_replace_outputs.py` 的 **W58** 把
+replace-desktop-assets.yml release 步的 GITHUB_OUTPUT 定义与消费点
+钉成双向恰等（R232 §3 登记）：定义一行 `f.write`（L105，字面 `\n`
+分三行：version/tag/pub_date）↔ 消费四处（`steps.release.outputs.tag`
+L110 / `.version` L128 / `.tag` L129 / `.pub_date` L130）：
+
+- **W58a 语料守卫**：定义恰一处 f.write、恰 3 个键行。
+- **W58b 定义 == 消费（双向）**：定义键集合 == 消费键集合——消费
+  未定义（发布上传拿到空值）与定义未消费（死输出）都红。
+
+R233 实测：输出键现同账，首跑即过（纯钉住，无修复）。总用例
+3311→3315（W58 +2、N3/D1 +2），变异 4/4（消费错拼 / 消费行删除，
+W58b 各自独红；tag 定义删除——计数与集合同时断的双红；tag 定义
+复制，W58a 独红）。
+
+边界：只判输出键名的字面同账——不判键值（version/tag/stamp 的取值
+由其他判据与脚本负责）、不判 `gh release`/`publish_r2_release` 行为
+（CI 负责）、不判其余 step 的 outputs。
