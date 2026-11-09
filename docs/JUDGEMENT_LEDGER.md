@@ -3368,3 +3368,25 @@ W58b 各自独红；tag 定义删除——计数与集合同时断的双红；ta
 边界：只判输出键名的字面同账——不判键值（version/tag/stamp 的取值
 由其他判据与脚本负责）、不判 `gh release`/`publish_r2_release` 行为
 （CI 负责）、不判其余 step 的 outputs。
+### 10.106 create_manifest import 调用面同账（R234）
+
+`tests/test_desktop_manifest_import_call.py` 的 **W59** 把
+replace-desktop-assets.yml 的 `create_manifest` import 调用面钉成三方
+恰等（R232 §3 登记）：workflow 调用 6 个 kwarg（version / installer /
+signature / base_url / notes / pub_date，L92–97）↔ 函数 keyword-only
+形参（create_update_manifest.py L11–18）↔ 脚本 main() 自调用同 6 键
+（L53–60）：
+
+- **W59a 语料守卫**：workflow 调用恰 1 处；函数定义恰 1 处且 kwonly
+  非空；自调用恰 1 处。
+- **W59b 调用面恰等**：两处调用的 kwarg 集合 == 函数 keyword-only
+  形参集合（逐字恰等；遍历现有调用判值，缺失归 W59a）。
+
+R234 实测：调用面现同账，首跑即过（纯钉住，无修复）。总用例
+3315→3319（W59 +2、N3/D1 +2），变异 4/4（workflow kwarg 错拼 /
+notes 删除，W59b 各自独红；调用块复制 / 自调用删除，W59a 各自独红
+——均单红，无 `[0]` 索引双红）。
+
+边界：只判 kwarg 名的字面同账——不判取值（version/notes 等由其他
+判据负责）、不判 `create_manifest` 的执行行为（CI 负责）、不判 CLI
+面（W39 已钉 desktop-windows.yml 的 flag）。
