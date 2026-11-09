@@ -3410,3 +3410,20 @@ replace 丢 --revision / 脚本 option 改名，W60b 各自独红；windows
 负责）、不判脚本执行行为（CI 负责）、不判 required/default
 （argparse 自身负责）。`--aws-binary` 有默认值且两处都不用，故用
 「⊆ + 差集」而非「恰等」。
+### 10.108 四轮收口（R233–R236）
+
+四轮连推（二十八）收口：R233 replace workflow release 步 outputs 定义
+== 消费（W58）、R234 create_manifest import 调用面同账（W59）、
+R235 publish_r2_release 调用面同账（W60）。三条判据全部「钉住本来就
+对的账」，三轮变异合计 12/12（4+4+4；收口轮无新判据）。
+
+- W58 把 release 步三个 GITHUB_OUTPUT 定义（单个 f.write，字面 `\n`
+  分行）与四处消费钉成双向恰等；W59 把 import 调用面钉成三方恰等
+  （workflow 调用 / 脚本自调用 / keyword-only 形参，ast 侧提取，W59b
+  不做出席守卫）；W60 把两处调用面钉成「⊆ argparse + 对称差恰
+  {--revision}」（先剥 `$(…)`）。
+- 总用例 3311→3315→3319→3323→3325。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R237–R240：replace workflow provenance 步 env 定义
+  == os.environ 消费（W61）、replace workflow 资产目录名四源同账
+  （W62）、replace 下载清单 ↔ 两 producer artifact 名同账（W63）、
+  收口。
