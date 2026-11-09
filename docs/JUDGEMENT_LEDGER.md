@@ -3313,3 +3313,23 @@ R230 实测：输出键现同账，首跑修正定义正则的引号位置（`>>
 边界：只判输出键名的字面同账——不判输出的取值（`$installer.FullName`
 的解析是 PowerShell 运行时）、不判 artifact 的上传行为（CI 负责）、
 不判其他 step 的 outputs（smoke 步没有 outputs）。
+### 10.103 replace workflow inputs 定义 == 消费（R231）
+
+`tests/test_desktop_replace_inputs.py` 的 **W57** 把
+replace-desktop-assets.yml 的 `workflow_dispatch.inputs` 定义与消费点
+钉成双向恰等（R228 §3 登记）：定义两个键（windows_run L6 / macos_run
+L9）↔ 消费两处（provenance 步 env 的 `WINDOWS_RUN` L33 / `MACOS_RUN`
+L34）：
+
+- **W57a 语料守卫**：inputs 块恰 2 个键行（`      <key>:` 形状）。
+- **W57b 定义 == 消费（双向）**：定义键集合 == 消费键集合——消费
+  未定义（gh 拿到空 run id）与定义未消费（死输入）都红。
+
+R231 实测：输入名现同账，首跑即过（纯钉住，无修复）。总用例
+3305→3309（W57 +2、N3/D1 +2），变异 4/4（消费错拼 / 消费行删除，
+W57b 各自独红；macos_run 定义删除——计数与集合同时断的双红；
+windows_run 定义复制，W57a 独红）。
+
+边界：只判输入名的字面同账——不判 description/required 等其余键、
+不判 `gh api` 的运行时校验（脚本负责）、不判 workflow 触发与下载
+行为（CI 负责）。
