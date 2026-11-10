@@ -3453,3 +3453,26 @@ W61a 独红）。
 钉输入名）、不判 `os.environ['GITHUB_*']` 直接读取（runner 注入）、
 不判 `gh api` 的运行时校验（脚本负责）、不判 workflow 触发与下载
 行为（CI 负责）。
+
+### 10.110 replace workflow 资产目录名四源同账（R238）
+
+`tests/test_desktop_replace_assets_dir.py` 的 **W62** 把
+replace-desktop-assets.yml 里「发版资产暂存目录」字面
+`release-assets` 的四个来源钉成逐字恰等（R236 §3 登记）：shell 建目录
+`mkdir -p release-assets`（L36）、gh 下载目录 `'--dir',
+'release-assets'`（L58）、清单脚本读取 `Path('release-assets')`
+（L71）、R2 发布实参 `--assets-dir release-assets`（L133）。W37 只钉
+gh release upload 的 `release-assets/*` 实参，不钉这四源：
+
+- **W62a 语料守卫**：四种来源形状各恰 1 处。
+- **W62b 四源逐字恰等**：四源提取值的并集 == {release-assets}——下载
+  目录与读取目录分叉（资产校验/清单生成失败）或发布目录分叉（R2 上传
+  半套产物）都红。
+
+R238 实测：四源现同账，首跑即过（纯钉住，无修复）。总用例
+3329→3333（W62 +2、N3/D1 +2），变异 4/4（mkdir / `--dir` / `Path()` /
+`--assets-dir` 四源各改一处，W62b 各自独红、W62a 全绿）。
+
+边界：只判目录名的字面同账——不判目录内文件（expected 集合由 release
+步脚本自校验）、不判 gh/publish_r2_release 行为（CI 负责）、不判
+build-runs.json 等其余路径字面。
