@@ -236,3 +236,33 @@ v1.1.1」，并被 W52 钉成「== release-notes 目录最高版」——文档�
 （`ci-42788139632`，bot **`ec029b1`**）；同次推送触发的
 **Desktop Windows** run **42788139922** 亦 success（core/full 两条 NSIS，
 非 tag 故 release job 跳过）。
+
+## 9. 发版 v1.0.3（同轮记录）
+
+维护者拍板「发布最新版本」后按 `docs/RELEASE_SOP.md` 落地。自 v1.0.2
+（2026-10-25）起有 **22 个应用代码提交**（R43–R66：运行画像、失败率
+画像、幻影目录与 404/422 修复等），因此按补丁版递增为 **v1.0.3**。
+
+- **升版本六处**：`tauri.conf.json` / `desktop/package.json` /
+  `Cargo.toml` / `Cargo.lock`（`determinflow-desktop` 条目）/
+  `official-plugins.lock.json` 的 `desktop_version` /
+  `tests/test_desktop_packaging.py` 的发版钉值。另同步
+  `desktop/README.md` 的 DMG 示例名（W23 型钉值会在升版时先红，实测
+  抓到 1 处）。
+- **发行说明**：新增 `desktop/release-notes/v1.0.3.md`；
+  `docs/community-updates.md` 的「当前正式版」改为 v1.0.3、
+  历史链接改 v1.0.2（W52/W36 随目录最高版自动同账）。
+- **提交**：`74e8a96` → push main，CI run **42803089035**：10 job 全
+  `success`（10:54:39→11:12:35 UTC，约 17m56s），bot **`56fd925`**。
+- **tag**：`v1.0.3` → Desktop Windows run **42803095432**：core/full
+  NSIS + macOS core/full DMG 全 `success`，release job 于
+  **2026-11-10T11:07:52Z** 创建并发布 GitHub Release。
+- **资产（11 个）**：`DeterminFlow_1.0.3_{x64,x64-full}-setup.exe`
+  及 `.sig`/`.sha256`、`DeterminFlow_1.0.3_{aarch64,aarch64-full}.dmg`
+  及 `.sha256`、`latest.json`。
+- **清单复核**：`latest.json` 的 `version=1.0.3`、
+  `windows-x86_64` 的 URL 指向 v1.0.3 资产、`signature` 424 字符
+  （与 `.sig` 同长）。
+- **R2 步骤 skipped**（`R2_DISTRIBUTION_ENABLED` 未开）：本轮新增的
+  fail-closed 守卫未触发，发布未受影响；这也再次印证第 8.1 节的
+  判断——R2 通道当前是休眠路径。

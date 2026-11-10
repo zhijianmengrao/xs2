@@ -10,10 +10,10 @@
 | 项 | 值 |
 |---|---|
 | 交接文档 | **216 份**（`docs/HANDOVER_ROUND24..241.md`；R34/R35 从未有文档） |
-| 文档体量 | 29,243 行 / 1.6 MB |
+| 文档体量 | 29,273 行 / 1.6 MB |
 | 当前用例 | **3,347**（R241：W64/W65/W66 合并 +6、N3/D1 因本篇与 R240 回填 +2；R241 树按 CI 口径 3319 passed / 28 skipped / 0 failed；本行由 S3 机判） |
-| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42788139632`；R241 补丁翻正，满窗后计数恒 80） |
-| 代码基线 | `main` = `ec029b1`（R241 补丁 + CI 回写；docs 回填见 R241 §8） |
+| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42803089035`；R241 发版回填，满窗后计数恒 80） |
+| 代码基线 | `main` = `56fd925`（发版 v1.0.3 + CI 回写；docs 回填见 R241 §9） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条编号判据（§2 编号表）+ 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 

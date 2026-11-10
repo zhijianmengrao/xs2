@@ -67,6 +67,11 @@ ROW_WRITEBACK = "CI 写回历史"
 ROW_BASELINE = "代码基线"
 ROW_CI_GATE = "CI 闸门"
 MIB = 1024 * 1024
+# S5：父提交的两类锚（轮次 / 发版），以及基线行里对应的两种写法。
+PARENT_ROUND_RX = re.compile(r"\(R(\d+)\)")
+PARENT_RELEASE_RX = re.compile(r"release[:：]\s*v?(\d+\.\d+\.\d+)")
+ROW_ROUND_RX = re.compile(r"（R(\d+)[ 　]")
+ROW_RELEASE_RX = re.compile(r"（发版\s*v?(\d+\.\d+\.\d+)")
 JOB_TOTAL_RX = re.compile(r"(\d+)\s*个\s*job")
 JOB_LIST_RX = re.compile(r"个\s*job\s*（([^（）]*)）")
 JOB_ITEM_RX = re.compile(
@@ -222,7 +227,12 @@ def test_docs_volume_row_matches_disk_corpus() -> None:
 
 
 def test_baseline_row_matches_the_last_writeback_bot() -> None:
-    """S5：代码基线行——sha == 末条写回的 bot 提交，行内 R<n> == 其父轮次。"""
+    """S5：代码基线行——sha == 末条写回的 bot 提交，行内锚 == 其父提交。
+
+    父提交有两类：轮次提交（``feat(R149): …``）与发版提交
+    （``release: v1.0.3``，R241 §9 起实际出现）。行的锚必须描述父提交的
+    类型并逐字对账：轮次行写「（R<n> …）」，发版行写「（发版 vX.Y.Z …）」。
+    """
     line = _index_row(ROW_BASELINE)
     entries = _history_entries()
     run_id = str(entries[-1]["run_id"])
@@ -239,18 +249,33 @@ def test_baseline_row_matches_the_last_writeback_bot() -> None:
     )
 
     parent_subject = _git("log", "-1", "--format=%s", f"{bot_sha}^").strip()
-    parent_match = re.search(r"\(R(\d+)\)", parent_subject)
-    assert parent_match, (
-        f"bot 提交 {bot_sha[:12]} 的父提交标题没有轮次锚"
-        f"（形如 feat(R149): …）：{parent_subject[:80]}"
+    parent_round = PARENT_ROUND_RX.search(parent_subject)
+    parent_release = PARENT_RELEASE_RX.search(parent_subject)
+    assert parent_round or parent_release, (
+        f"bot 提交 {bot_sha[:12]} 的父提交标题既没有轮次锚"
+        f"（形如 feat(R149): …）也没有发版锚（形如 release: v1.0.3）："
+        f"{parent_subject[:80]}"
     )
-    round_match = re.search(r"（R(\d+)[ 　]", line)
+
+    if parent_release:
+        row_release = ROW_RELEASE_RX.search(line)
+        assert row_release, (
+            f"代码基线行没有「（发版 vX.Y.Z …）」锚：{line.strip()[:100]}"
+        )
+        assert row_release.group(1) == parent_release.group(1), (
+            f"代码基线发版版本漂移：行写 v{row_release.group(1)}，bot 提交"
+            f"的父提交是 v{parent_release.group(1)}（{parent_subject[:60]}）"
+        )
+        return
+
+    assert parent_round is not None  # 供类型检查与可读性
+    round_match = ROW_ROUND_RX.search(line)
     assert round_match, (
         f"代码基线行没有「（R<n> …）」轮次锚：{line.strip()[:100]}"
     )
-    assert int(round_match.group(1)) == int(parent_match.group(1)), (
+    assert int(round_match.group(1)) == int(parent_round.group(1)), (
         f"代码基线轮次漂移：行写 R{round_match.group(1)}，bot 提交的父提交"
-        f"是 R{parent_match.group(1)}（{parent_subject[:60]}）"
+        f"是 R{parent_round.group(1)}（{parent_subject[:60]}）"
     )
 
 
