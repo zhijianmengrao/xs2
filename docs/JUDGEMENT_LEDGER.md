@@ -3506,3 +3506,22 @@ matrix flavor 错拼，W63b 各自独红；消费 windows 条目复制，W63a �
 provenance/release 步脚本负责）、不判 gh run download/
 upload-artifact 行为（CI 负责）、不判 installer-diagnostics 等其余
 artifact 名（不进 replace 下载清单）。
+
+### 10.112 四轮收口（R237–R240）
+
+四轮连推（二十九）收口：R237 replace workflow provenance 步 env 定义
+== os.environ 消费（W61）、R238 replace workflow 资产目录名四源同账
+（W62）、R239 replace 下载清单 ↔ 两 producer artifact 名同账（W63）。
+三条判据全部「钉住本来就对的账」，三轮变异合计 12/12（4+4+4；收口轮
+无新判据）。
+
+- W61 把 provenance 步 env 两键（值来自 `${{ inputs.* }}`）与 heredoc
+  键字面（流进 `os.environ[key]`）钉成双向恰等（先剥 `os.environ['…']`
+  直接读取——runner 注入键无定义侧可对）；W62 把 `release-assets` 的
+  四个来源（mkdir -p / `--dir` / `Path()` / `--assets-dir`）钉成逐字
+  恰等；W63 把 replace 的两份下载清单与两 producer 的 artifact 名模板
+  （按各自 matrix 展开，块式/内联两写法分治）钉成双向恰等。
+- 总用例 3325→3329→3333→3337→3339。四轮写回都落在第 80 条（满窗
+  滚动）。§3 登记 R241–R244：workflow 路径字面多源同账（W64）、
+  desktop-windows 编排 needs/uses ↔ job 键同账（W65）、build-runs.json
+  写读同账（W66）、收口。
