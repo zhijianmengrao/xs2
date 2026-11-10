@@ -106,7 +106,7 @@ python desktop/scripts/generate_macos_icon.py
 desktop/.build/macos-venv/bin/python desktop/scripts/verify_bundle.py \
   --expected-flavor core \
   --app-bundle desktop/src-tauri/target/release/bundle/macos/DeterminFlow.app \
-  --dmg desktop/src-tauri/target/release/bundle/dmg/DeterminFlow_1.0.2_aarch64.dmg \
+  --dmg desktop/src-tauri/target/release/bundle/dmg/DeterminFlow_1.0.3_aarch64.dmg \
   --verify-macos-load-commands \
   --verify-dmg-container \
   --forbid-updater-artifacts desktop/src-tauri/target/release/bundle

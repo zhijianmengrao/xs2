@@ -596,7 +596,7 @@ def test_desktop_release_version_is_pinned() -> None:
         )
     )
 
-    assert tauri["version"] == "1.0.2"
+    assert tauri["version"] == "1.0.3"
 
 
 def test_frozen_backend_can_execute_python_workflow_scripts(tmp_path: Path) -> None:
