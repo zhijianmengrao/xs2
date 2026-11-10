@@ -3476,3 +3476,33 @@ R238 实测：四源现同账，首跑即过（纯钉住，无修复）。总用
 边界：只判目录名的字面同账——不判目录内文件（expected 集合由 release
 步脚本自校验）、不判 gh/publish_r2_release 行为（CI 负责）、不判
 build-runs.json 等其余路径字面。
+
+### 10.111 replace 下载清单 ↔ 两 producer artifact 名同账（R239）
+
+`tests/test_desktop_replace_download_manifest.py` 的 **W63** 把
+replace-desktop-assets.yml provenance heredoc 的两份下载清单与两个
+producer workflow 的 artifact 名模板（按各自 matrix 展开）钉成双向
+恰等（R236 §3 登记）：消费侧 windows
+`['DeterminFlow-Windows-x64-core', '…-full']`（L44）/ macos
+`['DeterminFlow-macOS-arm64-core-adhoc-candidate', '…-full-…']`（L46）；
+生产侧 desktop-windows.yml `name: DeterminFlow-Windows-x64-${{ matrix.flavor }}`
+（L140，块式 matrix `- core` / `- full`）与 desktop-macos.yml
+`name: DeterminFlow-macOS-arm64-${{ matrix.flavor }}-adhoc-candidate`
+（L81，内联 `[core, full]`）。test_desktop_packaging 只钉模板单源，不与
+replace 清单对账：
+
+- **W63a 语料守卫**：消费恰 2 份清单、各 2 条目；生产各恰 1 模板、
+  1 matrix、2 flavor。
+- **W63b 展开双向恰等**：模板按各自 matrix 展开后的集合 == 对应平台
+  消费清单集合——matrix 增 flavor / 改名而 replace 没跟（
+  `gh run download --name` 失败）或消费改名而 workflow 没跟，都红。
+
+R239 实测：清单现同账，首跑即过（纯钉住，无修复）。总用例
+3333→3337（W63 +2、N3/D1 +2），变异 4/4（windows 模板改名——模板
+形状守卫与展开恰等同时断的双红；消费 macos 条目改名 / windows
+matrix flavor 错拼，W63b 各自独红；消费 windows 条目复制，W63a 独红）。
+
+边界：只判 artifact 名的字面同账——不判 artifact 内容（校验由
+provenance/release 步脚本负责）、不判 gh run download/
+upload-artifact 行为（CI 负责）、不判 installer-diagnostics 等其余
+artifact 名（不进 replace 下载清单）。
