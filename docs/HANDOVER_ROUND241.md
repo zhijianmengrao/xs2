@@ -230,3 +230,9 @@ v1.1.1」，并被 W52 钉成「== release-notes 目录最高版」——文档�
 
 **验证**：R2 四判据（W30/W31/W35/W43）与发行线三判据（W36/W52/公共边界）全绿；
 全量 **3319 passed / 28 skipped / 0 failed**（3,347 条，8m59s，按 CI 口径 `core.symlinks=true` 跑）。
+
+**补丁 CI**：提交 **`2aecea6`** 推送后 run **42788139632**：**10 job 全
+`success`**（09:08:07→09:26:06 UTC，约 17m59s），写回第 80 条
+（`ci-42788139632`，bot **`ec029b1`**）；同次推送触发的
+**Desktop Windows** run **42788139922** 亦 success（core/full 两条 NSIS，
+非 tag 故 release job 跳过）。
