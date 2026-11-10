@@ -3525,3 +3525,101 @@ artifact 名（不进 replace 下载清单）。
   滚动）。§3 登记 R241–R244：workflow 路径字面多源同账（W64）、
   desktop-windows 编排 needs/uses ↔ job 键同账（W65）、build-runs.json
   写读同账（W66）、收口。
+
+### 10.113 workflow 路径字面多源同账（R241 / W64）
+
+`tests/test_desktop_workflow_path_refs.py` 的 **W64** 把三份 desktop
+workflow 对 `.github/workflows/*.yml` 的字面引用钉成多源同账（R240 §3
+登记）：desktop-windows.yml 的 `paths` 自引用（L12）与本地 `uses:`
+（L150）、desktop-macos.yml 的 `paths` 自引用（L9）、
+replace-desktop-assets.yml provenance 元组的两条 `run['path']` 期望
+（L43/L45），合计恰 **5 处**。W32 只钉 `desktop/scripts/*` 引用面（17
+处），workflow 路径这一族此前无锚：
+
+- **W64a 语料守卫**：三份文件引用总数恰 5；路径条目恰 2、本地 `uses:`
+  恰 1、元组路径恰 2。
+- **W64b 多源同账**：两个 producer 的自引用 == 自身文件名；全部引用
+  逐处可解析；被引用集合 == 两个 producer；replace 元组的两条路径
+  ↔ 平台（`desktop-<platform>.yml`）↔ 该 producer 恰 1 个非诊断
+  artifact 模板（模板小写含平台名，与 W63 的展开恰等互锚）。
+
+R241 实测：5 处现同账，首跑即过（纯钉住，无修复）。总用例 3,339 →
+3,345（W64/W65/W66 合计 +6）。变异 4/4（windows 自引用改名 / uses
+目标改名 / 元组 windows 路径指向 macOS producer，W64b 各自独红；
+自引用条目复制，W64a 独红）。
+
+边界：只判路径字面本身——不判触发条件、不判 `uses` 的 `secrets`/`with`
+传参（W57/W58 系）、不判 artifact 名展开（W63）、不判 GitHub 解析行为
+（CI 负责）。
+
+### 10.114 desktop-windows 编排 needs/uses ↔ job 键同账（R241 / W65）
+
+`tests/test_desktop_windows_needs.py` 的 **W65** 把 desktop-windows.yml
+的编排面与 job 键钉成同账（R240 §3 登记）：jobs =
+`{build, build-macos, release}`；`release.needs = [build, build-macos]`
+（L155）；`build-macos` 以 `uses: ./.github/workflows/desktop-macos.yml`
+（L150）调用可复用 workflow，后者声明 `workflow_call`、job 键恰
+`{build}`：
+
+- **W65a 语料守卫**：顶层 job 键恰 3、`needs` 恰 2 项、本地 `uses`
+  恰 1 处。
+- **W65b 编排同账**：needs 名字集合 ⊆ job 键集合且不自指、且与登记的
+  `{build, build-macos}` 恰等；uses 目标可解析、声明 `workflow_call`、
+  目标 job 键恰 1 个且调用方 job 名 == 目标 job 键 + `-` + 平台 token
+  （`build` + `-macos`）；uses-job 不得声明 `runs-on`/`steps`，普通 job
+  两者都必须有。
+
+R241 实测：编排面现同账，首跑即过（纯钉住，无修复）。变异 4/4（needs
+错拼 / uses 指向不存在 / 被调 job 键改名 / uses-job 混入 runs-on，
+W65b 各自独红）。
+
+边界：只判 job 键与调用面的名字同账——不判步骤内容、不判 matrix 展开
+（W63）、不判 `if` 的语义（tag-only 由 workflow 自身负责）、不判 GitHub
+解析行为（CI 负责）。
+
+### 10.115 build-runs.json 写读同账（R241 / W66）
+
+`tests/test_desktop_build_runs_io.py` 的 **W66** 把
+replace-desktop-assets.yml 的 `build-runs.json` 写读两侧钉成同账
+（R240 §3 登记）：provenance 步
+`Path('build-runs.json').write_text(json.dumps(records))`（L60）↔
+release 步 `'build_runs': json.loads(Path('build-runs.json').read_text())`
+（L100）；`records` 由元组的 `platform` 变量填充，最终落进
+`build-source.json` 的审计面：
+
+- **W66a 语料守卫**：两个 heredoc；`write_text` 恰 1 处；release 步读回
+  **本次写入的那个名字**恰 1 处（该步还读 `tauri.conf.json` /
+  `official-plugins.lock.json`，不数进来）；`records` 的初始化 / 平台
+  赋值 / 序列化各恰 1 处；`'build_runs'` 键字面恰 1 处。
+- **W66b 写读同账**：写侧路径 == `build-runs.json`；读侧必须读回写入的
+  同名文件（双向：谁改名都会表现为「没有一处读回这个名字」）；平台字面
+  集合 == `{windows, macos}`；消费表达式逐字匹配。
+
+R241 实测：写读现同账，首跑即过（纯钉住，无修复）。变异 4/4（写侧
+改名 / 读侧改名 / `build_runs` 键改名，W66a+W66b 双红；平台字面漂移，
+W66b 独红）。双红是同一份语料的两条断言按写入名过滤所致，不是判据
+串扰。
+
+边界：只判文件名/键名的字面同账——不判 JSON 内容形状、不判 `gh api`
+拉到的 run 真假（脚本运行时校验）、不判 `build-source.json` 的下游消费。
+
+### 10.116 冻结收口（R241）
+
+四轮连推（三十）的合并收口：原登记 R241 W64 / R242 W65 / R243 W66 /
+R244 收口。**维护者拍板合并**——三判据一次落地，R242–R244 并入本轮，
+理由是每轮 §6 回填都依赖一次真实 CI run，四轮纯文档核对不再产生新
+信息。
+
+- 三条判据全部「钉住本来就对的账」，无修复；变异合计 **12/12**。
+- 总用例 3,339 → 3,345（判据 +6）→ **3,347**（N3/D1 因本篇与 R240
+  回填 +2）。
+- **冻结**：此后不再新增「同账」判据，只在回归红时修复。判断依据：
+  应用代码（`src/`、`web/src`、`desktop/src-tauri/src`）自 R66 起零改动
+  （`scripts/` 的最后改动在 R155）、`src/` 的待办标记计数为 0、
+  原始缺陷债（B1–B27）清空、65 个同账测试文件已覆盖文档/编排/脚本调用面。
+- **终态回填**：CI 写回在每次 main push 追加历史，冻结后没有下一轮翻正
+  索引 §1 的写回/基线两行；本轮以一次纯文档回填提交收尾并带
+  `[skip ci]`，避免回填提交自己再造一条写回账。
+- 仍未闭合的产品项（留给维护者）：desktop 版本五源 1.0.2 vs
+  release-notes v1.1.1；updater `endpoints` 仍指上游 latest.json。
+
