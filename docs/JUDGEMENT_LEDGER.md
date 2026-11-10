@@ -3623,3 +3623,25 @@ R244 收口。**维护者拍板合并**——三判据一次落地，R242–R244
 - 仍未闭合的产品项（留给维护者）：desktop 版本五源 1.0.2 vs
   release-notes v1.1.1；updater `endpoints` 仍指上游 latest.json。
 
+### 10.117 W31 同号改判：R2 公网域未设即失败（R241 §8）
+
+R197 的 W31 原语义是「两 workflow 的回落缺省 + README 说明三源同值」。
+R241 拍板改判：实测 `https://downloads.determinflow.com/desktop/stable/
+latest.json` 返回 **200、version=1.1.1**——那是**上游**的稳定清单，本
+fork 是 1.0.2。旧回落缺省会在「启用 R2 但漏配 `R2_PUBLIC_BASE_URL`」
+时把清单 URL 发到上游域名上（客户端用本 fork 公钥验签必败）。
+
+W31 现语义（同一判据号，不是新判据）：
+
+- **W31a 语料守卫**：两 workflow 各恰一处裸声明
+  `R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}`（`||` 缺省 0 处）、
+  各恰一处 `-z "$R2_PUBLIC_BASE_URL"` 守卫、各恰一处
+  `--public-base-url "$R2_PUBLIC_BASE_URL"` 消费点；macOS 0 处；
+  README「必须显式设置」恰一处；脚本 option `required=True`。
+- **W31b 无内置缺省**：发布面（两 workflow + README + 脚本）不得出现
+  `downloads.determinflow.com`；两份 workflow 的声明逐字相同。
+
+改动面：两 workflow 去缺省 + 加守卫、`desktop/README.md` 改口径、
+脚本未改（本就 required）。边界：不判仓库变量取值、不判 R2 门控
+（W43）、不判 URL 拼装（脚本自身判据）。
+

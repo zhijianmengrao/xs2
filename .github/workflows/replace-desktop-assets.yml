@@ -124,11 +124,17 @@ jobs:
           AWS_DEFAULT_REGION: auto
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}
+          # 分发域名必须显式给（R241 拍板）：内置缺省曾指向上游域名，
+          # 未设变量就发布会把清单 URL 发到别人的站上。
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
           VERSION: ${{ steps.release.outputs.version }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           PUB_DATE: ${{ steps.release.outputs.pub_date }}
         run: |
+          if [ -z "$R2_PUBLIC_BASE_URL" ]; then
+            echo "::error::R2_PUBLIC_BASE_URL 未设置——拒绝把清单 URL 指向上游域名"
+            exit 1
+          fi
           python desktop/scripts/publish_r2_release.py \
             --assets-dir release-assets --version "$VERSION" --revision "$GITHUB_SHA" \
             --notes-file "desktop/release-notes/$RELEASE_TAG.md" --pub-date "$PUB_DATE" \

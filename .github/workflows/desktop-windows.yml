@@ -216,11 +216,15 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
-          # 分发域名取变量（R46）：与 replace-desktop-assets.yml 同款，便于改域名
-          # 时不改代码；未设变量时回落到既有域名，行为不变。
-          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}
+          # 分发域名必须显式给（R241 拍板）：内置缺省曾指向上游域名，
+          # 未设变量就发布会把清单 URL 发到别人的站上。
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
         run: |
           version="${RELEASE_TAG#v}"
+          if [ -z "$R2_PUBLIC_BASE_URL" ]; then
+            echo "::error::R2_PUBLIC_BASE_URL 未设置——拒绝把清单 URL 指向上游域名"
+            exit 1
+          fi
           aws --version
           python desktop/scripts/publish_r2_release.py \
             --assets-dir release-assets \

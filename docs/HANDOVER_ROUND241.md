@@ -140,12 +140,12 @@ run 账。
   追加一条历史；冻结后没有「下一轮」来翻正索引 §1 的写回/基线两行。
   本轮因此以一次**纯文档回填提交**收尾，提交信息带 `[skip ci]`——回填
   提交自己不再触发写回，S2/S5 才能停在一致态。
-- **仍未闭合的产品项**（不是判据能解决的，留给维护者拍板）：desktop
-  代码版本五源 1.0.2 而 `release-notes` 最新 v1.1.1（tag 驱动发版的设计
-  语义）；`tauri.conf.json` 的 updater `endpoints` 仍指上游 latest.json
-  （自动更新处于安全失效态）。
+- **仍未闭合的产品项**：R241 §8 已由维护者拍板并落地（R2 公网域
+  fail-closed、发行线归位、macOS 自动更新明确不做）；剩下的是需要外部
+  账号/预算的两项——Apple Developer ID 签名与公证、macOS 自动更新的
+  更新产物链路（后者已拍板不做）。
 - `config/skills_config.json` 保持未提交（C1）。
-- 生产代码零改动；测试只新增三个文件。
+- 生产代码零改动；测试只新增三个文件（§8 另改了一条既有判据的语义）。
 
 ## 6. CI
 
@@ -165,3 +165,68 @@ run 账。
   （H2 + 一条专述）、`HANDOVER_INDEX.md`（§1 六行 + H1 + §3 + §4 一行
   + §6.1）、`JUDGEMENT_LEDGER.md`（§10.113–§10.116）、R240 §6 回填。
 - 生产代码零改动；`config/skills_config.json` 不纳入（C1）。
+
+## 8. 拍板落地（冻结后补丁，同轮记录）
+
+冻结声明之后，维护者对「待拍板产品项」逐项给了结论并授权落地。本节
+记录**决定与改动**，不再开新轮次、不新增判据号（W31 是同号改判）。
+
+### 8.1 R2 公网域：改为未设即失败
+
+**决定**：禁止任何内置回落域名，`R2_PUBLIC_BASE_URL` 未设置时发布
+步骤直接失败。
+
+**依据（实测）**：`https://downloads.determinflow.com/desktop/stable/
+latest.json` 返回 **200 且 version=1.1.1**——那是**上游**的稳定清单，
+本 fork 是 1.0.2。旧写法 `${{ vars.R2_PUBLIC_BASE_URL ||
+'https://downloads.determinflow.com' }}` 会在「启用 R2 但漏配变量」时
+把清单 URL 发到上游域名上，客户端用本 fork 公钥验签必败。
+
+**改动**：`desktop-windows.yml` / `replace-desktop-assets.yml` 去掉
+回落缺省、加 `-z "$R2_PUBLIC_BASE_URL"` 显式守卫；`desktop/README.md`
+改为「必须显式设置」；`tests/test_desktop_r2_fallback_domain.py` 的
+**W31 同号改判**（原「三源回落同值」→ 现「无缺省 + fail-closed +
+发布面不得出现上游域名」）。脚本侧 `--public-base-url` 本来就是
+`required=True`，未改。
+
+### 8.2 发行线归位：上游日志归档
+
+**决定**：`desktop/release-notes/` 只保留本 fork 发行线
+（v1.0.0–v1.0.2）；上游 v1.0.3–v1.1.1 归档到
+`desktop/release-notes/upstream/`（附 `README.md` 说明不属于本 fork
+发行线）。
+
+**依据（实测）**：代码五源全 1.0.2、GitHub 只有 v1.0.0/1/2 三个
+release；上游 10 份日志的入库日期是 2026-08-04～09-11，早于本 fork
+首版（2026-10-24）。`docs/community-updates.md` 却写「当前正式版
+v1.1.1」，并被 W52 钉成「== release-notes 目录最高版」——文档因此
+长期指向本 fork 不存在的版本。
+
+**改动**：10 个文件 `git mv` 到 `upstream/`；`community-updates` 的
+「当前正式版」改 **v1.0.2**（历史链接改 v1.0.1），并加一段「以下为
+上游社区版记录」的边界说明；`test_community_public_boundary.py` 的
+`v1.0.9.md` 路径随迁。W52/W36 的判据语义不变（目录最高版与引用最高
+版现在都落在 1.0.x，自动同账）。
+
+### 8.3 macOS：明确不做自动更新
+
+**决定**：macOS 维持 ad-hoc 签名 + 手动 DMG 升级；自动更新列为明确
+不做项，直到有 Developer ID 签名与公证链路。
+
+**依据（实测）**：`latest.json` 只有 `windows-x86_64` 一个平台；
+`desktop-macos.yml` 用 `createUpdaterArtifacts=false` 且
+`verify_bundle.py --forbid-updater-artifacts` 显式禁止 updater 产物。
+现状与决定一致，差的是文档把「怎么做」写清。
+
+**改动**：`desktop/README.md` 的 macOS 节补一句「不提供自动更新，
+升级即手动下载新 DMG 覆盖安装；R241 拍板列为明确不做项」。
+
+### 8.4 记录纠错
+
+`PROJECT_INFO.md` 开头「上游桌面发布管线」一段的「`endpoints` 仍指向
+上游 latest.json、自动更新安全失效」是 2026-10-24 的旧结论；R29
+（`2938a82`）已切回本 fork，实测 200 且清单 1.0.2。本次按实测更正，
+并在 §5 撤掉同一错误表述。
+
+**验证**：R2 四判据（W30/W31/W35/W43）与发行线三判据（W36/W52/公共边界）全绿；
+全量 **3319 passed / 28 skipped / 0 failed**（3,347 条，8m59s，按 CI 口径 `core.symlinks=true` 跑）。

@@ -1,31 +1,30 @@
-"""R197：R2 公网回落域名三源同账（W 系续 W31）。
+"""R197 / R241：R2 公网域必须显式提供（W 系续 W31；R241 改判）。
 
-背景（实测，R196 §3 登记）：R2 分发域名在 R46 变量化后，
-``desktop-windows.yml`` 与 ``replace-desktop-assets.yml`` 各带一处
+背景：R197 曾把「回落缺省」钉成三源同账（两份 workflow 的
 ``${{ vars.R2_PUBLIC_BASE_URL || 'https://downloads.determinflow.com' }}``
-回落缺省（前者注释自述「与 replace-desktop-assets.yml 同款，便于改域名
-时不改代码」）；R195 修复后 ``desktop/README.md`` 的「桌面更新发布」节
-也带回落说明（``未设置时回落 https://downloads.determinflow.com``）。
-三份文件是同一份账的三个来源，回落域名字面值现同值——但两处 workflow
-漂移无人判：改域名时只改其一，另一 workflow 与 README 的回落就跟丢，
-未设变量的仓库会把公开对象 URL 发到旧域名上（发布成功但校验/下载域名
-分叉）。这是候选制登记面里第一次把「同一条回落缺省的多个来源」钉成
-同账。
+与 desktop/README.md 的「未设置时回落」说明）。R241 拍板改判——实测
+``https://downloads.determinflow.com/desktop/stable/latest.json`` 是
+**上游**的稳定清单（version 1.1.1，本 fork 是 1.0.2）：本 fork 一旦打开
+``R2_DISTRIBUTION_ENABLED`` 而未设 ``R2_PUBLIC_BASE_URL``，生成的清单
+URL 会指向别人的域名，客户端的本 fork 公钥验签必败。政策因此从
+「三源回落同值」改为「**无任何内置回落，未设即失败**」。
 
-W31 把这条边钉成两半：
+W31 现在钉两半：
 
-- **W31a 语料守卫**：两份分发 workflow 的回落缺省模式各恰一处、
-  ``--public-base-url "$R2_PUBLIC_BASE_URL"`` 消费点各恰一处（回落值
-  必须真的被发布命令吃掉）；desktop-macos.yml 实测不在 R2 更新通道
-  （回落模式 0 处，多出来的第四源当场红）；README 的「未设置时回落」
-  说明恰一处。
-- **W31b 三源同账**：从三份文件提取的回落域名字面值逐字恰等——任一
-  源改域名而其余未跟显式红。
+- **W31a 语料守卫**：两份分发 workflow 各恰一处裸
+  ``R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}`` 声明（不得出现
+  ``||`` 缺省）、各恰一处 ``-z "$R2_PUBLIC_BASE_URL"`` fail-closed 守卫、
+  各恰一处 ``--public-base-url "$R2_PUBLIC_BASE_URL"`` 消费点；
+  desktop-macos.yml 实测不在 R2 更新通道（三类形状各 0 处）；
+  desktop/README.md 的「必须显式设置」说明恰一处；
+  ``publish_r2_release.py`` 的 ``--public-base-url`` 为 ``required=True``。
+- **W31b 无内置缺省**：发布面（两份 workflow + README + 脚本）里不得
+  出现 ``downloads.determinflow.com``（回落复活即红）；两份 workflow 的
+  env 声明逐字相同（同款声明）。
 
-边界：只判回落域名字面值与消费点的存在——不判未设变量时的回落触发
-行为（CI 负责）、不判 ``vars.R2_PUBLIC_BASE_URL`` 的取值、不判 R46
-注释散文（「同款」自述不进射程）、不判 ``publish_r2_release.py`` 的
-URL 拼装逻辑（``public_object_url`` 已有自己的判据面）。
+边界：只判发布面的字面与守卫形状——不判 ``vars.R2_PUBLIC_BASE_URL`` 的
+取值（仓库变量，不在树内）、不判未启用 R2 时的行为（门控由 W43 负责）、
+不判 ``public_object_url`` 的拼装逻辑（脚本自身判据）。
 """
 
 from __future__ import annotations
@@ -36,67 +35,97 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 README = REPO_ROOT / "desktop" / "README.md"
+SCRIPT = REPO_ROOT / "desktop" / "scripts" / "publish_r2_release.py"
 PUBLISHING_WORKFLOWS = ("desktop-windows.yml", "replace-desktop-assets.yml")
 MACOS_WORKFLOW = "desktop-macos.yml"
 
-FALLBACK_RX = re.compile(
-    r"\$\{\{\s*vars\.R2_PUBLIC_BASE_URL\s*\|\|\s*'([^']+)'\s*\}\}"
+ENV_RX = re.compile(
+    r"^\s*R2_PUBLIC_BASE_URL:\s*\$\{\{\s*vars\.R2_PUBLIC_BASE_URL\s*\}\}\s*$",
+    re.M,
 )
+DEFAULT_RX = re.compile(r"R2_PUBLIC_BASE_URL\s*\|\|")
+GUARD_RX = re.compile(r'if \[ -z "\$R2_PUBLIC_BASE_URL" \]; then')
 CONSUME_RX = re.compile(r'--public-base-url "\$R2_PUBLIC_BASE_URL"')
-README_FALLBACK_RX = re.compile(r"未设置时回落\s*`([^`]+)`")
+README_REQUIRED_RX = re.compile(r"必须显式设置")
+UPSTREAM_DOMAIN = "downloads.determinflow.com"
 
 
-def _workflow_fallbacks(name: str) -> list[str]:
-    text = (WORKFLOWS / name).read_text(encoding="utf-8")
-    return FALLBACK_RX.findall(text)
+def _text(path: Path) -> str:
+    assert path.is_file(), f"文件不在：{path}"
+    return path.read_text(encoding="utf-8")
 
 
-def _readme_fallbacks() -> list[str]:
-    text = README.read_text(encoding="utf-8")
-    return README_FALLBACK_RX.findall(text)
+def _workflow(name: str) -> str:
+    return _text(WORKFLOWS / name)
 
 
-def test_fallback_anchor_counts() -> None:
-    """W31a：两 workflow 回落/消费各恰一处；macOS 0 处；README 恰一处。"""
+def test_public_base_shapes() -> None:
+    """W31a：两 workflow 各恰一处裸声明 + 守卫 + 消费；README 说明恰一处。"""
     for name in PUBLISHING_WORKFLOWS:
-        text = (WORKFLOWS / name).read_text(encoding="utf-8")
-        fallbacks = FALLBACK_RX.findall(text)
-        assert len(fallbacks) == 1, (
-            f"{name} 的 R2_PUBLIC_BASE_URL 回落缺省应恰一处，实测 "
-            f"{len(fallbacks)} 处——W31a 语料守卫"
+        text = _workflow(name)
+        declared = ENV_RX.findall(text)
+        assert len(declared) == 1, (
+            f"{name} 的裸 R2_PUBLIC_BASE_URL 声明应恰一处，实测 "
+            f"{len(declared)} 处——W31a 语料守卫"
+        )
+        defaults = DEFAULT_RX.findall(text)
+        assert not defaults, (
+            f"{name} 仍有 R2_PUBLIC_BASE_URL 回落缺省 {len(defaults)} 处"
+            "——R241 起禁止任何内置回落"
+        )
+        guards = GUARD_RX.findall(text)
+        assert len(guards) == 1, (
+            f"{name} 的 fail-closed 守卫（-z 检查）应恰一处，实测 "
+            f"{len(guards)} 处——未设变量必须显式失败"
         )
         consumed = CONSUME_RX.findall(text)
         assert len(consumed) == 1, (
             f"{name} 的 --public-base-url 消费点应恰一处，实测 "
-            f"{len(consumed)} 处——回落值必须真的被发布命令吃掉"
+            f"{len(consumed)} 处——值必须真的被发布命令吃掉"
         )
-    macos = _workflow_fallbacks(MACOS_WORKFLOW)
-    assert not macos, (
-        f"{MACOS_WORKFLOW} 实测不在 R2 更新通道，出现回落缺省 {macos}"
-        "——第四源要么删掉要么并入 W31b 同账"
+
+    macos = _workflow(MACOS_WORKFLOW)
+    assert not ENV_RX.findall(macos), f"{MACOS_WORKFLOW} 不应声明 R2 公网域"
+    assert not CONSUME_RX.findall(macos), f"{MACOS_WORKFLOW} 不应消费 R2 公网域"
+
+    readme = _text(README)
+    required = README_REQUIRED_RX.findall(readme)
+    assert len(required) == 1, (
+        f"desktop/README.md 的「必须显式设置」说明应恰一处，实测 "
+        f"{len(required)} 处——W31a 语料守卫"
     )
-    readme = _readme_fallbacks()
-    assert len(readme) == 1, (
-        f"desktop/README.md 的「未设置时回落」说明应恰一处，实测 "
-        f"{len(readme)} 处——W31a 语料守卫"
+
+    script = _text(SCRIPT)
+    assert 'add_argument("--public-base-url", required=True)' in script, (
+        "publish_r2_release.py 的 --public-base-url 必须是 required=True"
+        "——脚本层同样不允许缺省"
     )
 
 
-def test_fallback_domains_agree_across_three_sources() -> None:
-    """W31b：三源回落域名字面值逐字恰等（双向：谁漂谁红）。"""
-    sources: dict[str, str] = {}
-    for name in PUBLISHING_WORKFLOWS:
-        found = _workflow_fallbacks(name)
-        assert found, f"{name} 没有回落缺省——W31b 无锚"
-        sources[name] = found[0]
-    readme = _readme_fallbacks()
-    assert readme, "desktop/README.md 没有回落说明——W31b 无锚"
-    sources["desktop/README.md"] = readme[0]
+def test_no_baked_upstream_domain() -> None:
+    """W31b：发布面不得内置上游域名；两 workflow 声明逐字相同。"""
+    surface = {
+        name: _workflow(name) for name in PUBLISHING_WORKFLOWS
+    }
+    surface["desktop/README.md"] = _text(README)
+    surface["desktop/scripts/publish_r2_release.py"] = _text(SCRIPT)
 
-    domains = set(sources.values())
-    assert len(domains) == 1, (
-        "R2 公网回落域名三源不同账：" + "；".join(
-            f"{name}={domain}" for name, domain in sorted(sources.items())
-        )
-        + "——改域名必须三源同改（两份分发 workflow + README 回落说明）"
+    baked = sorted(
+        name for name, text in surface.items() if UPSTREAM_DOMAIN in text
+    )
+    assert not baked, (
+        f"发布面仍内置上游域名 {UPSTREAM_DOMAIN}：{baked}"
+        "——未设变量时会把清单 URL 发到上游站上"
+    )
+
+    declarations = {
+        name: ENV_RX.findall(surface[name]) for name in PUBLISHING_WORKFLOWS
+    }
+    values = {name: found[0] for name, found in declarations.items() if found}
+    assert len(values) == len(PUBLISHING_WORKFLOWS), (
+        f"两份发布 workflow 的 R2 声明不齐：{declarations}"
+    )
+    assert len(set(values.values())) == 1, (
+        "两份 workflow 的 R2_PUBLIC_BASE_URL 声明不同款："
+        + "；".join(f"{name}={value.strip()}" for name, value in values.items())
     )

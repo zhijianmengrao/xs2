@@ -239,17 +239,25 @@ def test_regular_release_r2_step_keeps_its_gate() -> None:
 
 
 def test_both_r2_steps_take_base_url_from_variable() -> None:
-    """分发域名取变量：硬编码会让改域名必须改代码，且两处容易漂移。"""
+    """分发域名取变量：硬编码会让改域名必须改代码，且两处容易漂移。
+
+    R241 起不内置任何回落域名（实测 downloads.determinflow.com 是上游的
+    稳定清单域名），未设变量时由步骤内守卫显式失败。
+    """
     for path, job in ((REPLACE_WORKFLOW, "replace"), (DESKTOP_WINDOWS_WORKFLOW, "release")):
         step = _r2_step(path, job)
         env = step.get("env") or {}
         base = str(env.get("R2_PUBLIC_BASE_URL", ""))
+        run = str(step["run"])
         assert "vars.R2_PUBLIC_BASE_URL" in base, (
             f"{path.name} 的 R2 步骤应从 vars.R2_PUBLIC_BASE_URL 取分发域名"
         )
-        assert "downloads.determinflow.com" in base, (
-            f"{path.name} 的域名变量需要保留既有域名作为回落值"
+        assert "||" not in base and "downloads.determinflow.com" not in base, (
+            f"{path.name} 的域名变量不得内置回落值（R241 起未设即失败）"
         )
-        assert '--public-base-url "$R2_PUBLIC_BASE_URL"' in str(step["run"]), (
+        assert 'if [ -z "$R2_PUBLIC_BASE_URL" ]' in run, (
+            f"{path.name} 缺 fail-closed 守卫：未设变量时必须显式失败"
+        )
+        assert '--public-base-url "$R2_PUBLIC_BASE_URL"' in run, (
             f"{path.name} 必须把变量真的传给脚本，而不是只声明不用"
         )

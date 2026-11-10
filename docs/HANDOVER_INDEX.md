@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 交接文档 | **216 份**（`docs/HANDOVER_ROUND24..241.md`；R34/R35 从未有文档） |
-| 文档体量 | 29,172 行 / 1.6 MB |
+| 文档体量 | 29,237 行 / 1.6 MB |
 | 当前用例 | **3,347**（R241：W64/W65/W66 合并 +6、N3/D1 因本篇与 R240 回填 +2；R241 树 3318 passed / 28 skipped / 1 failed〔本机 core.symlinks〕；本行由 S3 机判） |
 | CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42753616716`；R241 翻正，满窗后计数恒 80） |
 | 代码基线 | `main` = `d9a0181`（R241 提交 + CI 回写；docs 回填见 R241 §6） |

@@ -25,7 +25,7 @@ COMMUNITY_RELEASE_FILES = (
     "CONTRIBUTING.md",
     "README.md",
     "README.en.md",
-    "desktop/release-notes/v1.0.9.md",
+    "desktop/release-notes/upstream/v1.0.9.md",
     "config/models_config.example.json",
 )
 EXECUTOR_GLOBS = (
