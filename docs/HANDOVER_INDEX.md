@@ -1,4 +1,4 @@
-# 交接文档总索引（R24–R236）
+# 交接文档总索引（R24–R237）
 
 > 生成：2026-11-04（R131 之后、R132 之前）。用途：一份文件回答四件事——
 > **有哪些轮次、每轮做了什么、文档在哪、还有哪些缺口**。
@@ -9,11 +9,11 @@
 
 | 项 | 值 |
 |---|---|
-| 交接文档 | **211 份**（`docs/HANDOVER_ROUND24..236.md`；R34/R35 从未有文档） |
-| 文档体量 | 28,573 行 / 1.6 MB |
-| 当前用例 | **3,325**（R236：收口轮无新判据，N3/D1 因本篇与 R235 回填 +2；R236 树 3297 passed / 28 skipped / 0 failed；本行由 S3 机判） |
-| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42642327945`；R236 翻正，满窗后计数恒 80） |
-| 代码基线 | `main` = `c380892`（R235 提交 + CI 回写；docs 回填见 R235 §6） |
+| 交接文档 | **212 份**（`docs/HANDOVER_ROUND24..237.md`；R34/R35 从未有文档） |
+| 文档体量 | 28,682 行 / 1.6 MB |
+| 当前用例 | **3,329**（R237：W61 +2、N3/D1 因本篇与 R236 回填 +2；R237 树 3301 passed / 28 skipped / 0 failed；本行由 S3 机判） |
+| CI 写回历史 | **80 / 80 轮**（`tests/fixtures/e2e_retry_history/history.json`，末条 `ci-42647655708`；R237 翻正，满窗后计数恒 80） |
+| 代码基线 | `main` = `f603864`（R236 提交 + CI 回写；docs 回填见 R236 §6） |
 | 判据登记 | `docs/JUDGEMENT_LEDGER.md`：18 条编号判据（§2 编号表）+ 退出码表 0/1/3/4/5/6/7/8 |
 | CI 闸门 | 10 个 job（backend / windows-backend / frontend / container-config / container-build / replay-ci-writeback ×2 / replay-ci-fetch-chain ×2 / e2e-history-writeback） |
 
@@ -33,7 +33,7 @@
 （`~/.zcode/.../memory/xs2-round-status.md`），外部接手者只能依赖前三者——
 见 §6.4。
 
-## 3. 阶段划分（211 份文档的骨架）
+## 3. 阶段划分（212 份文档的骨架）
 
 | 阶段 | 轮次 | 份数 | 主线 |
 |---|---|---|---|
@@ -74,8 +74,9 @@
 | 四轮连推（二十六） | R225–R228 | 4 | community-updates 当前正式版同账（W52）、应用显示名两脚本同账（W53）、安装数据目录标识同账（W54）、收口（四轮完成） |
 | 四轮连推（二十七） | R229–R232 | 4 | smoke_installer flavor 参数自洽（W55）、installer 步 outputs 定义 == 消费（W56）、replace workflow inputs 定义 == 消费（W57）、收口（四轮完成） |
 | 四轮连推（二十八） | R233–R236 | 4 | replace workflow release 步 outputs 定义 == 消费（W58）、create_manifest import 调用面同账（W59）、publish_r2_release 调用面同账（W60）、收口（四轮完成） |
+| 四轮连推（二十九） | R237–R240 | 4 | replace workflow provenance 步 env 定义 == os.environ 消费（W61）、replace workflow 资产目录名四源同账（W62）、replace 下载清单 ↔ 两 producer artifact 名同账（W63）、收口（四轮完成） |
 
-## 4. 全量索引（R24–R236）
+## 4. 全量索引（R24–R237）
 
 日期取文档首次入库的提交日期；主题取标题副标题（R112 起 18 份无副标题，
 按引言首句补；R133 已补齐 19 份含 R129/R132，钉测 `test_docs_navigation.py`
@@ -294,6 +295,7 @@ N3 防复发）。
 | R234 | 2026-11-09 | create_manifest import 调用面同账：W59 | [md](HANDOVER_ROUND234.md) |
 | R235 | 2026-11-09 | publish_r2_release 调用面同账：W60 | [md](HANDOVER_ROUND235.md) |
 | R236 | 2026-11-09 | 收口轮：R233–R236 四账 + R237–R240 登记 | [md](HANDOVER_ROUND236.md) |
+| R237 | 2026-11-10 | replace workflow provenance 步 env 定义 == os.environ 消费：W61 | [md](HANDOVER_ROUND237.md) |
 
 ## 5. 历史轮次处置（R1–R23、R34、R35）
 
@@ -314,7 +316,7 @@ R10–R12 的副本含 BOM 与「〔待补〕」乱码占位符；若从 git 恢
 
 按 §5：**R4–R9 完全无记录；R1–R3 仅合并记录；R10–R23 只剩 git 历史；
 R34/R35 从未有文档**。现行维护入口从 R24 起，R36 已把 R34/R35 的可溯源部分
-补进正文。除此之外，R24–R236 每轮恰好一份，无缺号、无重号。
+补进正文。除此之外，R24–R237 每轮恰好一份，无缺号、无重号。
 
 ### 6.2 回填缺口（CI 写回 run 未记账）——**已在本轮补正文的 4 处**
 

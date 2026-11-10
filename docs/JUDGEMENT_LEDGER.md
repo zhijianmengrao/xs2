@@ -3427,3 +3427,29 @@ R235 publish_r2_release 调用面同账（W60）。三条判据全部「钉住�
   == os.environ 消费（W61）、replace workflow 资产目录名四源同账
   （W62）、replace 下载清单 ↔ 两 producer artifact 名同账（W63）、
   收口。
+
+### 10.109 replace workflow provenance 步 env 定义 == os.environ 消费（R237）
+
+`tests/test_desktop_replace_provenance_env.py` 的 **W61** 把
+replace-desktop-assets.yml provenance 步的 env 定义与 heredoc 的
+`os.environ` 消费钉成双向恰等（R236 §3 登记）：env 两键
+（WINDOWS_RUN L33 / MACOS_RUN L34，值来自 `${{ inputs.* }}`——输入
+名由 W57 钉住）↔ heredoc 元组字面（L43/L45 的 `'WINDOWS_RUN'`/
+`'MACOS_RUN'`）流进循环变量、`os.environ[key]`（L48）统一取出：
+
+- **W61a 语料守卫**：env 定义恰 2 键；heredoc 存在、
+  `os.environ[key]` 循环读取恰 1 处、引号大写键字面恰 2 个（先剥
+  `os.environ['…']` 直接读取——runner 注入的 GITHUB_* 无定义侧可对）。
+- **W61b 定义 == 消费（双向）**：env 键集合 == heredoc 键字面集合——
+  消费未定义（`os.environ[key]` 抛 KeyError）与定义未消费（死 env
+  键）都红。
+
+R237 实测：env 键现同账，首跑即过（纯钉住，无修复）。总用例
+3325→3329（W61 +2、N3/D1 +2），变异 4/4（env 键改名 / 元组字面改名，
+W61b 各自独红；env 键删除——计数与集合同时断的双红；元组字面复制，
+W61a 独红）。
+
+边界：只判 env 键名的字面同账——不判键值（`inputs.*` 的取值由 W57
+钉输入名）、不判 `os.environ['GITHUB_*']` 直接读取（runner 注入）、
+不判 `gh api` 的运行时校验（脚本负责）、不判 workflow 触发与下载
+行为（CI 负责）。
