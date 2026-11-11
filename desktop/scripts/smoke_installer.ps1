@@ -236,19 +236,14 @@ try {
     }
     $Plugins = (Invoke-RestMethod -Uri "$BackendBaseUrl/api/plugins" -TimeoutSec 5).plugins
     $Flywheel = $Plugins | Where-Object { $_.id -eq "xs2-novel-flywheel" } | Select-Object -First 1
-    if ($Flavor -eq "full") {
-        if (-not $Flywheel) {
-            throw "Full installer did not seed xs2-novel-flywheel"
-        }
-        if (-not $Flywheel.active_enabled -or -not $Flywheel.desired_enabled) {
-            throw "Full installer did not enable xs2-novel-flywheel"
-        }
-        if ($Flywheel.runtime_status -ne "running") {
-            throw "Full installer xs2-novel-flywheel is not running: $($Flywheel.runtime_status); $($Flywheel.error)"
-        }
+    if (-not $Flywheel) {
+        throw "$Flavor installer did not seed xs2-novel-flywheel"
     }
-    elseif ($Flywheel) {
-        throw "Core installer unexpectedly seeded an official Plugin"
+    if (-not $Flywheel.active_enabled -or -not $Flywheel.desired_enabled) {
+        throw "$Flavor installer did not enable xs2-novel-flywheel"
+    }
+    if ($Flywheel.runtime_status -ne "running") {
+        throw "$Flavor installer xs2-novel-flywheel is not running: $($Flywheel.runtime_status); $($Flywheel.error)"
     }
     Write-Output "Installed application status endpoint verified"
 
@@ -333,7 +328,7 @@ finally {
         if (-not (Test-Path (Join-Path $UserData "config\models_config.json"))) {
             throw "Uninstaller removed persistent user configuration"
         }
-        if ($Flavor -eq "full" -and -not (Test-Path (Join-Path $UserData "data\plugins\plugins.lock.json"))) {
+        if (-not (Test-Path (Join-Path $UserData "data\plugins\plugins.lock.json"))) {
             throw "Uninstaller removed persistent Plugin state"
         }
         Write-Output "NSIS uninstall and user-data preservation verified"
