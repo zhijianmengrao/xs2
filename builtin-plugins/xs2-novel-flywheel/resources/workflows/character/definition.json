@@ -1,0 +1,601 @@
+{
+  "workflow_id": "character",
+  "name": "角色创建管线",
+  "version": 3,
+  "nodes": [
+    {
+      "id": "script_sync_down",
+      "label": "检查本地世界观",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 490,
+        "y": 50
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "local_archive",
+        "script_args": "prepare --require meta/world_foundation.md",
+        "timeout": "30",
+        "script_group": "nvl"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "agent_skeleton",
+      "label": "角色阵容骨架",
+      "node_type": "agent",
+      "agent_type": "novel-character-skeleton",
+      "system_prompt_template": "",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【世界观】\n{{world_foundation}}\n\n请生成全体角色的骨架设定。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "position": {
+        "x": 440,
+        "y": 160
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "skeleton_output",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "cache/character/skeleton.json",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_persist_skeleton",
+      "label": "本地存档：角色骨架",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 740,
+        "y": 170
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "nvl",
+        "script_name": "local_archive",
+        "script_args": "checkpoint --files cache/character/skeleton.json",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_extract",
+      "label": "提取角色名",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 190,
+        "y": 180
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "inline",
+        "script_type": "python",
+        "script_name": "extract_names",
+        "script_args": "--file cache/character/skeleton.json",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "agent_belief",
+      "label": "角色信念生态",
+      "node_type": "agent",
+      "agent_type": "novel-character-belief",
+      "system_prompt_template": "",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【角色骨架】\n{{skeleton_json}}\n\n🔴 请严格根据【角色骨架】中 characters 数组列出的角色，逐一生成核心信念。\n不得添加骨架中不存在的角色，不得自行发明角色名。\n骨架有几个角色，你的输出就必须恰好包含几个。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "position": {
+        "x": 200,
+        "y": 300
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "beliefs_output",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "cache/character/beliefs.json",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_persist_belief",
+      "label": "本地存档：信念生态",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 480,
+        "y": 310
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "nvl",
+        "script_name": "local_archive",
+        "script_args": "checkpoint --files cache/character/beliefs.json",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "agent_deep",
+      "label": "角色深层维度",
+      "node_type": "agent",
+      "agent_type": "novel-character-deep",
+      "system_prompt_template": "",
+      "first_message": "【题材创意】\n{{premise}}\n\n【题材类型】\n{{genre}}\n\n【角色骨架】\n{{skeleton_json}}\n\n【信念系统】\n{{beliefs_json}}\n\n【当前角色】\n{{name}}\n\n请生成该角色的深层维度设定（B/C/D 层）。\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "position": {
+        "x": 730,
+        "y": 320
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "deep_output",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "cache/character/{{name}}_deep.json",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_persist_deep",
+      "label": "本地存档：深层维度",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 930,
+        "y": 350
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "nvl",
+        "script_name": "local_archive",
+        "script_args": "checkpoint --files cache/character/{{name}}_deep.json",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_merge",
+      "label": "拼接角色文档",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 190,
+        "y": 420
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "json_to_md",
+        "script_args": "--mode character --book-dir '.' --output 'meta/character_profiles.md' --title '角色档案'",
+        "timeout": "30",
+        "script_group": "nvl"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "agent_voice",
+      "label": "角色声线提取",
+      "node_type": "agent",
+      "agent_type": "novel-character-voice",
+      "system_prompt_template": "",
+      "first_message": "【角色档案】\n{{character_profiles_file}}\n\n请基于以上角色档案，为每个核心角色生成声线条目。\n\n每个角色包含：\n1. **核心声音定位** — 这个角色\"听起来像谁\"（一句话概括其语言气质）\n2. **句法指纹** — 长短句偏好、口头禅或惯用词组、停顿习惯、常用句式结构\n3. **认知偏差** — 他看世界时的滤镜是什么（偏乐观/偏怀疑/偏自保/偏冲动/偏计算...），这决定同一件事不同角色会怎么解读\n\n核心原则：\n- 所有信息必须能从角色档案的\"核心欲望\"\"深层恐惧\"\"秘密\"\"核心信念\"\"说话方式\"等字段中推导\n- 不得凭空编造角色档案中没有的特征\n- 如果某个角色的某维度信息不足，标注「待补充」而非猜测\n\n输出语言：{{language}}。你的所有产出内容——包括文件内容、JSON 字段值、分析报告——都必须使用 {{language}}。\n\n==== 叙事视角契约 ====\n叙事视角参数：{{narrative_pov}}。必须严格遵守：\n- 当参数为 first_person（第一人称）时，正文叙述只能使用第一人称视角（我/我们），只能写叙述者当下能感知、记忆或合理推断的内容，不得切换到全知视角或其他角色内心。\n- 当参数为 third_person（第三人称）时，正文使用第三人称叙述，并保持当前焦点角色稳定，不得把叙述者写成“我”。\n规划、正文、润色和质量审核都必须检查并保持这个视角契约。\n\n==== 用户确认的参考机制 ====\n{{learning_context}}\n仅使用其中已经确认的抽象写法与约束，不复制原文、专名、情节或句式；如果内容为空，则按当前工作流设定继续。\n\n==== 人物行动与情绪检查 ====\n人物不是规则解说员。主要人物须有自己的目标、顾虑、底线或内在矛盾；配角也能因自身利益/关系作出同意、拒绝、隐瞒或争取，不能人人围着主角机械配合。用压力下的选择、迟疑、动作、对话的取舍和后果呈现性格与情绪，不给每人硬加标签或相同小动作。各人的词汇、关注点、说话节奏应有差别，不反复复述同一规章。维护既定人格和关系，性格变化需要具体经历与代价；第一人称不得直接断言他人内心。审核指出具体段落中工具人化、无动机转折、情绪缺席或声线雷同的问题，并在现有字段/schema内提供建议，不能新增无依据剧情。参考人物写法仅使用已确认的抽象机制；没有蒸馏也执行这些原创写作检查。\n\n==== 从人物此刻的处境出发 ====\n写关键场景前，结合既定人物档案、声线、已经发生的经历、目前所知的信息、身体/资源状态、关系与承诺，在内部判断：这个人此刻最想守住什么、最怕什么、有什么羞耻或不愿承认的需求、愿意付出什么代价、不会跨过什么底线。他只按自己所知作反应，不能知道作者才知道的答案。把判断落实成独属于此人的选择、话语取舍、迟疑与行动，而不是在正文输出分析清单或大段心理标签。\n同一危险可让不同人出现不同反应；理性和情绪可以拉扯，外表镇定不等于没有恐惧。配角有自己的处境，不为了剧情方便忽然赞同主角。避免每个人使用同一种机警、冷静、抿唇或规则语言，也不强迫人人独特口癖。情绪不是随意哭喊；用相关经历支撑轻重与克制，重大转变要经过行动与后果。\n历史已确认的事实/关系先于临时想象；本书统一风格先于未采用的参考风格。已采用的蒸馏可帮助选择表达方式，不能替人物决定人格。档案不全时仅从已有行为谨慎补充当前表现，不创造重大背景；正文实现后由原有后验流程回写新的状态、关系和承诺，下章继续读取。检查正文表现是否兑现人物档案，不因档案写得丰富就自动认为人物立体。\n\n==== 借鉴文风与人物真实感 ====\n用户确认的风格、写法与冲突是可选择的表达资源，不是每段必须执行的清单，不追求完全模仿。结合本书统一风格基线、人物档案与当下处境选择表达方式：让读者看见行动、感知、话语取舍、误判和后果，避免把场景写成规则说明、模拟记录、任务流水账或事后的总结。句长、段长、标点等分析统计只作理解依据，不设固定配额，不把每个细节都解释完。\n人物有自身欲望、顾虑、经历、关系、底线和不愿承认的需求；不同人在同一压力下可以反应不同。复用已有人物档案、声音与当前状态，用具体的选择、迟疑、隐瞒、争取、让步和代价体现个性，避免只用人格标签、统一口癖或同一种小动作证明人物不同。配角可以坚持自己的利益并拒绝主角，不能为了推进剧情自动配合；理性判断也会受到情绪和信息局限影响。人物变化有经历依据，不额外强加所有人一套完整心理模板，不编造重大背景。\n冲突要同时影响行动目标与人物关系/内在选择；从已有目标、伏笔和前文代价触发，不突然空降。短篇回收核心目标和人物选择，长篇普通章推进局部问题并保留有依据的后续压力。审阅以具体段落中的表现为证据，指出人物工具化、反应失真、声线雷同、过程记录化和情绪落点缺失；档案丰富不等于正文人物已经鲜活。沿用现有输出格式与后验回写，不新建一套创作流程。\n",
+      "position": {
+        "x": 0,
+        "y": 540
+      },
+      "var_bindings": {},
+      "node_params": {},
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "voice_output",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": true,
+      "output_file_path": "cache/character/voice.json",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_persist_voice",
+      "label": "本地存档：角色声线",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 380,
+        "y": 570
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_group": "nvl",
+        "script_name": "local_archive",
+        "script_args": "checkpoint --files cache/character/voice.json",
+        "timeout": "30"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    },
+    {
+      "id": "script_voice_to_md",
+      "label": "渲染 → character_voice.md",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 150,
+        "y": 670
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "json_to_md",
+        "script_args": "--mode voice --voice-json 'cache/character/voice.json' --output 'meta/character_voice.md' --title '角色声音锚'",
+        "timeout": "30",
+        "script_group": "nvl"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {},
+      "fail_auto_skip": false
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-start-sync",
+      "source": "__start__",
+      "target": "script_sync_down"
+    },
+    {
+      "id": "edge-sync-skeleton",
+      "source": "script_sync_down",
+      "target": "agent_skeleton"
+    },
+    {
+      "id": "edge-skeleton-persist",
+      "source": "agent_skeleton",
+      "target": "script_persist_skeleton"
+    },
+    {
+      "id": "edge-persist-skel-extract",
+      "source": "script_persist_skeleton",
+      "target": "script_extract"
+    },
+    {
+      "id": "edge-extract-belief",
+      "source": "script_extract",
+      "target": "agent_belief"
+    },
+    {
+      "id": "edge-belief-persist",
+      "source": "agent_belief",
+      "target": "script_persist_belief"
+    },
+    {
+      "id": "edge-persist-belief-loop",
+      "source": "script_persist_belief",
+      "target": "gw_loop"
+    },
+    {
+      "id": "edge-loop-deep",
+      "source": "gw_loop",
+      "target": "agent_deep",
+      "condition": {
+        "expression": "for name in character_names",
+        "label": "循环体",
+        "is_default": false
+      }
+    },
+    {
+      "id": "edge-deep-persist",
+      "source": "agent_deep",
+      "target": "script_persist_deep"
+    },
+    {
+      "id": "edge-persist-deep-loop",
+      "source": "script_persist_deep",
+      "target": "gw_loop"
+    },
+    {
+      "id": "edge-loop-merge",
+      "source": "gw_loop",
+      "target": "script_merge",
+      "condition": {
+        "label": "退出",
+        "is_default": true
+      }
+    },
+    {
+      "id": "edge-merge-voice",
+      "source": "script_merge",
+      "target": "agent_voice"
+    },
+    {
+      "id": "edge-voice-persist",
+      "source": "agent_voice",
+      "target": "script_persist_voice"
+    },
+    {
+      "id": "edge-persist-voice-md",
+      "source": "script_persist_voice",
+      "target": "script_voice_to_md"
+    },
+    {
+      "id": "edge-md-end",
+      "source": "script_voice_to_md",
+      "target": "__end__"
+    }
+  ],
+  "variables": [
+    {
+      "key": "premise",
+      "name": "题材创意",
+      "type": "textarea",
+      "default": "",
+      "required": true,
+      "description": "用户建书时输入的创意内容，描述故事前提、主角设定、核心概念等",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "genre",
+      "name": "题材类型",
+      "type": "text",
+      "default": "",
+      "required": true,
+      "description": "如：东方玄幻、都市异能、科幻末世、历史架空、悬疑推理 等",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "world_foundation",
+      "name": "世界观文件",
+      "type": "file",
+      "default": "meta/world_foundation.md",
+      "required": false,
+      "description": "world_foundation.md 路径（相对 workspace）。建书管线须设置 workspace_override",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "skeleton_json",
+      "name": "骨架 JSON",
+      "type": "file",
+      "default": "cache/character/skeleton.json",
+      "required": false,
+      "description": "agent_skeleton 产出的角色骨架 JSON 文件",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "beliefs_json",
+      "name": "信念 JSON",
+      "type": "file",
+      "default": "cache/character/beliefs.json",
+      "required": false,
+      "description": "agent_belief 产出的信念系统 JSON 文件",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "character_names",
+      "name": "角色名列表",
+      "type": "list",
+      "default": "[]",
+      "required": false,
+      "description": "extract_names 脚本产出的角色名数组，供循环网关遍历",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "name",
+      "name": "当前角色名",
+      "type": "text",
+      "default": "",
+      "required": false,
+      "description": "逐角色循环当前项，由 Loop Gateway 在每轮设置",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "deep_json",
+      "name": "深层维度 JSON",
+      "type": "file",
+      "default": "cache/character/{{name}}_deep.json",
+      "required": false,
+      "description": "agent_deep 每轮产出的角色深层维度 JSON 文件",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "character_profiles_file",
+      "name": "角色档案MD",
+      "type": "file",
+      "default": "meta/character_profiles.md",
+      "required": false,
+      "description": "script_merge 生成的最终角色档案，供声线提取读取",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "learning_context",
+      "name": "已确认的参考机制",
+      "type": "file",
+      "default": "learning/active_context.md",
+      "required": false,
+      "description": "参考资料蒸馏后用户确认的抽象写法，只允许作为机制约束使用",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    },
+    {
+      "key": "narrative_pov",
+      "name": "叙事视角",
+      "type": "text",
+      "default": "third_person",
+      "required": true,
+      "description": "first_person=第一人称；third_person=第三人称。全流程必须保持一致。",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "language",
+      "name": "输出语言",
+      "type": "text",
+      "default": "中文",
+      "required": true,
+      "description": "所有 agent 的产出语言。中文 / English",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "chapter_ending_mode",
+      "name": "本次章末类型",
+      "type": "string",
+      "default": "continue",
+      "required": false,
+      "hidden": true,
+      "source_type": "input",
+      "options": []
+    }
+  ],
+  "gateways": [
+    {
+      "id": "gw_loop",
+      "gateway_type": "loop",
+      "label": "逐角色循环",
+      "position": {
+        "x": 620,
+        "y": 450
+      },
+      "converge_gateway_id": null
+    }
+  ],
+  "execution_schemes": [],
+  "start_position": {
+    "x": 300,
+    "y": 50
+  },
+  "end_position": {
+    "x": 300,
+    "y": 550
+  }
+}

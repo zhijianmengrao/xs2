@@ -457,7 +457,7 @@ xs2/
 ├── pyproject.toml          # 项目元数据与依赖（Python ≥3.11）
 ├── requirements.txt        # 运行时依赖锁定
 ├── requirements.lock / requirements-dev.lock
-├── setup_plugins.py        # 自动检测并安装必需插件（xs2-novel-flywheel）
+├── setup_plugins.py        # 内置插件自举（xs2-novel-flywheel，无需 Git/联网）
 ├── .env.example            # 环境变量模板
 ├── docker-compose.yml / Dockerfile
 ├── src/                    # Python 后端（web_server、agent、core、mcp、tools、skills、rules、prompts）
@@ -470,8 +470,8 @@ xs2/
 └── 启动脚本：start_determinflow.bat / start_determinflow_v2.ps1 / rebuild_now.ps1
 ```
 
-- `config/extensions.json` — 启用 `xs2-novel-flywheel` 插件（`strict_startup: false`）
-- `config/plugin-sources.json` — 官方/社区源 + 自定义本地源 `file:///F:/DeterminFlow%20x2/DeterminFlow-Plugins`（早期文档误记 `file:///C:/xs2/DeterminFlow-Plugins`，该路径不存在）及 `github.com/yuyang0702/xs2-plugins.git`
+- `config/extensions.json` — 仅启用内置插件 `xs2-novel-flywheel`（`strict_startup: false`）
+- `config/plugin-sources.json` — 仅保留官方源；自定义本地源已移除（内置插件不依赖插件仓库）
 
 ## 约束条件
 

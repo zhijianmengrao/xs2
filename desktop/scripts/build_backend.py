@@ -12,8 +12,8 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from desktop.scripts.stage_builtin_plugins import stage_builtin_plugins
 from desktop.scripts.stage_defaults import stage_defaults
-from desktop.scripts.stage_official_plugins import stage_official_plugins
 
 
 LOGGER = logging.getLogger("desktop.build_backend")
@@ -28,13 +28,8 @@ def build_backend(repo_root: Path, *, flavor: str = "core") -> Path:
     bundled_plugins = desktop_root / "generated" / "bundled-plugins"
 
     stage_defaults(repo_root, generated)
-    if flavor == "full":
-        stage_official_plugins(repo_root, bundled_plugins)
-    else:
-        # Core 不带插件快照,但 tauri resources 映射要求源目录非空可匹配。
-        shutil.rmtree(bundled_plugins, ignore_errors=True)
-        bundled_plugins.mkdir(parents=True, exist_ok=True)
-        (bundled_plugins / ".empty").write_text("", encoding="utf-8")
+    # 内置插件随安装包分发:不依赖 Git/网络,首次启动由 runtime 自举。
+    stage_builtin_plugins(repo_root, bundled_plugins)
     shutil.rmtree(backend_dir, ignore_errors=True)
     subprocess.run(
         [

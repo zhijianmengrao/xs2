@@ -36,6 +36,21 @@ def canonicalize_plugin_source(source: str) -> tuple[str, str, str]:
     if not raw:
         raise ValueError("plugin source cannot be empty")
     split = urlsplit(raw)
+    if split.scheme == "builtin":
+        # Application-owned package shipped in builtin-plugins/<id>.
+        plugin_id = split.netloc.strip()
+        if (
+            not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", plugin_id)
+            or split.path
+            or split.query
+            or split.fragment
+            or split.username
+            or split.password
+            or split.port is not None
+        ):
+            raise ValueError("invalid builtin plugin source")
+        canonical = f"builtin://{plugin_id}"
+        return canonical, "local", canonical
     if split.scheme == "file":
         if split.netloc or split.query or split.fragment:
             raise ValueError(

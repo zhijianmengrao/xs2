@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -15,6 +16,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 from src.plugin_system import (
     PluginStore,
@@ -22,6 +25,7 @@ from src.plugin_system import (
     validate_plugin_ref,
     validate_plugin_subdirectory,
 )
+from src.plugin_system.store import is_git_repository
 from src.plugin_system.registry import (
     PluginRegistryConfig,
     PluginRegistryError,
@@ -349,9 +353,76 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
             text=True,
             timeout=180,
         )
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "未找到 git 可执行文件：请安装 git，或改用本地插件目录"
+        ) from exc
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError("Plugin 仓库目录暂不可用") from exc
     return completed.stdout
+
+
+def _local_source_path(source: PluginSourceConfig) -> Path | None:
+    split = urlsplit(source.url)
+    if split.scheme != "file":
+        return None
+    return Path(url2pathname(unquote(split.path))).expanduser().resolve()
+
+
+def _local_source_commit(root: Path, index_raw: bytes) -> str:
+    """Use the real Git revision when available, otherwise a content digest."""
+    if (root / ".git").exists():
+        try:
+            commit = _run_git("rev-parse", "HEAD", cwd=root).strip().lower()
+        except ValueError:
+            commit = ""
+        if len(commit) == 40:
+            return commit
+    digest = hashlib.sha256(index_raw)
+    for path in sorted(root.rglob("extension.toml")):
+        try:
+            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+            digest.update(path.read_bytes())
+        except OSError:
+            continue
+    return digest.hexdigest()[:40]
+
+
+def _catalog_from_directory(
+    source: PluginSourceConfig,
+    source_result: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Read a checked-out Plugin repository directly; Git is not required."""
+    root = _local_source_path(source)
+    if root is None or not root.is_dir():
+        raise ValueError(
+            f"Plugin 仓库目录不存在: {root if root is not None else source.url}"
+        )
+    index_path = root / "plugin-repository.toml"
+    try:
+        index_raw = index_path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"Plugin 仓库缺少 plugin-repository.toml: {root}") from exc
+    entries = _parse_repository_index(index_raw, source)
+    commit = _local_source_commit(root, index_raw)
+    plugins: list[dict[str, Any]] = []
+    for entry in entries:
+        manifest_path = "/".join(
+            filter(None, (entry["subdirectory"], "extension.toml"))
+        )
+        try:
+            manifest_raw = (root / manifest_path).read_bytes()
+        except OSError as exc:
+            raise ValueError(f"仓库未提供 {manifest_path}") from exc
+        entry.update(_manifest_metadata(manifest_raw, entry["id"]))
+        entry["resolved_commit"] = commit
+        plugins.append(entry)
+    source_result["resolved_commit"] = commit
+    source_result["plugin_count"] = len(plugins)
+    source_result["selected_url"] = source.url
+    source_result["transport"] = "directory"
+    source_result["error"] = ""
+    return plugins, source_result
 
 
 def _resolve_ref(repository: Path, ref: str) -> str:
@@ -383,6 +454,10 @@ def _git_file(repository: Path, commit: str, path: str) -> bytes:
             capture_output=True,
             timeout=60,
         ).stdout
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "未找到 git 可执行文件：请安装 git，或改用本地插件目录"
+        ) from exc
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError(f"仓库未提供 {path}") from exc
 
@@ -494,6 +569,7 @@ def fetch_plugin_catalog(
         source_result: dict[str, Any] = catalog_source_placeholder(source)
         source_plugins: list[dict[str, Any]] = []
         try:
+            local_root = _local_source_path(source)
             if source.registry is not None:
                 try:
                     source_plugins, source_result = _catalog_from_registry(
@@ -505,6 +581,25 @@ def fetch_plugin_catalog(
                     continue
                 except PluginRegistryError:
                     source_plugins = []
+            if (
+                local_root is not None
+                and local_root.is_dir()
+                and (
+                    not is_git_repository(local_root)
+                    or shutil.which("git") is None
+                )
+            ):
+                # A local checkout is readable without Git; this is the only
+                # path that works on systems where the git binary is absent.
+                source_plugins, source_result = _catalog_from_directory(
+                    source,
+                    source_result,
+                )
+                plugins.extend(source_plugins)
+                sources.append(source_result)
+                continue
+            if local_root is not None and shutil.which("git") is None:
+                raise ValueError(f"Plugin 仓库目录不存在: {local_root}")
             with tempfile.TemporaryDirectory(prefix="determinflow-plugin-catalog-") as raw:
                 repository = Path(raw) / "repository"
                 selected = select_git_source(source.clone_urls, source.ref)

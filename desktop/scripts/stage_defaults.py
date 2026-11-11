@@ -29,7 +29,10 @@ SOURCE_CONFIG_FILES = (
 )
 
 DESKTOP_OVERRIDES: dict[str, Any] = {
-    "extensions.json": {"enabled": [], "strict_startup": False},
+    "extensions.json": {
+        "enabled": ["xs2-novel-flywheel"],
+        "strict_startup": False,
+    },
     "mcp_servers.json": {"mcpServers": {}},
     "plugin-sources.json": {
         "schema_version": 1,

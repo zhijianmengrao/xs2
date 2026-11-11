@@ -1,0 +1,98 @@
+{
+  "workflow_id": "adopt-reference",
+  "name": "确认本书参考写法",
+  "version": 3,
+  "nodes": [
+    {
+      "id": "script_adopt_reference",
+      "label": "保留已采用写法并确认新增",
+      "node_type": "script",
+      "agent_type": "default",
+      "system_prompt_template": "",
+      "first_message": "",
+      "position": {
+        "x": 300,
+        "y": 150
+      },
+      "var_bindings": {},
+      "node_params": {
+        "script_source": "library",
+        "script_type": "python",
+        "script_name": "reference_distill",
+        "script_argv": [
+          "adopt",
+          "--selection",
+          "{{selection_path}}",
+          "--selection-json",
+          "{{selection_json}}"
+        ],
+        "timeout": 120,
+        "script_group": "xs2"
+      },
+      "auto_flow": false,
+      "enable_complete_node_task": true,
+      "output_variable": "",
+      "enable_reject_upstream": false,
+      "max_reject_count": 3,
+      "save_output_to_file": false,
+      "output_file_path": "",
+      "sub_workflow_params": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-start-adopt",
+      "source": "__start__",
+      "target": "script_adopt_reference"
+    },
+    {
+      "id": "edge-adopt-end",
+      "source": "script_adopt_reference",
+      "target": "__end__"
+    }
+  ],
+  "variables": [
+    {
+      "key": "selection_path",
+      "name": "选择文件路径",
+      "type": "text",
+      "default": "learning/selection.json",
+      "required": true,
+      "description": "把 selection.html 下载的 JSON 放到工作区后使用",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": false
+    },
+    {
+      "key": "selection_json",
+      "name": "网页选择结果",
+      "type": "textarea",
+      "default": "",
+      "required": false,
+      "description": "小说控制台直接提交的候选选择，不需要手动下载文件",
+      "options": [],
+      "source_type": "input",
+      "source_node_id": "",
+      "hidden": true
+    }
+  ],
+  "gateways": [],
+  "execution_schemes": [],
+  "start_position": {
+    "x": 300,
+    "y": 50
+  },
+  "end_position": {
+    "x": 380,
+    "y": 250
+  },
+  "console": {
+    "app": "novel-workbench",
+    "role": "book-reference",
+    "title": "选择与确认",
+    "group": "本书参考写法",
+    "artifact": "learning/active_context.md",
+    "description": "分别确认风格、写法和冲突的本书适配；已有采用内容持续保留。"
+  }
+}

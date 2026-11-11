@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -13,6 +14,8 @@ import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Iterable
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 from .integrity import plugin_content_sha256
 from .longpath import extended_path
@@ -38,6 +41,14 @@ from .source_selection import canonicalize_plugin_source, select_git_source
 
 LOCK_SCHEMA_VERSION = 1
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40,64}$")
+
+
+def is_git_repository(path: Path) -> bool:
+    """Return True for a worktree (``.git``) or a bare repository layout."""
+    path = Path(path)
+    if (path / ".git").exists():
+        return True
+    return all((path / name).exists() for name in ("HEAD", "objects", "refs"))
 
 
 class PluginStoreError(RuntimeError):
@@ -124,6 +135,7 @@ class PluginStore:
             revision = self._materialize(
                 plugin_id,
                 canonical_source,
+                source_kind,
                 clone_source,
                 ref,
                 normalized_subdirectory,
@@ -190,6 +202,7 @@ class PluginStore:
             revision = self._materialize(
                 plugin_id,
                 canonical_source,
+                source_kind,
                 clone_source,
                 ref,
                 normalized_subdirectory,
@@ -293,6 +306,16 @@ class PluginStore:
 
     def mark_uninstall(self, plugin_id: str) -> PluginLockRecord:
         return self._set_pending_action(plugin_id, "remove")
+
+    def remove_record(self, plugin_id: str) -> None:
+        """Drop a lock record without touching the content-addressed checkout."""
+        plugin_id = self._normalize_plugin_id(plugin_id)
+        with self._mutex:
+            records = self.read_lock()
+            if plugin_id not in records:
+                return
+            records.pop(plugin_id)
+            self._write_records(records)
 
     def apply_pending(self) -> dict[str, PluginLockRecord]:
         """Apply desired actions at process startup without deleting plugin data."""
@@ -408,6 +431,7 @@ class PluginStore:
         self,
         plugin_id: str,
         canonical_source: str,
+        source_kind: str,
         clone_source: str,
         ref: str,
         subdirectory: str,
@@ -440,6 +464,23 @@ class PluginStore:
             stage_root = Path(
                 tempfile.mkdtemp(prefix=f"{plugin_id}-", dir=self.staging_dir)
             )
+            if canonical_source.startswith("builtin://") and not (
+                self._local_source_path(canonical_source).is_dir()
+            ):
+                raise PluginStoreError(
+                    f"内置插件不存在: {canonical_source}"
+                )
+            if source_kind == "local" and self._should_copy_local_source(
+                canonical_source
+            ):
+                return self._materialize_from_directory(
+                    plugin_id,
+                    canonical_source,
+                    requested_ref,
+                    subdirectory,
+                    stage_root,
+                    preflight=preflight,
+                )
             return self._materialize_from_git(
                 plugin_id,
                 canonical_source,
@@ -500,6 +541,74 @@ class PluginStore:
             preflight=preflight,
         )
 
+    def _should_copy_local_source(self, canonical_source: str) -> bool:
+        """Local directories are installable without Git.
+
+        A plain directory has no revisions to resolve, and a Git worktree is
+        still installable by copying its current tree when the ``git`` binary
+        is unavailable (Linux images without Git, minimal containers).
+        """
+        local_root = self._local_source_path(canonical_source)
+        if local_root.is_dir():
+            if not is_git_repository(local_root):
+                return True
+            return shutil.which(self.git_binary) is None
+        # Missing local directory: keep the Git candidate chain (mirrors) when
+        # Git exists; otherwise fail with the directory-materializer message.
+        return shutil.which(self.git_binary) is None
+
+    @staticmethod
+    def _local_source_path(canonical_source: str) -> Path:
+        split = urlsplit(canonical_source)
+        if split.scheme == "builtin":
+            from .builtin import builtin_plugins_root
+
+            return (builtin_plugins_root() / split.netloc).resolve()
+        return Path(url2pathname(unquote(split.path))).expanduser().resolve()
+
+    def _materialize_from_directory(
+        self,
+        plugin_id: str,
+        canonical_source: str,
+        requested_ref: str,
+        subdirectory: str,
+        stage_root: Path,
+        *,
+        preflight: Callable[[Path], None] | None,
+    ) -> PluginRevision:
+        repository_root = self._local_source_path(canonical_source)
+        if not repository_root.is_dir():
+            raise PluginStoreError(
+                f"Plugin 仓库目录不存在: {repository_root}"
+            )
+        package_root = (
+            repository_root / subdirectory if subdirectory else repository_root
+        )
+        self._validate_package_root(plugin_id, repository_root, package_root)
+        prepared = stage_root / "package"
+        shutil.copytree(
+            extended_path(package_root),
+            extended_path(prepared),
+            ignore=shutil.ignore_patterns(
+                ".git",
+                "__pycache__",
+                "*.pyc",
+                "*.pyo",
+            ),
+        )
+        digest = plugin_content_sha256(prepared)
+        # Directory sources have no commit id; the content digest is the
+        # revision identity, which keeps installs reproducible and immutable.
+        commit = digest[:40]
+        return self._place_checkout(
+            plugin_id,
+            commit,
+            prepared,
+            requested_ref,
+            expected_content_sha256=digest,
+            preflight=preflight,
+        )
+
     def _materialize_from_git(
         self,
         plugin_id: str,
@@ -547,6 +656,7 @@ class PluginStore:
         )
         package_root = clone_root / subdirectory if subdirectory else clone_root
         self._validate_package_root(plugin_id, clone_root, package_root)
+        self._validate_git_symlinks(clone_root, commit, package_root)
         shutil.copytree(
             extended_path(package_root),
             extended_path(prepared),
@@ -622,15 +732,19 @@ class PluginStore:
                 return commit.lower()
         raise PluginStoreError(f"git ref does not resolve to a commit: {ref}")
 
-    def _run_git(self, *args: str) -> None:
+    def _run_git(self, *args: str) -> str:
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 [self.git_binary, *args],
                 check=True,
                 capture_output=True,
                 text=True,
                 timeout=180,
             )
+        except FileNotFoundError as exc:
+            raise PluginStoreError(
+                "未找到 git 可执行文件：请安装 git，或改用本地插件目录"
+            ) from exc
         except (OSError, subprocess.SubprocessError) as exc:
             details = (
                 exc.stderr.strip()
@@ -638,6 +752,39 @@ class PluginStore:
                 else str(exc)
             )
             raise PluginStoreError(f"git command failed: {details}") from exc
+        return completed.stdout
+
+    def _validate_git_symlinks(
+        self,
+        clone_root: Path,
+        commit: str,
+        package_root: Path,
+    ) -> None:
+        """Reject symlinks that escape the package even when Git materializes
+        them as plain files (``core.symlinks=false`` on Windows)."""
+        relative = package_root.relative_to(clone_root).as_posix()
+        args = ["-C", str(clone_root), "ls-tree", "-r", "-z", commit]
+        if relative:
+            args.extend(["--", relative])
+        listing = self._run_git(*args)
+        package_resolved = package_root.resolve()
+        for record in listing.split("\0"):
+            if not record or "\t" not in record:
+                continue
+            metadata, path = record.split("\t", 1)
+            fields = metadata.split()
+            if len(fields) != 3 or fields[0] != "120000":
+                continue
+            target = self._run_git(
+                "-C", str(clone_root), "cat-file", "-p", fields[2]
+            ).strip()
+            candidate = (clone_root / path).parent / target
+            try:
+                candidate.resolve(strict=False).relative_to(package_resolved)
+            except (OSError, ValueError) as exc:
+                raise InvalidPluginPackageError(
+                    f"plugin symlink escapes package root: {path}"
+                ) from exc
 
     def _validate_package_root(
         self,

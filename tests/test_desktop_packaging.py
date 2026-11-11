@@ -369,7 +369,7 @@ def test_stage_defaults_uses_sanitized_overrides(
     # (cp936 on zh-CN Windows) and turn them into mojibake.
     assert json.loads(
         (output / "extensions.json").read_text(encoding="utf-8")
-    )["enabled"] == []
+    )["enabled"] == ["xs2-novel-flywheel"]
     assert json.loads(
         (output / "mcp_servers.json").read_text(encoding="utf-8")
     ) == {
@@ -596,7 +596,7 @@ def test_desktop_release_version_is_pinned() -> None:
         )
     )
 
-    assert tauri["version"] == "1.0.3"
+    assert tauri["version"] == "1.0.4"
 
 
 def test_frozen_backend_can_execute_python_workflow_scripts(tmp_path: Path) -> None:

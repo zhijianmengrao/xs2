@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import sys
 from pathlib import Path
+
+
+LOGGER = logging.getLogger("determinflow.desktop.runtime")
 
 
 def bundle_root() -> Path:
@@ -200,6 +204,7 @@ def prepare_runtime(user_root: Path, port: int) -> None:
     seed_user_config(resolved_root)
     refresh_official_plugin_sources(resolved_root)
     seed_bundled_plugins(resolved_root)
+    _ensure_builtin_plugins(resolved_root)
 
     data_dir = resolved_root / "data"
     logs_dir = resolved_root / "logs"
@@ -216,3 +221,19 @@ def prepare_runtime(user_root: Path, port: int) -> None:
         "WEB_PORT": str(port),
     }
     os.environ.update(environment)
+
+
+def _ensure_builtin_plugins(user_root: Path) -> None:
+    """Install the bundled plugins without Git or network access."""
+    from src.plugin_system.builtin import (
+        BUILTIN_PLUGIN_IDS,
+        ensure_builtin_plugins,
+        ensure_enabled_plugins,
+    )
+
+    plugins_root = user_root / "data" / "plugins"
+    try:
+        ensure_builtin_plugins(plugins_root)
+    except Exception:  # noqa: BLE001 - 启动不应因插件自举失败而中断
+        LOGGER.exception("内置插件安装失败")
+    ensure_enabled_plugins(user_root / "config" / "extensions.json", BUILTIN_PLUGIN_IDS)

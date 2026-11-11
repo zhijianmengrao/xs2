@@ -9,18 +9,5 @@
     }
   ],
   "community_sources": [],
-  "custom_sources": [
-    {
-      "id": "custom-xs2-local",
-      "name": "XS2 本地插件仓库（优先）",
-      "url": "file:///F:/DeterminFlow%20x2/DeterminFlow-Plugins",
-      "ref": "main"
-    },
-    {
-      "id": "custom-mydeterminflow-0998f91a",
-      "name": "myDeterminFlow",
-      "url": "https://github.com/w19834148637-rgb/myDeterminFlow-Plugins.git",
-      "ref": "main"
-    }
-  ]
+  "custom_sources": []
 }

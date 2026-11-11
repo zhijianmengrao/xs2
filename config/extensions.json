@@ -1,11 +1,6 @@
 {
   "enabled": [
-    "xs2-novel-flywheel",
-    "apocalypse-writer",
-    "humanizer-zh",
-    "lieflat-less-ai-tone",
-    "oh-story",
-    "webnovel-writer"
+    "xs2-novel-flywheel"
   ],
   "strict_startup": false
 }

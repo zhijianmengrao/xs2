@@ -326,24 +326,18 @@ def main() -> int:
         raise RuntimeError(f"桌面后端不存在: {backend}")
 
     if options.expected_flavor:
-        # Full 快照由 tauri resources 直映安装根目录(不再进 _internal,
-        # 避免 NSIS 在超过 MAX_PATH 的深层路径上静默损坏)。
+        # 内置插件快照由 tauri resources 直映安装根目录(不进 _internal,
+        # 避免 NSIS 在超过 MAX_PATH 的深层路径上静默损坏),Core/Full 均包含。
         generated_snapshot = (
             repo_root / "desktop" / "generated" / "bundled-plugins"
         )
         legacy_snapshot = backend.parent / "_internal" / "bundled-plugins"
         if legacy_snapshot.exists():
             raise RuntimeError(
-                "桌面后端 _internal 意外包含 Full Plugin 快照"
+                "桌面后端 _internal 意外包含 Plugin 快照"
                 "(应经 tauri resources 分发)"
             )
-        if options.expected_flavor == "full":
-            verify_bundled_plugins(generated_snapshot)
-        elif any(
-            path for path in generated_snapshot.iterdir()
-            if path.name != ".empty"
-        ):
-            raise RuntimeError("桌面 Core 构建意外包含 Full Plugin 快照")
+        verify_bundled_plugins(generated_snapshot)
 
     if options.desktop_executable:
         executable = options.desktop_executable.resolve()

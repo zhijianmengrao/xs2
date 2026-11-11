@@ -9,8 +9,9 @@ project_root = Path(SPECPATH).parents[1]
 generated_config = project_root / "desktop" / "generated" / "default-config"
 web_dist = project_root / "web" / "dist"
 core_defaults = project_root / "src" / "core" / "defaults"
+builtin_plugins = project_root / "builtin-plugins"
 
-for required_path in (generated_config, web_dist, core_defaults):
+for required_path in (generated_config, web_dist, core_defaults, builtin_plugins):
     if not required_path.exists():
         raise RuntimeError(f"Desktop build input is missing: {required_path}")
 
@@ -18,6 +19,9 @@ datas = [
     (str(generated_config), "config"),
     (str(web_dist), "web/dist"),
     (str(core_defaults), "src/core/defaults"),
+    # 内置插件随后端分发(不需要 Git/网络/用户安装);只含单一版本,
+    # 不涉及 Full 快照的 checkouts/<id>/<rev> 深层路径。
+    (str(builtin_plugins), "builtin-plugins"),
 ]
 # Full 版插件快照不经 PyInstaller 收集:_internal 叠加 checkouts/<id>/<rev> 与
 # 深层 vendor 资源后超过 MAX_PATH,NSIS 打包/落盘会静默损坏;改由 tauri.conf

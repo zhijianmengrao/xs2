@@ -1,7 +1,7 @@
 # 社区版更新
 
-当前正式版为 [v1.0.3](../desktop/release-notes/v1.0.3.md)。v1.0.2 的安装包说明见
-[v1.0.2 更新日志](../desktop/release-notes/v1.0.2.md)。
+当前正式版为 [v1.0.4](../desktop/release-notes/v1.0.4.md)。v1.0.3 的安装包说明见
+[v1.0.3 更新日志](../desktop/release-notes/v1.0.3.md)。
 
 > 本仓库（xs2 fork）自 v1.0.0 起独立编号；下文 v1.0.3–v1.1.1 是**上游
 > 社区版**的更新记录，随代码一并继承，原文归档在

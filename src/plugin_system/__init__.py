@@ -1,5 +1,12 @@
 """Public plugin package storage and process lifecycle interfaces."""
 
+from .builtin import (
+    BUILTIN_PLUGIN_IDS,
+    builtin_plugin_ids,
+    builtin_plugins_root,
+    ensure_builtin_plugins,
+    ensure_enabled_plugins,
+)
 from .dependencies import (
     PluginDependencyError,
     install_applied_plugin_requirements,
@@ -26,6 +33,7 @@ from .store import (
 )
 
 __all__ = [
+    "BUILTIN_PLUGIN_IDS",
     "InvalidPluginPackageError",
     "PluginLockRecord",
     "PluginDependencyError",
@@ -40,6 +48,10 @@ __all__ = [
     "ProcessSpec",
     "ProcessStartError",
     "SourceTrustError",
+    "builtin_plugin_ids",
+    "builtin_plugins_root",
+    "ensure_builtin_plugins",
+    "ensure_enabled_plugins",
     "extended_path",
     "install_applied_plugin_requirements",
     "install_plugin_requirements",
